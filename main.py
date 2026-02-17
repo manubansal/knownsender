@@ -50,9 +50,10 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
             )
 
 
-def initial_scan(service, label_configs, label_id_cache, known_senders=None, max_messages=100):
+def initial_scan(service, label_configs, label_id_cache, known_senders=None, max_messages=None):
     """Scan existing inbox messages and apply labels."""
-    logger.info("Running initial inbox scan (max %d messages)...", max_messages)
+    limit_str = str(max_messages) if max_messages else "all"
+    logger.info("Running initial inbox scan (%s messages)...", limit_str)
     messages = list_messages(service, query="in:inbox", max_results=max_messages)
     logger.info("Found %d messages in inbox", len(messages))
     for msg in messages:
