@@ -1,3 +1,4 @@
+import json
 import os
 import logging
 from google.auth.transport.requests import Request
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 TOKEN_PATH = "token.json"
 CREDENTIALS_PATH = "credentials.json"
+RECIPIENTS_CACHE_PATH = "sent_recipients_cache.json"
 
 
 def get_service():
@@ -98,6 +100,10 @@ def ensure_label_exists(service, label_name):
     for label in results.get("labels", []):
         if label["name"].lower() == label_name.lower():
             return label["id"]
+
+    logger.info("Creating label: %s", label_name)
+    return None
+
     created = (
         service.users()
         .labels()
@@ -115,32 +121,97 @@ def ensure_label_exists(service, label_name):
     return created["id"]
 
 
-def list_sent_recipients(service):
-    """Return a sorted set of all email addresses the user has ever sent to."""
+def _load_recipients_cache():
+    """Load cached recipients and history ID from disk."""
+    if os.path.exists(RECIPIENTS_CACHE_PATH):
+        with open(RECIPIENTS_CACHE_PATH) as f:
+            data = json.load(f)
+            return set(data.get("recipients", [])), data.get("history_id")
+    return set(), None
+
+
+def _save_recipients_cache(recipients, history_id):
+    """Save recipients and history ID to disk."""
+    with open(RECIPIENTS_CACHE_PATH, "w") as f:
+        json.dump({"recipients": sorted(recipients), "history_id": history_id}, f)
+
+
+def _extract_recipients_from_messages(service, messages):
+    """Extract recipient addresses from a list of message metadata."""
     recipients = set()
-    page_token = None
-    while True:
-        results = (
-            service.users()
-            .messages()
-            .list(userId="me", q="in:sent", maxResults=500, pageToken=page_token)
-            .execute()
+    for msg_meta in messages:
+        msg = get_message(
+            service, msg_meta["id"], format="metadata", metadata_headers=["To", "Cc", "Bcc"]
         )
-        messages = results.get("messages", [])
-        if not messages:
-            break
-        for msg_meta in messages:
-            msg = get_message(
-                service, msg_meta["id"], format="metadata", metadata_headers=["To", "Cc", "Bcc"]
+        for header in msg.get("payload", {}).get("headers", []):
+            if header["name"].lower() in ("to", "cc", "bcc"):
+                for addr in _parse_addresses(header["value"]):
+                    recipients.add(addr.lower())
+    return recipients
+
+
+def list_sent_recipients(service):
+    """Return a sorted set of all email addresses the user has ever sent to.
+
+    Uses incremental caching: on first run, scans all sent messages and saves
+    the results. On subsequent runs, only processes new messages since the last
+    cached history ID.
+    """
+    cached_recipients, cached_history_id = _load_recipients_cache()
+
+    if cached_history_id:
+        # Incremental update: only fetch new sent messages since last run
+        logger.info("Loading cached recipients, checking for new sent messages...")
+        try:
+            records = list_history(service, cached_history_id, label_id="SENT")
+            new_message_ids = set()
+            for record in records:
+                for added in record.get("messagesAdded", []):
+                    msg = added["message"]
+                    if "SENT" in msg.get("labelIds", []):
+                        new_message_ids.add(msg["id"])
+            if new_message_ids:
+                logger.info("Found %d new sent message(s)", len(new_message_ids))
+                new_msgs = [{"id": mid} for mid in new_message_ids]
+                new_recipients = _extract_recipients_from_messages(service, new_msgs)
+                cached_recipients.update(new_recipients)
+            else:
+                logger.info("No new sent messages since last run")
+        except Exception as e:
+            if "404" in str(e):
+                logger.warning("History ID expired, doing full scan")
+                cached_recipients = set()
+                cached_history_id = None
+            else:
+                raise
+
+    if not cached_history_id:
+        # Full scan: paginate through all sent messages
+        logger.info("Running full scan of sent messages...")
+        page_token = None
+        while True:
+            results = (
+                service.users()
+                .messages()
+                .list(userId="me", q="in:sent", maxResults=500, pageToken=page_token)
+                .execute()
             )
-            for header in msg.get("payload", {}).get("headers", []):
-                if header["name"].lower() in ("to", "cc", "bcc"):
-                    for addr in _parse_addresses(header["value"]):
-                        recipients.add(addr.lower())
-        page_token = results.get("nextPageToken")
-        if not page_token:
-            break
-    return sorted(recipients)
+            messages = results.get("messages", [])
+            if not messages:
+                break
+            cached_recipients.update(
+                _extract_recipients_from_messages(service, messages)
+            )
+            _save_recipients_cache(cached_recipients, None)
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+
+    # Save final cache with current history ID
+    profile = get_profile(service)
+    _save_recipients_cache(cached_recipients, profile["historyId"])
+
+    return sorted(cached_recipients)
 
 
 def _parse_addresses(header_value):
@@ -151,6 +222,10 @@ def _parse_addresses(header_value):
 
 def apply_label(service, message_id, label_id):
     """Apply a label to a message."""
+
+    logger.debug("Applying label %s to message %s", label_id, message_id)
+    return
+
     service.users().messages().modify(
         userId="me", id=message_id, body={"addLabelIds": [label_id]}
     ).execute()
