@@ -101,9 +101,6 @@ def ensure_label_exists(service, label_name):
         if label["name"].lower() == label_name.lower():
             return label["id"]
 
-    logger.info("Creating label: %s", label_name)
-    return None
-
     created = (
         service.users()
         .labels()
@@ -222,9 +219,6 @@ def _parse_addresses(header_value):
 
 def apply_label(service, message_id, label_id):
     """Apply a label to a message."""
-
-    logger.debug("Applying label %s to message %s", label_id, message_id)
-    return
 
     service.users().messages().modify(
         userId="me", id=message_id, body={"addLabelIds": [label_id]}
