@@ -115,6 +115,40 @@ def ensure_label_exists(service, label_name):
     return created["id"]
 
 
+def list_sent_recipients(service):
+    """Return a sorted set of all email addresses the user has ever sent to."""
+    recipients = set()
+    page_token = None
+    while True:
+        results = (
+            service.users()
+            .messages()
+            .list(userId="me", q="in:sent", maxResults=500, pageToken=page_token)
+            .execute()
+        )
+        messages = results.get("messages", [])
+        if not messages:
+            break
+        for msg_meta in messages:
+            msg = get_message(
+                service, msg_meta["id"], format="metadata", metadata_headers=["To", "Cc", "Bcc"]
+            )
+            for header in msg.get("payload", {}).get("headers", []):
+                if header["name"].lower() in ("to", "cc", "bcc"):
+                    for addr in _parse_addresses(header["value"]):
+                        recipients.add(addr.lower())
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+    return sorted(recipients)
+
+
+def _parse_addresses(header_value):
+    """Extract email addresses from a header value like 'Name <email>, ...'."""
+    import re
+    return re.findall(r"[\w.+-]+@[\w.-]+\.\w+", header_value)
+
+
 def apply_label(service, message_id, label_id):
     """Apply a label to a message."""
     service.users().messages().modify(
