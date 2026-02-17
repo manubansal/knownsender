@@ -13,6 +13,8 @@ from gmail_service import (
     ensure_label_exists,
     apply_label,
     list_sent_recipients,
+    load_scan_checkpoint,
+    save_scan_checkpoint,
 )
 from labeler import load_config, get_matching_labels
 
@@ -51,17 +53,29 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
 
 
 def initial_scan(service, label_configs, label_id_cache, known_senders=None, max_messages=None):
-    """Scan existing inbox messages and apply labels."""
+    """Scan existing inbox messages and apply labels, skipping already-processed ones."""
     limit_str = str(max_messages) if max_messages else "all"
     logger.info("Running initial inbox scan (%s messages)...", limit_str)
     messages = list_messages(service, query="in:inbox", max_results=max_messages)
-    total = len(messages)
-    logger.info("Found %d messages in inbox", total)
+
+    processed_ids = load_scan_checkpoint()
+    pending = [m for m in messages if m["id"] not in processed_ids]
+    skipped = len(messages) - len(pending)
+    if skipped:
+        logger.info("Skipping %d already-processed messages from checkpoint", skipped)
+
+    total = len(pending)
+    logger.info("Processing %d messages", total)
+    if total == 0:
+        return
+
     log_every = max(1, total // 10)
-    for i, msg in enumerate(messages, 1):
+    for i, msg in enumerate(pending, 1):
         process_message(service, msg["id"], label_configs, label_id_cache, known_senders)
+        processed_ids.add(msg["id"])
         if i % log_every == 0 or i == total:
             logger.info("Progress: %d/%d messages processed (%.0f%%)", i, total, 100 * i / total)
+            save_scan_checkpoint(processed_ids)
 
 
 def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):

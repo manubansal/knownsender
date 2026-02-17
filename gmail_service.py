@@ -12,6 +12,7 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 TOKEN_PATH = "token.json"
 CREDENTIALS_PATH = "credentials.json"
 RECIPIENTS_CACHE_PATH = "sent_recipients_cache.json"
+SCAN_CHECKPOINT_PATH = "scan_checkpoint.json"
 
 
 def get_service():
@@ -127,6 +128,20 @@ def ensure_label_exists(service, label_name):
     )
     logger.info("Created label: %s (id: %s)", label_name, created["id"])
     return created["id"]
+
+
+def load_scan_checkpoint():
+    """Load the set of already-processed message IDs from disk."""
+    if os.path.exists(SCAN_CHECKPOINT_PATH):
+        with open(SCAN_CHECKPOINT_PATH) as f:
+            return set(json.load(f).get("processed_ids", []))
+    return set()
+
+
+def save_scan_checkpoint(processed_ids):
+    """Persist the set of processed message IDs to disk."""
+    with open(SCAN_CHECKPOINT_PATH, "w") as f:
+        json.dump({"processed_ids": sorted(processed_ids)}, f)
 
 
 def _load_recipients_cache():
