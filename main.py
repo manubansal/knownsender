@@ -1,3 +1,4 @@
+import argparse
 import logging
 import signal
 import sys
@@ -49,10 +50,10 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
             )
 
 
-def initial_scan(service, label_configs, label_id_cache, known_senders=None):
+def initial_scan(service, label_configs, label_id_cache, known_senders=None, max_messages=100):
     """Scan existing inbox messages and apply labels."""
-    logger.info("Running initial inbox scan...")
-    messages = list_messages(service, query="in:inbox")
+    logger.info("Running initial inbox scan (max %d messages)...", max_messages)
+    messages = list_messages(service, query="in:inbox", max_results=max_messages)
     logger.info("Found %d messages in inbox", len(messages))
     for msg in messages:
         process_message(service, msg["id"], label_configs, label_id_cache, known_senders)
@@ -84,6 +85,13 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Gmail email labeling service")
+    parser.add_argument(
+        "--max-messages", type=int, default=100,
+        help="Max number of messages to process on initial scan (default: 100)",
+    )
+    args = parser.parse_args()
+
     signal.signal(signal.SIGINT, handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)
 
@@ -106,7 +114,7 @@ def main():
     logger.info("Loaded %d known senders", len(known_senders))
 
     # Initial scan of existing inbox
-    initial_scan(service, label_configs, label_id_cache, known_senders)
+    initial_scan(service, label_configs, label_id_cache, known_senders, args.max_messages)
 
     # Get current history ID for incremental polling
     profile = get_profile(service)
