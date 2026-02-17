@@ -71,6 +71,10 @@ def initial_scan(service, label_configs, label_id_cache, known_senders=None, max
 
     log_every = max(1, total // 10)
     for i, msg in enumerate(pending, 1):
+        if not running:
+            logger.info("Scan interrupted at %d/%d messages, progress saved", i - 1, total)
+            save_scan_checkpoint(processed_ids)
+            return
         process_message(service, msg["id"], label_configs, label_id_cache, known_senders)
         processed_ids.add(msg["id"])
         if i % log_every == 0 or i == total:
