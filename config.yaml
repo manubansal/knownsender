@@ -1,0 +1,32 @@
+polling_interval_seconds: 60
+
+labels:
+  - name: "Receipts"
+    rules:
+      - field: "from"
+        contains:
+          - "noreply@amazon.com"
+          - "receipts@"
+          - "no-reply@apple.com"
+      - field: "subject"
+        contains:
+          - "order confirmation"
+          - "receipt"
+          - "invoice"
+
+  - name: "GitHub"
+    rules:
+      - field: "from"
+        contains:
+          - "notifications@github.com"
+
+  - name: "Newsletters"
+    rules:
+      - field: "subject"
+        contains:
+          - "newsletter"
+          - "digest"
+          - "weekly update"
+      - field: "to"
+        contains:
+          - "+newsletters@"
