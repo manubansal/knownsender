@@ -87,8 +87,8 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
 def main():
     parser = argparse.ArgumentParser(description="Gmail email labeling service")
     parser.add_argument(
-        "--max-messages", type=int, default=100,
-        help="Max number of messages to process on initial scan (default: 100)",
+        "--max-messages", type=int, default=None,
+        help="Max number of messages to process on initial scan (default: all)",
     )
     args = parser.parse_args()
 
