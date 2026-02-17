@@ -11,6 +11,7 @@ from gmail_service import (
     get_message_headers,
     ensure_label_exists,
     apply_label,
+    _load_recipients_cache,
 )
 from labeler import load_config, get_matching_labels
 
@@ -29,13 +30,13 @@ def handle_shutdown(signum, frame):
     running = False
 
 
-def process_message(service, message_id, label_configs, label_id_cache):
+def process_message(service, message_id, label_configs, label_id_cache, known_senders=None):
     """Evaluate rules against a message and apply matching labels."""
     headers, existing_labels = get_message_headers(service, message_id)
     if not headers:
         return
 
-    matching_labels = get_matching_labels(headers, label_configs)
+    matching_labels = get_matching_labels(headers, label_configs, known_senders)
     for label_name in matching_labels:
         label_id = label_id_cache.get(label_name)
         if label_id and label_id not in existing_labels:
@@ -48,16 +49,16 @@ def process_message(service, message_id, label_configs, label_id_cache):
             )
 
 
-def initial_scan(service, label_configs, label_id_cache):
+def initial_scan(service, label_configs, label_id_cache, known_senders=None):
     """Scan existing inbox messages and apply labels."""
     logger.info("Running initial inbox scan...")
     messages = list_messages(service, query="in:inbox")
     logger.info("Found %d messages in inbox", len(messages))
     for msg in messages:
-        process_message(service, msg["id"], label_configs, label_id_cache)
+        process_message(service, msg["id"], label_configs, label_id_cache, known_senders)
 
 
-def poll_new_messages(service, history_id, label_configs, label_id_cache):
+def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):
     """Check for new messages since the last history ID."""
     try:
         records = list_history(service, history_id)
@@ -77,7 +78,7 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache):
     if message_ids:
         logger.info("Processing %d new message(s)", len(message_ids))
         for message_id in message_ids:
-            process_message(service, message_id, label_configs, label_id_cache)
+            process_message(service, message_id, label_configs, label_id_cache, known_senders)
 
     return history_id
 
@@ -100,8 +101,12 @@ def main():
         label_id_cache[name] = ensure_label_exists(service, name)
     logger.info("Labels ready: %s", list(label_id_cache.keys()))
 
+    # Load known senders from recipients cache
+    known_senders, _ = _load_recipients_cache()
+    logger.info("Loaded %d known senders from cache", len(known_senders))
+
     # Initial scan of existing inbox
-    initial_scan(service, label_configs, label_id_cache)
+    initial_scan(service, label_configs, label_id_cache, known_senders)
 
     # Get current history ID for incremental polling
     profile = get_profile(service)
@@ -117,12 +122,14 @@ def main():
         new_history_id = profile["historyId"]
 
         if new_history_id != history_id:
+            # Refresh known senders each polling cycle
+            known_senders, _ = _load_recipients_cache()
             result = poll_new_messages(
-                service, history_id, label_configs, label_id_cache
+                service, history_id, label_configs, label_id_cache, known_senders
             )
             if result is None:
                 # History expired, do a full scan
-                initial_scan(service, label_configs, label_id_cache)
+                initial_scan(service, label_configs, label_id_cache, known_senders)
             history_id = new_history_id
 
     logger.info("Service stopped.")

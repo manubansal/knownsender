@@ -20,6 +20,11 @@ labels:
         contains:
           - "notifications@github.com"
 
+  - name: "Known"
+    rules:
+      - field: "from"
+        known_sender: true
+
   - name: "Newsletters"
     rules:
       - field: "subject"
