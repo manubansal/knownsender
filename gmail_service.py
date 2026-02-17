@@ -162,7 +162,9 @@ def _save_recipients_cache(recipients, history_id):
 def _extract_recipients_from_messages(service, messages):
     """Extract recipient addresses from a list of message metadata."""
     recipients = set()
-    for msg_meta in messages:
+    total = len(messages)
+    log_every = max(1, total // 10)
+    for i, msg_meta in enumerate(messages, 1):
         msg = get_message(
             service, msg_meta["id"], format="metadata", metadata_headers=["To", "Cc", "Bcc"]
         )
@@ -170,6 +172,8 @@ def _extract_recipients_from_messages(service, messages):
             if header["name"].lower() in ("to", "cc", "bcc"):
                 for addr in _parse_addresses(header["value"]):
                     recipients.add(addr.lower())
+        if total > 10 and (i % log_every == 0 or i == total):
+            logger.info("Extracting recipients: %d/%d (%.0f%%)", i, total, 100 * i / total)
     return recipients
 
 
@@ -212,6 +216,7 @@ def list_sent_recipients(service):
         # Full scan: paginate through all sent messages
         logger.info("Running full scan of sent messages...")
         page_token = None
+        total_scanned = 0
         while True:
             results = (
                 service.users()
@@ -225,10 +230,13 @@ def list_sent_recipients(service):
             cached_recipients.update(
                 _extract_recipients_from_messages(service, messages)
             )
+            total_scanned += len(messages)
+            logger.info("Scanned %d sent messages so far...", total_scanned)
             _save_recipients_cache(cached_recipients, None)
             page_token = results.get("nextPageToken")
             if not page_token:
                 break
+        logger.info("Sent messages scan complete: %d total", total_scanned)
 
     # Save final cache with current history ID
     profile = get_profile(service)
