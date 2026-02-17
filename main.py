@@ -55,9 +55,13 @@ def initial_scan(service, label_configs, label_id_cache, known_senders=None, max
     limit_str = str(max_messages) if max_messages else "all"
     logger.info("Running initial inbox scan (%s messages)...", limit_str)
     messages = list_messages(service, query="in:inbox", max_results=max_messages)
-    logger.info("Found %d messages in inbox", len(messages))
-    for msg in messages:
+    total = len(messages)
+    logger.info("Found %d messages in inbox", total)
+    log_every = max(1, total // 10)
+    for i, msg in enumerate(messages, 1):
         process_message(service, msg["id"], label_configs, label_id_cache, known_senders)
+        if i % log_every == 0 or i == total:
+            logger.info("Progress: %d/%d messages processed (%.0f%%)", i, total, 100 * i / total)
 
 
 def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):
