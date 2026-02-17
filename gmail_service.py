@@ -41,11 +41,14 @@ def get_profile(service):
 
 
 def list_messages(service, query="in:inbox", max_results=100):
-    """List message IDs matching a query, paginating as needed."""
+    """List message IDs matching a query, paginating as needed.
+
+    Pass max_results=None to fetch all matching messages.
+    """
     messages = []
     page_token = None
-    while len(messages) < max_results:
-        batch_size = min(max_results - len(messages), 500)
+    while max_results is None or len(messages) < max_results:
+        batch_size = 500 if max_results is None else min(max_results - len(messages), 500)
         results = (
             service.users()
             .messages()
