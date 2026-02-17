@@ -41,14 +41,22 @@ def get_profile(service):
 
 
 def list_messages(service, query="in:inbox", max_results=100):
-    """List message IDs matching a query."""
-    results = (
-        service.users()
-        .messages()
-        .list(userId="me", q=query, maxResults=max_results)
-        .execute()
-    )
-    return results.get("messages", [])
+    """List message IDs matching a query, paginating as needed."""
+    messages = []
+    page_token = None
+    while len(messages) < max_results:
+        batch_size = min(max_results - len(messages), 500)
+        results = (
+            service.users()
+            .messages()
+            .list(userId="me", q=query, maxResults=batch_size, pageToken=page_token)
+            .execute()
+        )
+        messages.extend(results.get("messages", []))
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+    return messages
 
 
 def list_history(service, start_history_id, label_id="INBOX"):
