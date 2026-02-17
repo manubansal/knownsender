@@ -1,5 +1,6 @@
 credentials.json
 token.json
+sent_recipients_cache.json
 __pycache__/
 *.pyc
 .env
