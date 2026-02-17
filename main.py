@@ -11,7 +11,7 @@ from gmail_service import (
     get_message_headers,
     ensure_label_exists,
     apply_label,
-    _load_recipients_cache,
+    list_sent_recipients,
 )
 from labeler import load_config, get_matching_labels
 
@@ -101,9 +101,9 @@ def main():
         label_id_cache[name] = ensure_label_exists(service, name)
     logger.info("Labels ready: %s", list(label_id_cache.keys()))
 
-    # Load known senders from recipients cache
-    known_senders, _ = _load_recipients_cache()
-    logger.info("Loaded %d known senders from cache", len(known_senders))
+    # Build/update known senders cache
+    known_senders = set(list_sent_recipients(service))
+    logger.info("Loaded %d known senders", len(known_senders))
 
     # Initial scan of existing inbox
     initial_scan(service, label_configs, label_id_cache, known_senders)
@@ -123,7 +123,7 @@ def main():
 
         if new_history_id != history_id:
             # Refresh known senders each polling cycle
-            known_senders, _ = _load_recipients_cache()
+            known_senders = set(list_sent_recipients(service))
             result = poll_new_messages(
                 service, history_id, label_configs, label_id_cache, known_senders
             )
