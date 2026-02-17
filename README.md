@@ -9,6 +9,8 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 - **Content Matching**: Label emails where fields like `from`, `subject`, or `to` contain keywords
 - Efficiently polls for new messages using Gmail's history API (only processes changes, not the full inbox)
 - Maintains a local cache of all addresses you've ever sent email to
+- **Resumable initial scan**: progress is checkpointed so interrupted scans pick up where they left off
+- Logs scan progress at every 10% and gracefully handles `Ctrl+C` mid-scan
 
 ## Prerequisites
 
@@ -50,6 +52,8 @@ python main.py --max-messages 500
 
 The service polls continuously (default: every 60 seconds) and shuts down gracefully on `Ctrl+C` or `SIGTERM`.
 
+The initial scan logs progress every 10% and can be interrupted with `Ctrl+C` at any time — the checkpoint is saved and the next run will resume from where it left off.
+
 ## Configuration
 
 Edit `config.yaml` to define your polling interval and labeling rules:
@@ -87,3 +91,4 @@ Multiple rules per label use **OR** logic — any matching rule will apply the l
 | `credentials.json` | OAuth credentials (not committed) |
 | `token.json` | OAuth token (not committed) |
 | `sent_recipients_cache.json` | Local cache of sent addresses (not committed) |
+| `scan_checkpoint.json` | Tracks processed message IDs for scan resumption (not committed) |
