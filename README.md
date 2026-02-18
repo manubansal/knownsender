@@ -7,6 +7,7 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 - Monitors your Gmail inbox and applies labels based on rules defined in a YAML config
 - **Known Sender Detection**: Label emails from people you've previously emailed
 - **Content Matching**: Label emails where fields like `from`, `subject`, or `to` contain keywords
+- **Multi-account support**: run against any number of accounts; each account's credentials and state are isolated under `accounts/<name>/`
 - Efficiently polls for new messages using Gmail's history API (only processes changes, not the full inbox)
 - Maintains a local cache of all addresses you've ever sent email to
 - **Resumable initial scan**: progress is checkpointed so interrupted scans pick up where they left off
@@ -17,7 +18,7 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 
 - Python 3.x
 - A Google Cloud project with the Gmail API enabled
-- OAuth 2.0 credentials (Desktop/Installed app type) downloaded as `credentials.json`
+- OAuth 2.0 credentials (Desktop/Installed app type) downloaded as `credentials.json` for each account
 
 ## Installation
 
@@ -30,25 +31,30 @@ pip install -r requirements.txt
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project
 2. Enable the **Gmail API**
 3. Create an **OAuth 2.0 Client ID** (type: Desktop app)
-4. Download the credentials JSON and save it as `credentials.json` in the project root
+4. Download the credentials JSON and save it as `credentials.json` inside the account directory:
+   ```
+   accounts/<account>/credentials.json
+   ```
 
-On first run, a browser window will open to authorize Gmail access. The token is saved as `token.json` for subsequent runs.
+On first run, a browser window will open to authorize Gmail access. The token is saved as `accounts/<account>/token.json` for subsequent runs.
 
 ## Usage
 
 ```bash
-python main.py
+python main.py --account <name>
 ```
 
 **Options:**
 
 | Flag | Description |
 |------|-------------|
+| `--account NAME` | Account name to run as; state is stored under `accounts/<name>/` (required) |
 | `--max-messages N` | Limit the initial inbox scan to N messages (useful for large inboxes or testing) |
 
 **Example:**
 ```bash
-python main.py --max-messages 500
+python main.py --account personal
+python main.py --account work --max-messages 500
 ```
 
 The service polls continuously (default: every 60 seconds) and shuts down gracefully on `Ctrl+C` or `SIGTERM`.
@@ -89,7 +95,7 @@ Multiple rules per label use **OR** logic — any matching rule will apply the l
 | `gmail_service.py` | Gmail API integration; auth, fetching, labeling, caching |
 | `labeler.py` | Rule evaluation engine |
 | `config.yaml` | Polling interval and label rule definitions |
-| `credentials.json` | OAuth credentials (not committed) |
-| `token.json` | OAuth token (not committed) |
-| `sent_recipients_cache.json` | Local cache of sent addresses (not committed) |
-| `scan_checkpoint.json` | Tracks processed message IDs for scan resumption (not committed) |
+| `accounts/<name>/credentials.json` | OAuth credentials for the account (not committed) |
+| `accounts/<name>/token.json` | OAuth token for the account (not committed) |
+| `accounts/<name>/sent_recipients_cache.json` | Local cache of sent addresses (not committed) |
+| `accounts/<name>/scan_checkpoint.json` | Tracks processed message IDs for scan resumption (not committed) |

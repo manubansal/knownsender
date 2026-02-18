@@ -1,8 +1,6 @@
 credentials.json
 client_secret*
-token.json
-sent_recipients_cache.json
-scan_checkpoint.json
+accounts/
 __pycache__/
 *.pyc
 .env
