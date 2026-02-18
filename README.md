@@ -10,9 +10,9 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 - **Multi-account support**: run against any number of accounts; each account's credentials and state are isolated under `accounts/<name>/`
 - Efficiently polls for new messages using Gmail's history API (only processes changes, not the full inbox)
 - Maintains a local cache of all addresses you've ever sent email to
-- **Resumable initial scan**: progress is checkpointed so interrupted scans pick up where they left off
-- Logs scan progress at every 10% and gracefully handles `Ctrl+C` mid-scan
-- Logs progress during the sent recipients scan (per page for full scans, per 10% for incremental updates); scan is interruptible with `Ctrl+C` and resumes from the exact page where it left off on the next run
+- **Resumable scans**: both the inbox scan and sent recipients scan are checkpointed — interrupted scans resume exactly where they left off
+- Both scans are interruptible with `Ctrl+C` and log progress every 10 messages with an accurate `i/total (pct%)` meter
+- Sent recipients full scan fetches all message IDs upfront so the total is known before processing begins
 
 ## Prerequisites
 
@@ -63,7 +63,7 @@ python main.py --account work --max-messages 500
 
 The service polls continuously (default: every 60 seconds) and shuts down gracefully on `Ctrl+C` or `SIGTERM`.
 
-The initial scan logs progress every 10% and can be interrupted with `Ctrl+C` at any time — the checkpoint is saved and the next run will resume from where it left off.
+Both the initial inbox scan and the sent recipients scan log progress every 10 messages and can be interrupted with `Ctrl+C` at any time — the checkpoint is saved and the next run resumes from where it left off.
 
 ## Configuration
 
