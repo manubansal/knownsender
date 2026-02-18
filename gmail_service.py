@@ -9,29 +9,31 @@ from googleapiclient.discovery import build
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
-TOKEN_PATH = "token.json"
-CREDENTIALS_PATH = "credentials.json"
-RECIPIENTS_CACHE_PATH = "sent_recipients_cache.json"
-SCAN_CHECKPOINT_PATH = "scan_checkpoint.json"
 
 
-def get_service():
+def _path(data_dir, filename):
+    return os.path.join(data_dir, filename)
+
+
+def get_service(data_dir):
     """Authenticate and return a Gmail API service instance."""
+    token_path = _path(data_dir, "token.json")
+    credentials_path = _path(data_dir, "credentials.json")
     creds = None
-    if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if not os.path.exists(CREDENTIALS_PATH):
+            if not os.path.exists(credentials_path):
                 raise FileNotFoundError(
-                    f"{CREDENTIALS_PATH} not found. Download it from "
+                    f"{credentials_path} not found. Download it from "
                     "Google Cloud Console (APIs & Services > Credentials)."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open(TOKEN_PATH, "w") as token_file:
+        with open(token_path, "w") as token_file:
             token_file.write(creds.to_json())
     return build("gmail", "v1", credentials=creds)
 
@@ -130,32 +132,34 @@ def ensure_label_exists(service, label_name):
     return created["id"]
 
 
-def load_scan_checkpoint():
+def load_scan_checkpoint(data_dir):
     """Load the set of already-processed message IDs from disk."""
-    if os.path.exists(SCAN_CHECKPOINT_PATH):
-        with open(SCAN_CHECKPOINT_PATH) as f:
+    p = _path(data_dir, "scan_checkpoint.json")
+    if os.path.exists(p):
+        with open(p) as f:
             return set(json.load(f).get("processed_ids", []))
     return set()
 
 
-def save_scan_checkpoint(processed_ids):
+def save_scan_checkpoint(processed_ids, data_dir):
     """Persist the set of processed message IDs to disk."""
-    with open(SCAN_CHECKPOINT_PATH, "w") as f:
+    with open(_path(data_dir, "scan_checkpoint.json"), "w") as f:
         json.dump({"processed_ids": sorted(processed_ids)}, f)
 
 
-def _load_recipients_cache():
+def _load_recipients_cache(data_dir):
     """Load cached recipients, history ID, and scan page token from disk."""
-    if os.path.exists(RECIPIENTS_CACHE_PATH):
-        with open(RECIPIENTS_CACHE_PATH) as f:
+    p = _path(data_dir, "sent_recipients_cache.json")
+    if os.path.exists(p):
+        with open(p) as f:
             data = json.load(f)
             return set(data.get("recipients", [])), data.get("history_id"), data.get("scan_page_token")
     return set(), None, None
 
 
-def _save_recipients_cache(recipients, history_id, scan_page_token=None):
+def _save_recipients_cache(recipients, history_id, data_dir, scan_page_token=None):
     """Save recipients, history ID, and scan page token to disk."""
-    with open(RECIPIENTS_CACHE_PATH, "w") as f:
+    with open(_path(data_dir, "sent_recipients_cache.json"), "w") as f:
         json.dump({
             "recipients": sorted(recipients),
             "history_id": history_id,
@@ -184,7 +188,7 @@ def _extract_recipients_from_messages(service, messages, should_continue=None):
     return recipients, False  # (results, interrupted)
 
 
-def list_sent_recipients(service, should_continue=None):
+def list_sent_recipients(service, data_dir, should_continue=None):
     """Return a sorted set of all email addresses the user has ever sent to.
 
     Uses incremental caching: on first run, scans all sent messages and saves
@@ -194,7 +198,7 @@ def list_sent_recipients(service, should_continue=None):
     should_continue: optional callable; if it returns False the scan stops early
     and saves progress for the next run.
     """
-    cached_recipients, cached_history_id, saved_page_token = _load_recipients_cache()
+    cached_recipients, cached_history_id, saved_page_token = _load_recipients_cache(data_dir)
 
     if cached_history_id:
         # Incremental update: only fetch new sent messages since last run
@@ -233,7 +237,7 @@ def list_sent_recipients(service, should_continue=None):
         while True:
             if should_continue is not None and not should_continue():
                 logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
-                _save_recipients_cache(cached_recipients, None, page_token)
+                _save_recipients_cache(cached_recipients, None, data_dir, page_token)
                 return sorted(cached_recipients)
             results = (
                 service.users()
@@ -249,7 +253,7 @@ def list_sent_recipients(service, should_continue=None):
             total_scanned += len(messages)
             page_token = results.get("nextPageToken")
             logger.info("Scanned %d sent messages so far...", total_scanned)
-            _save_recipients_cache(cached_recipients, None, page_token)
+            _save_recipients_cache(cached_recipients, None, data_dir, page_token)
             if interrupted:
                 logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
                 return sorted(cached_recipients)
@@ -259,7 +263,7 @@ def list_sent_recipients(service, should_continue=None):
 
     # Save final cache with current history ID
     profile = get_profile(service)
-    _save_recipients_cache(cached_recipients, profile["historyId"])
+    _save_recipients_cache(cached_recipients, profile["historyId"], data_dir)
 
     return sorted(cached_recipients)
 

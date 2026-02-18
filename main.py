@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
@@ -52,13 +53,13 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
             )
 
 
-def initial_scan(service, label_configs, label_id_cache, known_senders=None, max_messages=None):
+def initial_scan(service, data_dir, label_configs, label_id_cache, known_senders=None, max_messages=None):
     """Scan existing inbox messages and apply labels, skipping already-processed ones."""
     limit_str = str(max_messages) if max_messages else "all"
     logger.info("Running initial inbox scan (%s messages)...", limit_str)
     messages = list_messages(service, query="in:inbox", max_results=max_messages)
 
-    processed_ids = load_scan_checkpoint()
+    processed_ids = load_scan_checkpoint(data_dir)
     pending = [m for m in messages if m["id"] not in processed_ids]
     skipped = len(messages) - len(pending)
     if skipped:
@@ -73,13 +74,13 @@ def initial_scan(service, label_configs, label_id_cache, known_senders=None, max
     for i, msg in enumerate(pending, 1):
         if not running:
             logger.info("Scan interrupted at %d/%d messages, progress saved", i - 1, total)
-            save_scan_checkpoint(processed_ids)
+            save_scan_checkpoint(processed_ids, data_dir)
             return
         process_message(service, msg["id"], label_configs, label_id_cache, known_senders)
         processed_ids.add(msg["id"])
         if i % log_every == 0 or i == total:
             logger.info("Progress: %d/%d messages processed (%.0f%%)", i, total, 100 * i / total)
-            save_scan_checkpoint(processed_ids)
+            save_scan_checkpoint(processed_ids, data_dir)
 
 
 def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):
@@ -110,10 +111,18 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
 def main():
     parser = argparse.ArgumentParser(description="Gmail email labeling service")
     parser.add_argument(
+        "--account", required=True,
+        help="Account name to use (state is stored under accounts/<account>/)",
+    )
+    parser.add_argument(
         "--max-messages", type=int, default=None,
         help="Max number of messages to process on initial scan (default: all)",
     )
     args = parser.parse_args()
+
+    data_dir = os.path.join("accounts", args.account)
+    os.makedirs(data_dir, exist_ok=True)
+    logger.info("Using account '%s' (data dir: %s)", args.account, data_dir)
 
     signal.signal(signal.SIGINT, handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -123,7 +132,7 @@ def main():
     interval = config.get("polling_interval_seconds", 60)
 
     logger.info("Authenticating with Gmail API...")
-    service = get_service()
+    service = get_service(data_dir)
 
     # Ensure all labels exist and cache their IDs
     label_id_cache = {}
@@ -133,11 +142,11 @@ def main():
     logger.info("Labels ready: %s", list(label_id_cache.keys()))
 
     # Build/update known senders cache
-    known_senders = set(list_sent_recipients(service, should_continue=lambda: running))
+    known_senders = set(list_sent_recipients(service, data_dir, should_continue=lambda: running))
     logger.info("Loaded %d known senders", len(known_senders))
 
     # Initial scan of existing inbox
-    initial_scan(service, label_configs, label_id_cache, known_senders, args.max_messages)
+    initial_scan(service, data_dir, label_configs, label_id_cache, known_senders, args.max_messages)
 
     # Get current history ID for incremental polling
     profile = get_profile(service)
@@ -154,13 +163,13 @@ def main():
 
         if new_history_id != history_id:
             # Refresh known senders each polling cycle
-            known_senders = set(list_sent_recipients(service, should_continue=lambda: running))
+            known_senders = set(list_sent_recipients(service, data_dir, should_continue=lambda: running))
             result = poll_new_messages(
                 service, history_id, label_configs, label_id_cache, known_senders
             )
             if result is None:
                 # History expired, do a full scan
-                initial_scan(service, label_configs, label_id_cache, known_senders)
+                initial_scan(service, data_dir, label_configs, label_id_cache, known_senders)
             history_id = new_history_id
 
     logger.info("Service stopped.")
