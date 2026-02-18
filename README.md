@@ -11,7 +11,7 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 - Maintains a local cache of all addresses you've ever sent email to
 - **Resumable initial scan**: progress is checkpointed so interrupted scans pick up where they left off
 - Logs scan progress at every 10% and gracefully handles `Ctrl+C` mid-scan
-- Logs progress during the sent recipients scan (per page for full scans, per 10% for incremental updates); scan is interruptible with `Ctrl+C` and saves progress for the next run
+- Logs progress during the sent recipients scan (per page for full scans, per 10% for incremental updates); scan is interruptible with `Ctrl+C` and resumes from the exact page where it left off on the next run
 
 ## Prerequisites
 

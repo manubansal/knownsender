@@ -145,18 +145,22 @@ def save_scan_checkpoint(processed_ids):
 
 
 def _load_recipients_cache():
-    """Load cached recipients and history ID from disk."""
+    """Load cached recipients, history ID, and scan page token from disk."""
     if os.path.exists(RECIPIENTS_CACHE_PATH):
         with open(RECIPIENTS_CACHE_PATH) as f:
             data = json.load(f)
-            return set(data.get("recipients", [])), data.get("history_id")
-    return set(), None
+            return set(data.get("recipients", [])), data.get("history_id"), data.get("scan_page_token")
+    return set(), None, None
 
 
-def _save_recipients_cache(recipients, history_id):
-    """Save recipients and history ID to disk."""
+def _save_recipients_cache(recipients, history_id, scan_page_token=None):
+    """Save recipients, history ID, and scan page token to disk."""
     with open(RECIPIENTS_CACHE_PATH, "w") as f:
-        json.dump({"recipients": sorted(recipients), "history_id": history_id}, f)
+        json.dump({
+            "recipients": sorted(recipients),
+            "history_id": history_id,
+            "scan_page_token": scan_page_token,
+        }, f)
 
 
 def _extract_recipients_from_messages(service, messages, should_continue=None):
@@ -190,7 +194,7 @@ def list_sent_recipients(service, should_continue=None):
     should_continue: optional callable; if it returns False the scan stops early
     and saves progress for the next run.
     """
-    cached_recipients, cached_history_id = _load_recipients_cache()
+    cached_recipients, cached_history_id, saved_page_token = _load_recipients_cache()
 
     if cached_history_id:
         # Incremental update: only fetch new sent messages since last run
@@ -219,14 +223,17 @@ def list_sent_recipients(service, should_continue=None):
                 raise
 
     if not cached_history_id:
-        # Full scan: paginate through all sent messages
-        logger.info("Running full scan of sent messages...")
-        page_token = None
+        # Full scan: paginate through all sent messages, resuming from checkpoint if available
+        if saved_page_token:
+            logger.info("Resuming sent recipients scan from checkpoint...")
+        else:
+            logger.info("Running full scan of sent messages...")
+        page_token = saved_page_token
         total_scanned = 0
         while True:
             if should_continue is not None and not should_continue():
                 logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
-                _save_recipients_cache(cached_recipients, None)
+                _save_recipients_cache(cached_recipients, None, page_token)
                 return sorted(cached_recipients)
             results = (
                 service.users()
@@ -240,12 +247,12 @@ def list_sent_recipients(service, should_continue=None):
             new_recipients, interrupted = _extract_recipients_from_messages(service, messages, should_continue)
             cached_recipients.update(new_recipients)
             total_scanned += len(messages)
+            page_token = results.get("nextPageToken")
             logger.info("Scanned %d sent messages so far...", total_scanned)
-            _save_recipients_cache(cached_recipients, None)
+            _save_recipients_cache(cached_recipients, None, page_token)
             if interrupted:
                 logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
                 return sorted(cached_recipients)
-            page_token = results.get("nextPageToken")
             if not page_token:
                 break
         logger.info("Sent messages scan complete: %d total", total_scanned)
