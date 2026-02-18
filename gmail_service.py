@@ -148,37 +148,33 @@ def save_scan_checkpoint(processed_ids, data_dir):
 
 
 def _load_recipients_cache(data_dir):
-    """Load cached recipients, history ID, and scan page token from disk."""
+    """Load cached recipients, history ID, and scan resume index from disk."""
     p = _path(data_dir, "sent_recipients_cache.json")
     if os.path.exists(p):
         with open(p) as f:
             data = json.load(f)
-            return set(data.get("recipients", [])), data.get("history_id"), data.get("scan_page_token")
-    return set(), None, None
+            return set(data.get("recipients", [])), data.get("history_id"), data.get("resume_index", 0)
+    return set(), None, 0
 
 
-def _save_recipients_cache(recipients, history_id, data_dir, scan_page_token=None):
-    """Save recipients, history ID, and scan page token to disk."""
+def _save_recipients_cache(recipients, history_id, data_dir, resume_index=0):
+    """Save recipients, history ID, and scan resume index to disk."""
     with open(_path(data_dir, "sent_recipients_cache.json"), "w") as f:
         json.dump({
             "recipients": sorted(recipients),
             "history_id": history_id,
-            "scan_page_token": scan_page_token,
+            "resume_index": resume_index,
         }, f)
 
 
-def _extract_recipients_from_messages(service, messages, should_continue=None, offset=0):
-    """Extract recipient addresses from a list of message metadata.
-
-    offset: number of messages already processed before this batch, used to
-    display a running global count in paginated contexts.
-    """
+def _extract_recipients_from_messages(service, messages, should_continue=None):
+    """Extract recipient addresses from a list of message metadata."""
     recipients = set()
     total = len(messages)
     log_every = max(1, total // 10)
     for i, msg_meta in enumerate(messages, 1):
         if should_continue is not None and not should_continue():
-            logger.info("Recipient extraction interrupted at %d processed", offset + i - 1)
+            logger.info("Recipient extraction interrupted at %d/%d", i - 1, total)
             return recipients, True  # (results, interrupted)
         msg = get_message(
             service, msg_meta["id"], format="metadata", metadata_headers=["To", "Cc", "Bcc"]
@@ -188,10 +184,7 @@ def _extract_recipients_from_messages(service, messages, should_continue=None, o
                 for addr in _parse_addresses(header["value"]):
                     recipients.add(addr.lower())
         if total > 10 and (i % log_every == 0 or i == total):
-            if offset:
-                logger.info("Extracting recipients: %d processed...", offset + i)
-            else:
-                logger.info("Extracting recipients: %d/%d (%.0f%%)", i, total, 100 * i / total)
+            logger.info("Extracting recipients: %d/%d (%.0f%%)", i, total, 100 * i / total)
     return recipients, False  # (results, interrupted)
 
 
@@ -205,7 +198,7 @@ def list_sent_recipients(service, data_dir, should_continue=None):
     should_continue: optional callable; if it returns False the scan stops early
     and saves progress for the next run.
     """
-    cached_recipients, cached_history_id, saved_page_token = _load_recipients_cache(data_dir)
+    cached_recipients, cached_history_id, resume_index = _load_recipients_cache(data_dir)
 
     if cached_history_id:
         # Incremental update: only fetch new sent messages since last run
@@ -234,39 +227,33 @@ def list_sent_recipients(service, data_dir, should_continue=None):
                 raise
 
     if not cached_history_id:
-        # Full scan: paginate through all sent messages, resuming from checkpoint if available
-        if saved_page_token:
-            logger.info("Resuming sent recipients scan from checkpoint...")
-        else:
-            logger.info("Running full scan of sent messages...")
-        page_token = saved_page_token
-        total_scanned = 0
-        while True:
+        # Full scan: collect all sent message IDs first so we know the total,
+        # then process with an accurate global progress percentage.
+        logger.info("Fetching list of all sent messages...")
+        all_messages = list_messages(service, query="in:sent", max_results=None)
+        total = len(all_messages)
+        logger.info("Found %d sent messages to process", total)
+
+        if resume_index:
+            logger.info("Resuming from message %d (skipping %d already processed)",
+                        resume_index + 1, resume_index)
+
+        for i, msg_meta in enumerate(all_messages[resume_index:], resume_index + 1):
             if should_continue is not None and not should_continue():
-                logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
-                _save_recipients_cache(cached_recipients, None, data_dir, page_token)
+                logger.info("Sent recipients scan interrupted at %d/%d, progress saved", i - 1, total)
+                _save_recipients_cache(cached_recipients, None, data_dir, resume_index=i - 1)
                 return sorted(cached_recipients)
-            results = (
-                service.users()
-                .messages()
-                .list(userId="me", q="in:sent", maxResults=500, pageToken=page_token)
-                .execute()
-            )
-            messages = results.get("messages", [])
-            if not messages:
-                break
-            new_recipients, interrupted = _extract_recipients_from_messages(service, messages, should_continue, offset=total_scanned)
-            cached_recipients.update(new_recipients)
-            total_scanned += len(messages)
-            page_token = results.get("nextPageToken")
-            logger.info("Scanned %d sent messages so far...", total_scanned)
-            _save_recipients_cache(cached_recipients, None, data_dir, page_token)
-            if interrupted:
-                logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
-                return sorted(cached_recipients)
-            if not page_token:
-                break
-        logger.info("Sent messages scan complete: %d total", total_scanned)
+            msg = get_message(service, msg_meta["id"], format="metadata",
+                              metadata_headers=["To", "Cc", "Bcc"])
+            for header in msg.get("payload", {}).get("headers", []):
+                if header["name"].lower() in ("to", "cc", "bcc"):
+                    for addr in _parse_addresses(header["value"]):
+                        cached_recipients.add(addr.lower())
+            if i % 10 == 0 or i == total:
+                logger.info("Processing sent messages: %d/%d (%.0f%%)", i, total, 100 * i / total)
+                _save_recipients_cache(cached_recipients, None, data_dir, resume_index=i)
+
+        logger.info("Sent messages scan complete: %d total", total)
 
     # Save final cache with current history ID
     profile = get_profile(service)
