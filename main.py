@@ -133,7 +133,7 @@ def main():
     logger.info("Labels ready: %s", list(label_id_cache.keys()))
 
     # Build/update known senders cache
-    known_senders = set(list_sent_recipients(service))
+    known_senders = set(list_sent_recipients(service, should_continue=lambda: running))
     logger.info("Loaded %d known senders", len(known_senders))
 
     # Initial scan of existing inbox
@@ -154,7 +154,7 @@ def main():
 
         if new_history_id != history_id:
             # Refresh known senders each polling cycle
-            known_senders = set(list_sent_recipients(service))
+            known_senders = set(list_sent_recipients(service, should_continue=lambda: running))
             result = poll_new_messages(
                 service, history_id, label_configs, label_id_cache, known_senders
             )
