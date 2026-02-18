@@ -173,6 +173,7 @@ To get started:
         if not running:
             break
 
+        logger.info("Polling for new messages...")
         profile = get_profile(service)
         new_history_id = profile["historyId"]
 
