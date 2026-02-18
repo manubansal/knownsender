@@ -159,12 +159,15 @@ def _save_recipients_cache(recipients, history_id):
         json.dump({"recipients": sorted(recipients), "history_id": history_id}, f)
 
 
-def _extract_recipients_from_messages(service, messages):
+def _extract_recipients_from_messages(service, messages, should_continue=None):
     """Extract recipient addresses from a list of message metadata."""
     recipients = set()
     total = len(messages)
     log_every = max(1, total // 10)
     for i, msg_meta in enumerate(messages, 1):
+        if should_continue is not None and not should_continue():
+            logger.info("Recipient extraction interrupted at %d/%d", i - 1, total)
+            return recipients, True  # (results, interrupted)
         msg = get_message(
             service, msg_meta["id"], format="metadata", metadata_headers=["To", "Cc", "Bcc"]
         )
@@ -174,15 +177,18 @@ def _extract_recipients_from_messages(service, messages):
                     recipients.add(addr.lower())
         if total > 10 and (i % log_every == 0 or i == total):
             logger.info("Extracting recipients: %d/%d (%.0f%%)", i, total, 100 * i / total)
-    return recipients
+    return recipients, False  # (results, interrupted)
 
 
-def list_sent_recipients(service):
+def list_sent_recipients(service, should_continue=None):
     """Return a sorted set of all email addresses the user has ever sent to.
 
     Uses incremental caching: on first run, scans all sent messages and saves
     the results. On subsequent runs, only processes new messages since the last
     cached history ID.
+
+    should_continue: optional callable; if it returns False the scan stops early
+    and saves progress for the next run.
     """
     cached_recipients, cached_history_id = _load_recipients_cache()
 
@@ -200,7 +206,7 @@ def list_sent_recipients(service):
             if new_message_ids:
                 logger.info("Found %d new sent message(s)", len(new_message_ids))
                 new_msgs = [{"id": mid} for mid in new_message_ids]
-                new_recipients = _extract_recipients_from_messages(service, new_msgs)
+                new_recipients, _ = _extract_recipients_from_messages(service, new_msgs, should_continue)
                 cached_recipients.update(new_recipients)
             else:
                 logger.info("No new sent messages since last run")
@@ -218,6 +224,10 @@ def list_sent_recipients(service):
         page_token = None
         total_scanned = 0
         while True:
+            if should_continue is not None and not should_continue():
+                logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
+                _save_recipients_cache(cached_recipients, None)
+                return sorted(cached_recipients)
             results = (
                 service.users()
                 .messages()
@@ -227,12 +237,14 @@ def list_sent_recipients(service):
             messages = results.get("messages", [])
             if not messages:
                 break
-            cached_recipients.update(
-                _extract_recipients_from_messages(service, messages)
-            )
+            new_recipients, interrupted = _extract_recipients_from_messages(service, messages, should_continue)
+            cached_recipients.update(new_recipients)
             total_scanned += len(messages)
             logger.info("Scanned %d sent messages so far...", total_scanned)
             _save_recipients_cache(cached_recipients, None)
+            if interrupted:
+                logger.info("Sent recipients scan interrupted at %d messages, progress saved", total_scanned)
+                return sorted(cached_recipients)
             page_token = results.get("nextPageToken")
             if not page_token:
                 break
