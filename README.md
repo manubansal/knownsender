@@ -26,17 +26,21 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 pip install -r requirements.txt
 ```
 
-## Google Cloud Setup
+## Setting Up a New Account
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project
-2. Enable the **Gmail API**
-3. Create an **OAuth 2.0 Client ID** (type: Desktop app)
-4. Download the credentials JSON and save it as `credentials.json` inside the account directory:
+When you run with a new account name for the first time, the program will print setup instructions and exit. Follow these steps:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project (or select an existing one)
+2. Enable the **Gmail API**: APIs & Services > Enable APIs > search "Gmail API"
+3. Create OAuth credentials: APIs & Services > Credentials > **Create Credentials > OAuth client ID**
+   - Application type: **Desktop app**
+4. Download the credentials JSON and save it to:
    ```
    accounts/<account>/credentials.json
    ```
+5. Re-run the command — a browser window will open to authorize Gmail access
 
-On first run, a browser window will open to authorize Gmail access. The token is saved as `accounts/<account>/token.json` for subsequent runs.
+The OAuth token is saved as `accounts/<account>/token.json` and reused on subsequent runs.
 
 ## Usage
 
