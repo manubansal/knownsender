@@ -167,14 +167,18 @@ def _save_recipients_cache(recipients, history_id, data_dir, scan_page_token=Non
         }, f)
 
 
-def _extract_recipients_from_messages(service, messages, should_continue=None):
-    """Extract recipient addresses from a list of message metadata."""
+def _extract_recipients_from_messages(service, messages, should_continue=None, offset=0):
+    """Extract recipient addresses from a list of message metadata.
+
+    offset: number of messages already processed before this batch, used to
+    display a running global count in paginated contexts.
+    """
     recipients = set()
     total = len(messages)
     log_every = max(1, total // 10)
     for i, msg_meta in enumerate(messages, 1):
         if should_continue is not None and not should_continue():
-            logger.info("Recipient extraction interrupted at %d/%d", i - 1, total)
+            logger.info("Recipient extraction interrupted at %d processed", offset + i - 1)
             return recipients, True  # (results, interrupted)
         msg = get_message(
             service, msg_meta["id"], format="metadata", metadata_headers=["To", "Cc", "Bcc"]
@@ -184,7 +188,10 @@ def _extract_recipients_from_messages(service, messages, should_continue=None):
                 for addr in _parse_addresses(header["value"]):
                     recipients.add(addr.lower())
         if total > 10 and (i % log_every == 0 or i == total):
-            logger.info("Extracting recipients: %d/%d (%.0f%%)", i, total, 100 * i / total)
+            if offset:
+                logger.info("Extracting recipients: %d processed...", offset + i)
+            else:
+                logger.info("Extracting recipients: %d/%d (%.0f%%)", i, total, 100 * i / total)
     return recipients, False  # (results, interrupted)
 
 
@@ -248,7 +255,7 @@ def list_sent_recipients(service, data_dir, should_continue=None):
             messages = results.get("messages", [])
             if not messages:
                 break
-            new_recipients, interrupted = _extract_recipients_from_messages(service, messages, should_continue)
+            new_recipients, interrupted = _extract_recipients_from_messages(service, messages, should_continue, offset=total_scanned)
             cached_recipients.update(new_recipients)
             total_scanned += len(messages)
             page_token = results.get("nextPageToken")
