@@ -62,7 +62,7 @@ python main.py --account personal
 python main.py --account work --max-messages 500
 ```
 
-The service polls continuously (default: every 60 seconds) and shuts down gracefully on `Ctrl+C` or `SIGTERM`.
+The service polls continuously (default: every 60 seconds) and shuts down immediately and gracefully on `Ctrl+C` or `SIGTERM` — the polling sleep is interrupted instantly rather than waiting out the full interval.
 
 Both the initial inbox scan and the sent recipients scan log progress every 10 messages and can be interrupted with `Ctrl+C` at any time — the checkpoint is saved and the next run resumes from where it left off.
 
@@ -102,5 +102,5 @@ Multiple rules per label use **OR** logic — any matching rule will apply the l
 | `config.yaml` | Polling interval and label rule definitions |
 | `accounts/<name>/credentials.json` | OAuth credentials for the account (not committed) |
 | `accounts/<name>/token.json` | OAuth token for the account (not committed) |
-| `accounts/<name>/sent_recipients_cache.json` | Local cache of sent addresses (not committed) |
-| `accounts/<name>/scan_checkpoint.json` | Tracks processed message IDs for scan resumption (not committed) |
+| `accounts/<name>/sent_recipients_cache.json` | Cache of sent addresses, history ID, and scan resume index (not committed) |
+| `accounts/<name>/scan_checkpoint.json` | Tracks processed message IDs and known senders count for scan resumption (not committed) |
