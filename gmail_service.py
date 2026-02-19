@@ -133,18 +133,22 @@ def ensure_label_exists(service, label_name):
 
 
 def load_scan_checkpoint(data_dir):
-    """Load the set of already-processed message IDs from disk."""
+    """Load the set of already-processed message IDs and known senders count from disk."""
     p = _path(data_dir, "scan_checkpoint.json")
     if os.path.exists(p):
         with open(p) as f:
-            return set(json.load(f).get("processed_ids", []))
-    return set()
+            data = json.load(f)
+            return set(data.get("processed_ids", [])), data.get("known_senders_count", 0)
+    return set(), 0
 
 
-def save_scan_checkpoint(processed_ids, data_dir):
-    """Persist the set of processed message IDs to disk."""
+def save_scan_checkpoint(processed_ids, data_dir, known_senders_count=0):
+    """Persist the set of processed message IDs and known senders count to disk."""
     with open(_path(data_dir, "scan_checkpoint.json"), "w") as f:
-        json.dump({"processed_ids": sorted(processed_ids)}, f)
+        json.dump({
+            "processed_ids": sorted(processed_ids),
+            "known_senders_count": known_senders_count,
+        }, f)
 
 
 def _load_recipients_cache(data_dir):
