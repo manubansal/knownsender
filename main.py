@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 
 from gmail_service import (
@@ -26,12 +27,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 running = True
+shutdown_event = threading.Event()
 
 
 def handle_shutdown(signum, frame):
     global running
     logger.info("Shutting down...")
     running = False
+    shutdown_event.set()
 
 
 def process_message(service, message_id, label_configs, label_id_cache, known_senders=None):
@@ -169,7 +172,7 @@ To get started:
     logger.info("Starting continuous polling (every %ds)...", interval)
 
     while running:
-        time.sleep(interval)
+        shutdown_event.wait(timeout=interval)
         if not running:
             break
 
