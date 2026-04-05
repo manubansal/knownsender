@@ -6,3 +6,5 @@ __pycache__/
 .env
 *.swp
 *.swo
+*.duckdb
+.DS_Store
