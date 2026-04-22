@@ -15,10 +15,12 @@ def _path(data_dir, filename):
     return os.path.join(data_dir, filename)
 
 
+CREDENTIALS_PATH = "credentials.json"
+
+
 def get_service(data_dir):
     """Authenticate and return a Gmail API service instance."""
     token_path = _path(data_dir, "token.json")
-    credentials_path = _path(data_dir, "credentials.json")
     creds = None
     if os.path.exists(token_path):
         creds = Credentials.from_authorized_user_file(token_path, SCOPES)
@@ -26,12 +28,12 @@ def get_service(data_dir):
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if not os.path.exists(credentials_path):
+            if not os.path.exists(CREDENTIALS_PATH):
                 raise FileNotFoundError(
-                    f"{credentials_path} not found. Download it from "
-                    "Google Cloud Console (APIs & Services > Credentials)."
+                    f"{CREDENTIALS_PATH} not found. "
+                    "See README for one-time setup instructions."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
         with open(token_path, "w") as token_file:
             token_file.write(creds.to_json())
