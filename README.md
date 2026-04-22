@@ -18,8 +18,7 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 ## Prerequisites
 
 - Python 3.x
-- A Google Cloud project with the Gmail API enabled
-- OAuth 2.0 credentials (Desktop/Installed app type) downloaded as `credentials.json` for each account
+- `credentials.json` in the repo root (one-time setup — see below)
 
 ## Installation
 
@@ -27,21 +26,27 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 pip install -r requirements.txt
 ```
 
-## Setting Up a New Account
+## One-Time App Setup
 
-When you run with a new account name for the first time, the program will print setup instructions and exit. Follow these steps:
+This only needs to be done once by whoever maintains the repo:
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project (or select an existing one)
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project
 2. Enable the **Gmail API**: APIs & Services > Enable APIs > search "Gmail API"
 3. Create OAuth credentials: APIs & Services > Credentials > **Create Credentials > OAuth client ID**
    - Application type: **Desktop app**
-4. Download the credentials JSON and save it to:
-   ```
-   accounts/<account>/credentials.json
-   ```
-5. Re-run the command — a browser window will open to authorize Gmail access
+4. Download the credentials JSON and save it as `credentials.json` in the repo root
 
-The OAuth token is saved as `accounts/<account>/token.json` and reused on subsequent runs.
+Commit `credentials.json` — it's the app's OAuth client identity and is safe to share.
+
+## Adding a New Account
+
+Just run the command — a browser window opens immediately for Gmail authorization:
+
+```bash
+python main.py --account personal
+```
+
+The OAuth token is saved as `accounts/<name>/token.json` and reused on subsequent runs.
 
 ## Usage
 
@@ -100,7 +105,7 @@ Multiple rules per label use **OR** logic — any matching rule will apply the l
 | `gmail_service.py` | Gmail API integration; auth, fetching, labeling, caching |
 | `labeler.py` | Rule evaluation engine |
 | `config.yaml` | Polling interval and label rule definitions |
-| `accounts/<name>/credentials.json` | OAuth credentials for the account (not committed) |
+| `credentials.json` | OAuth client credentials for the app (committed; shared across accounts) |
 | `accounts/<name>/token.json` | OAuth token for the account (not committed) |
 | `accounts/<name>/sent_recipients_cache.json` | Cache of sent addresses, history ID, and scan resume index (not committed) |
 | `accounts/<name>/scan_checkpoint.json` | Tracks processed message IDs and known senders count for scan resumption (not committed) |
