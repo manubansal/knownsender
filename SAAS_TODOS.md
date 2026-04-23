@@ -111,7 +111,19 @@ All secrets (Neon connection string, OAuth client secret, token encryption key) 
 
 ---
 
-## Code restructure (do this first)
+## Test plan (do this before everything else)
+
+Before any implementation work begins — including the code restructure — write a test plan and implement the test scaffolding. New functionality is written test-first: tests are written before the implementation they cover.
+
+- [ ] Write a test plan covering: unit tests for `claven/core/` modules, integration tests for server endpoints, end-to-end tests for CLI commands against a local server
+- [ ] Decide on test framework (`pytest`) and key libraries (`pytest-httpx` or similar for HTTP mocking, `pytest-asyncio` if using async, a Postgres test fixture strategy for Neon — either a local Postgres instance or Neon branching)
+- [ ] Set up `pytest` with a `tests/` directory structure mirroring `claven/core/`
+- [ ] Write a test fixture strategy for the database — tests must not touch the production Neon instance; use a local Postgres container or Neon branch per test run
+- [ ] Write a test fixture for a fake Gmail API — all `claven/core/gmail.py` calls must be interceptable in tests without real Gmail credentials
+- [ ] Document the test plan in `tests/README.md` before writing any implementation
+- [ ] Add test run to CI/CD pipeline — tests must pass before a deploy proceeds
+
+## Code restructure (do this first, after test plan)
 
 Everything else depends on this shape. Current `main.py`, `gmail_service.py`, and `labeler.py` are flat scripts — restructure into a `claven/` package before adding any new functionality.
 

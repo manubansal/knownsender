@@ -34,6 +34,10 @@ Push, pull, and poll modes can process the same user concurrently. Label applica
 **5. No secrets in code or config files.**
 Secrets (OAuth client secret, Neon connection string, token encryption key) are injected via environment variables at runtime. Do not hardcode or commit credentials.
 
+## Development approach
+
+This project follows test-driven development. **Tests are written before implementation.** Do not write implementation code for a feature or module without a corresponding test written first. The test plan lives in `tests/README.md`.
+
 ## Active branch
 
 `saas` is the active development branch. `main` is protected — PRs only, no direct pushes.
