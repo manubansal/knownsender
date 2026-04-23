@@ -342,6 +342,39 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 - [ ] Implement `status`
 - [ ] Implement `rules list`, `rules add`, `rules delete` _(can follow DB migration)_
 
+## Security
+
+### CLI → server authentication
+- [ ] Decide on an authentication mechanism for CLI requests to the server (API key, JWT, or OAuth token)
+- [ ] Implement server-side verification of CLI requests on all `/internal/*` and user-scoped endpoints
+- [ ] Document how a user obtains and stores their credentials for the CLI (env var? `~/.claven/credentials`?)
+
+### Webhook verification
+- [ ] Verify that Pub/Sub push requests to `/webhook/gmail` carry a valid Google service account token in the `Authorization` header
+- [ ] Reject unauthenticated webhook calls with 401 before any processing occurs
+
+### Multi-tenancy isolation
+- [ ] All DB queries must be scoped to the authenticated user — no cross-user data access possible at the query level
+- [ ] Audit all `core.db` queries before going to production to confirm user_id scoping is enforced everywhere
+
+### Rate limiting
+- [ ] Add rate limiting to all server endpoints to prevent abuse and runaway retry storms
+- [ ] Apply stricter limits to OAuth and auth endpoints
+
+## Observability
+
+- [ ] Define a structured logging strategy — log format, fields (user_id, request_id, event type), log levels
+- [ ] Integrate with Cloud Logging — ensure structured logs from Cloud Run are queryable per-user and per-event
+- [ ] Add an error tracking integration (e.g. Sentry) for unhandled exceptions in production
+- [ ] Add a `/healthz` health check endpoint — required by Cloud Run to verify the service is alive; should check DB connectivity
+
+## Database migrations
+
+- [ ] Set up Alembic for schema migrations — all schema changes go through migration files, never applied manually
+- [ ] Version the schema from the start; first migration creates the initial tables
+- [ ] Document the migration workflow: run migrations on deploy before the new container starts serving traffic
+- [ ] Ensure migrations are safe to run against a live DB (additive changes, no destructive migrations without a plan)
+
 ## Web Server
 
 - [ ] Add a web framework (FastAPI, Flask, Django — pick one) to serve:
@@ -390,8 +423,27 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 - [ ] Pull fallback: configurable interval (default 5 min) → `/internal/pull`
 - [ ] Poll fallback: configurable interval → `/internal/poll` (can be disabled when push is healthy)
 
+### Local development setup
+- [ ] Write a `docker-compose.yml` that runs the server and a local Postgres instance — single command to get the full stack running locally
+- [ ] Document the local dev setup in README: how to set required env vars, run the server, point the CLI at it
+
+### CLI packaging and installation
+- [ ] Package `claven` as a PyPI package so users can install with `pip install claven`
+- [ ] Consider a Homebrew formula or standalone binary (e.g. via PyInstaller) for users who don't want to manage a Python environment
+- [ ] Document installation in README
+
+### User offboarding
+- [ ] Implement account deletion: revoke Gmail OAuth tokens, call `gmail.users.stop()`, delete all user rows from Neon
+- [ ] Expose via CLI: `claven auth delete --user <email>`
+- [ ] Expose via server: `DELETE /user` (authenticated)
+
+### API versioning
+- [ ] Define a versioning policy for the CLI ↔ server API contract (e.g. `/v1/` prefix, or a version header)
+- [ ] Add a version handshake: CLI sends its version on every request; server rejects incompatible versions with a clear error message rather than silent breakage
+
 ### CI/CD
-- [ ] Set up a GitHub Actions workflow: on push to `main`, build the Docker image, push to Artifact Registry, and deploy to Cloud Run (`gcloud run deploy`)
+- [ ] Set up a GitHub Actions workflow: on push to `main`, run tests, build the Docker image, push to Artifact Registry, and deploy to Cloud Run (`gcloud run deploy`)
+- [ ] Run database migrations as part of the deploy step, before the new container starts serving traffic
 
 ## What's Already Reusable
 
