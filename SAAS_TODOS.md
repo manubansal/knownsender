@@ -42,11 +42,89 @@ No Pub/Sub involved. Cloud Scheduler triggers Cloud Run on a configurable interv
 
 The initial scan (Cloud Run Job) and the notification modes (push/pull/poll) are distinct code paths. The scan walks the full inbox once and establishes the `historyId`. The notification modes only process incremental history since that `historyId` and are never used for bootstrapping.
 
+### Code structure: core library + thin entry points
+
+All business logic lives in a `claven/core/` package. The CLI, web server, and Cloud Run Job are thin entry points that call into the core — they handle how work is triggered, not what the work is. No logic lives in entry points; no logic is duplicated across them.
+
+```
+claven/
+  core/
+    scan.py      # initial_scan, sent_recipients (list_messages-based, one-time)
+    process.py   # process_message, run_poll, run_pull (list_history-based, incremental)
+    watch.py     # gmail.users.watch / stop / renew
+    db.py        # all Neon reads and writes
+    gmail.py     # Gmail API calls (from gmail_service.py)
+    rules.py     # label matching (from labeler.py)
+    auth.py      # token storage, refresh, OAuth flow helpers
+
+  cli.py         # click entry point — thin HTTP client to server.py
+  server.py      # FastAPI/Flask entry point — parse HTTP, call core, return JSON
+  job.py         # Cloud Run Job entry point — call core, exit
+```
+
+The CLI is a **thin HTTP client to the server** — it does not import or run `claven/core/` directly. This means:
+- No business logic in the CLI layer
+- No version drift between CLI and server (core only runs server-side)
+- Concurrency is handled in one place (the server)
+- Local dev: point `CLAVEN_SERVER_URL` at a local `server.py` instance
+- Production: point `CLAVEN_SERVER_URL` at the Cloud Run service URL
+
+`claven poll --once` POSTs to `$CLAVEN_SERVER_URL/internal/poll`. `POST /internal/poll` calls `core.process.run_poll()`. Same execution path regardless of caller.
+
+### Serverless platform: Cloud Run
+
+**Current decision: Cloud Run.** Alternatives considered: Fly.io.
+
+Rationale for Cloud Run:
+- Native integration with Pub/Sub, Cloud Scheduler, Secret Manager, Artifact Registry — all already in the stack
+- Generous free tier (2M requests/month, 360K GB-seconds, 180K vCPU-seconds) — sufficient for early stage
+- Pay-as-you-go beyond free tier; no hard billing cap built in (see billing risk below)
+
+Fly.io is a viable alternative if billing risk or GCP ecosystem lock-in becomes a concern — it has always-on free instances and configurable spending limits. Revisit if Cloud Run costs become an issue.
+
+**Billing risk:** GCP budget alerts notify but do not stop services. A retry storm or DDoS could generate unexpected charges. Mitigations: set a GCP budget alert at a low threshold ($5-10), consider a Cloud Function to disable billing if the threshold is breached. Verify current GCP billing safety options before going to production.
+
+### Latency model
+
+The CLI talks to the server over HTTP. End-to-end latency depends on the state of two independent components: the Cloud Run container and the Neon database.
+
+| Config | Container | Neon | Typical latency | Notes |
+|---|---|---|---|---|
+| **cold-cold** | Cold | Suspended | 4–7s | Both need to wake up; worst case |
+| **cold-warm** | Cold | Active | 3–6s | Container dominates; Neon was recently used |
+| **warm-cold** | Warm | Suspended | ~500–600ms | Neon free tier suspends after 5 min idle |
+| **warm-warm** | Warm | Active | 25–70ms | Fully warm path; excellent interactive latency |
+
+**Container warm window:** Cloud Run keeps a container warm for approximately 15 minutes after the last request (not guaranteed; platform-managed). Within a session, only the first command pays the cold start cost.
+
+**Neon suspension:** Neon free tier suspends the database after 5 minutes of inactivity. Wake time is ~500ms. Paid Neon plans allow disabling suspension.
+
+**min-instances configuration:**
+- `min-instances=0` (default): scale to zero, free tier, cold-cold or cold-warm on first request per session
+- `min-instances=1`: one container always warm, eliminates container cold start, ~$10–15/month — defer until interactive UX is a priority for paying users
+
+For Pub/Sub webhooks and Cloud Scheduler triggers, cold start latency is acceptable — they are not interactive. The cold start cost only matters for CLI use.
+
 ### Secrets and config
 
 All secrets (Neon connection string, OAuth client secret, token encryption key) are stored in Google Secret Manager and mounted as environment variables. Nothing sensitive is baked into the container image.
 
 ---
+
+## Code restructure (do this first)
+
+Everything else depends on this shape. Current `main.py`, `gmail_service.py`, and `labeler.py` are flat scripts — restructure into a `claven/` package before adding any new functionality.
+
+- [ ] Create `claven/` package with `core/` subpackage
+- [ ] Move `labeler.py` → `claven/core/rules.py` (no logic changes)
+- [ ] Move Gmail API calls from `gmail_service.py` → `claven/core/gmail.py` (no logic changes)
+- [ ] Extract `initial_scan` and sent recipients logic from `main.py` → `claven/core/scan.py`
+- [ ] Extract `process_message`, `poll_new_messages` from `main.py` → `claven/core/process.py`
+- [ ] Create `claven/core/db.py` as a stub (file-based for now, swapped for Neon later)
+- [ ] Create `claven/core/auth.py` as a stub (wraps current `get_service` for now)
+- [ ] Create `claven/cli.py` as the new entry point — thin `click` wrapper over core functions, replacing `main.py`
+- [ ] Create `claven/server.py` and `claven/job.py` as empty stubs so the shape is established
+- [ ] Verify the restructured code runs identically to the current `main.py` before proceeding
 
 ## Auth & OAuth
 
@@ -241,9 +319,11 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 
 - [ ] Set up `click` with a top-level group and subcommand groups (`auth`, `scan`, `watch`, `pull`, `poll`, `status`, `rules`)
 - [ ] Implement global `--output json` flag and a shared output helper that switches between log lines and JSON
-- [ ] Implement shared JSON error handler that catches exceptions, writes to stderr, and exits with code 2
+- [ ] Implement global `--server-url` flag (default: `$CLAVEN_SERVER_URL`) — all commands route to this base URL
+- [ ] Implement shared HTTP client with JSON error handling: maps non-2xx responses to stderr JSON + exit code 2
+- [ ] Implement streaming response handling for long-running commands (`scan`, `pull`, `poll`) — server sends newline-delimited JSON progress events, CLI forwards them to stdout
 - [ ] Implement `auth login`, `auth logout`, `auth status`
-- [ ] Implement `scan` with progress streaming and resumable checkpoint via Neon
+- [ ] Implement `scan`
 - [ ] Implement `watch start`, `watch renew`, `watch stop`
 - [ ] Implement `pull --once` and `pull` (loop)
 - [ ] Implement `poll --once`, `poll --interval N`
@@ -270,6 +350,12 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 
 ## Infrastructure (Cloud Run + Neon)
 
+### Platform decision
+- [x] **Serverless platform: Cloud Run** — chosen for native GCP integration (Pub/Sub, Scheduler, Secret Manager, Artifact Registry); free tier sufficient for early stage
+- [ ] **Revisit if needed:** Fly.io is a viable alternative with always-on free instances and hard spending limits — evaluate if Cloud Run billing risk or cold start latency becomes a real problem for users
+- [ ] Set up a GCP budget alert at $10/month to catch unexpected charges early; investigate Cloud Function billing kill-switch before going to production
+- [ ] Decide on `min-instances` setting: start at 0 (free, cold starts); upgrade to 1 (~$10–15/month) when interactive CLI latency matters to paying users
+
 ### Neon (database)
 - [ ] Create a Neon project and grab the connection string — free tier gives one Postgres database
 - [ ] Store the connection string as a secret (not in source); inject via environment variable at runtime
@@ -278,7 +364,7 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 ### Cloud Run (app)
 - [ ] Containerize the app — write a `Dockerfile` that installs dependencies and runs the web server
 - [ ] Push the image to **Google Artifact Registry** (free tier covers storage for one region)
-- [ ] Deploy to Cloud Run: set min instances to 0 (scales to zero when idle), configure memory/CPU for the webhook handler (256MB is likely enough)
+- [ ] Deploy to Cloud Run: set `min-instances=0` initially (scales to zero when idle); 256MB memory is likely sufficient for the webhook handler
 - [ ] Store all secrets (Neon connection string, OAuth client secret, token encryption key) in **Google Secret Manager** and mount them as environment variables in the Cloud Run service
 
 ### Pub/Sub (push + pull subscriptions)
@@ -297,7 +383,7 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 
 ## What's Already Reusable
 
-The Gmail API call logic and the rule engine are clean and don't need significant changes:
-- `labeler.py` — pure logic, no changes needed
-- `gmail_service.py` — all the API calls (`list_messages`, `list_history`, `get_message_headers`, `apply_label`, etc.) are reusable; just the auth/token plumbing and file I/O need replacing
-- `process_message`, `poll_new_messages`, `initial_scan` — the logic is sound; they just need DB-backed state passed in instead of `data_dir`
+The Gmail API call logic and the rule engine are clean and don't need significant changes — they move into `claven/core/` as-is:
+- `labeler.py` → `claven/core/rules.py` — pure logic, no changes needed
+- `gmail_service.py` → `claven/core/gmail.py` — all API calls are reusable; only auth/token plumbing and file I/O need replacing
+- `process_message`, `poll_new_messages`, `initial_scan` in `main.py` → `claven/core/process.py` and `claven/core/scan.py` — logic is sound; just need DB-backed state passed in instead of `data_dir`
