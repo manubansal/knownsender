@@ -120,7 +120,7 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Gmail email labeling service")
+    parser = argparse.ArgumentParser(description="Claven — Gmail labeling service")
     parser.add_argument(
         "--account", required=True,
         help="Account name to use (state is stored under accounts/<account>/)",

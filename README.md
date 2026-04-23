@@ -1,4 +1,4 @@
-# KnownSender
+# Claven
 
 An intelligent Gmail labeling service that automatically categorizes incoming emails based on configurable rules.
 
