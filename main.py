@@ -120,7 +120,7 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Gmail email labeling service")
+    parser = argparse.ArgumentParser(description="Claven — Gmail labeling service")
     parser.add_argument(
         "--account", required=True,
         help="Account name to use (state is stored under accounts/<account>/)",
@@ -134,22 +134,6 @@ def main():
     data_dir = os.path.join("accounts", args.account)
     os.makedirs(data_dir, exist_ok=True)
     logger.info("Using account '%s' (data dir: %s)", args.account, data_dir)
-
-    credentials_path = os.path.join(data_dir, "credentials.json")
-    if not os.path.exists(credentials_path):
-        print(f"""
-Account '{args.account}' is not set up yet.
-
-To get started:
-  1. Go to https://console.cloud.google.com/ and create a project (or select an existing one)
-  2. Enable the Gmail API: APIs & Services > Enable APIs > search "Gmail API"
-  3. Create OAuth credentials: APIs & Services > Credentials > Create Credentials > OAuth client ID
-     - Application type: Desktop app
-  4. Download the credentials JSON and save it to:
-       {credentials_path}
-  5. Re-run this command — a browser window will open to authorize Gmail access.
-""")
-        sys.exit(1)
 
     signal.signal(signal.SIGINT, handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)
