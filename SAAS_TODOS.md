@@ -115,13 +115,110 @@ All secrets (Neon connection string, OAuth client secret, token encryption key) 
 
 Before any implementation work begins — including the code restructure — write a test plan and implement the test scaffolding. New functionality is written test-first: tests are written before the implementation they cover.
 
-- [ ] Write a test plan covering: unit tests for `claven/core/` modules, integration tests for server endpoints, end-to-end tests for CLI commands against a local server
-- [ ] Decide on test framework (`pytest`) and key libraries (`pytest-httpx` or similar for HTTP mocking, `pytest-asyncio` if using async, a Postgres test fixture strategy for Neon — either a local Postgres instance or Neon branching)
-- [ ] Set up `pytest` with a `tests/` directory structure mirroring `claven/core/`
-- [ ] Write a test fixture strategy for the database — tests must not touch the production Neon instance; use a local Postgres container or Neon branch per test run
-- [ ] Write a test fixture for a fake Gmail API — all `claven/core/gmail.py` calls must be interceptable in tests without real Gmail credentials
-- [ ] Document the test plan in `tests/README.md` before writing any implementation
-- [ ] Add test run to CI/CD pipeline — tests must pass before a deploy proceeds
+### Directory structure
+
+```
+tests/
+  unit/          # pure logic, no I/O — runs in milliseconds
+  integration/   # real DB, mocked Gmail API — runs in seconds
+  server/        # HTTP layer via test client — no real server needed
+  e2e/           # CLI against a running local server — slowest, run on merge only
+  fixtures/      # shared DB, Gmail, and user factories
+  conftest.py    # top-level shared fixtures
+  README.md      # test plan documentation (written before any implementation)
+```
+
+### Frameworks and libraries
+
+| Concern | Library | Reason |
+|---|---|---|
+| Test framework | `pytest` | Standard |
+| Async support | `pytest-asyncio` | FastAPI encourages async |
+| Test DB | `pytest-postgresql` | Real Postgres, no Docker dep, self-contained |
+| DB transactions | Per-test rollback fixture | No state leaks between tests |
+| Schema setup | Alembic migrations at session start | Tests always run against the real schema |
+| Gmail mocking | `FakeGmailService` class | Full control, inspectable, no VCR fragility |
+| Server testing | `httpx` + ASGI transport | Test HTTP layer without a real server |
+| CLI HTTP mocking | `respx` | Intercepts outbound CLI requests for unit-level CLI tests |
+| Time mocking | `freezegun` | Token expiry, watch expiry, scheduler tests |
+| Test data | `pytest` fixtures + factory functions | Keep it simple; add `factory_boy` if complexity grows |
+
+### Key fixtures
+
+**Database fixture** — `pytest-postgresql` spins up a real Postgres process per test session. Each test runs inside a transaction that rolls back on teardown — no state leaks. Alembic migrations run once at session start so tests always run against the live schema.
+
+**`FakeGmailService`** — a class implementing the same interface as `claven/core/gmail.py`. Seeded with messages, history records, and sent recipients per test. Tracks all calls (so tests can assert `apply_label` was called with the right args). Simulates errors: 429 rate limit, 404 expired `historyId`, network failure.
+
+### CI strategy
+
+- **Unit + integration + server tests**: run on every PR — must pass before merge
+- **E2E tests**: run on merge to `main` only — too slow for every PR
+- **Test DB in CI**: GitHub Actions `services` block with a Postgres container
+
+### Setup tasks
+
+- [ ] Add `pytest`, `pytest-asyncio`, `pytest-postgresql`, `httpx`, `respx`, `freezegun` to `requirements-dev.txt`
+- [ ] Set up `pytest.ini` / `pyproject.toml` with test paths, async mode, and markers (`unit`, `integration`, `server`, `e2e`)
+- [ ] Write `tests/conftest.py` with shared DB session fixture (per-test rollback) and `FakeGmailService` fixture
+- [ ] Write `tests/fixtures/db.py` — test user factory, token factory, scan state factory
+- [ ] Write `tests/fixtures/gmail.py` — `FakeGmailService` with seedable messages, history, sent recipients, and call tracking
+- [ ] Run Alembic migrations against test DB at session start
+- [ ] Write `tests/README.md` documenting the test plan before any implementation begins
+- [ ] Add unit + integration + server tests to GitHub Actions CI; E2E tests gated to merge-to-main only
+
+### Unit test cases — `core/rules.py`
+
+- [ ] Rule matches on `From` header
+- [ ] Rule matches on `Subject` header
+- [ ] `known_senders` condition — known sender labelled differently from unknown
+- [ ] Multiple rules — all matching rules applied
+- [ ] No rules match — no label applied, no error
+- [ ] Empty rules list — no error
+- [ ] Regex pattern in rule — matches and non-matches
+
+### Integration test cases — `core/process.py`
+
+- [ ] New message arrives, matching rule → label applied
+- [ ] New message, no matching rule → nothing applied, no error
+- [ ] Message already has the label → `apply_label` not called again (idempotent)
+- [ ] No new messages since `historyId` → no-op, `historyId` unchanged
+- [ ] `historyId` expired (fake Gmail returns 404) → falls back to full scan
+- [ ] Two concurrent processes on same user → second skips via `SKIP LOCKED`, no duplicate processing
+
+### Integration test cases — `core/scan.py`
+
+- [ ] Full scan processes all messages, writes `historyId` to DB on completion
+- [ ] Scan interrupted mid-way → checkpoint saved; resume picks up where it left off, no duplicates
+- [ ] `known_senders` cache built correctly from Sent mail
+- [ ] `--max-messages` limit respected
+- [ ] Re-run after `known_senders` grew → reprocesses messages to apply new labels
+
+### Integration test cases — `core/db.py`
+
+- [ ] CRUD for all tables (`users`, `gmail_tokens`, `sent_recipients`, `scan_state`)
+- [ ] Optimistic locking: two processes read same `historyId`, first write wins, second detects conflict
+- [ ] `SKIP LOCKED`: locked user row is skipped, not blocked indefinitely
+
+### Server test cases — `server.py`
+
+- [ ] `/webhook/gmail` — valid Pub/Sub notification → processing triggered
+- [ ] `/webhook/gmail` — missing or invalid `Authorization` header → 401, no processing
+- [ ] `/webhook/gmail` — malformed payload → 400, no processing
+- [ ] `/internal/poll` — unauthenticated → 401; authenticated → iterates all active users
+- [ ] `/internal/pull` — pulls from fake Pub/Sub subscription, processes pending notifications
+- [ ] `/internal/scan` — triggers Cloud Run Job for the specified user
+- [ ] `/internal/renew-watches` — renews all expiring watch subscriptions
+- [ ] `/healthz` — returns 200 with DB up; returns 503 with DB unreachable
+- [ ] OAuth `/oauth/start` → redirect contains `state` parameter
+- [ ] OAuth `/oauth/callback` — valid code → tokens stored; missing `state` → 400
+
+### E2E test cases — `cli.py`
+
+- [ ] `claven status --output json` → valid JSON shape, correct data
+- [ ] `claven poll --once --output json` → progress events stream to stdout, final summary on completion
+- [ ] `claven auth status --output json` → token validity and expiry reported correctly
+- [ ] Server down → exit code 2, JSON error on stderr
+- [ ] Missing `CLAVEN_SERVER_URL` → exit code 1, usage error on stderr
 
 ## Code restructure (do this first, after test plan)
 
