@@ -15,6 +15,22 @@ An intelligent Gmail labeling service that automatically categorizes incoming em
 - Sent recipients full scan fetches all message IDs upfront so the total is known before processing begins
 - **Automatic reprocessing**: if the known senders list grows between runs, all inbox messages are automatically reprocessed so newly matching emails get labeled correctly
 
+## Development
+
+After cloning, run once to install dependencies and activate git hooks:
+
+```bash
+make setup
+```
+
+This installs `requirements.txt` and `requirements-dev.txt`, and configures git to use the committed hooks in `.hooks/`. The pre-push hook runs the full test suite before every push — the push is aborted if any tests fail.
+
+To run tests manually:
+
+```bash
+make test
+```
+
 ## Prerequisites
 
 - Python 3.x
