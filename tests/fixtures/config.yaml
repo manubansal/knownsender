@@ -1,0 +1,21 @@
+polling_interval_seconds: 30
+
+labels:
+  - name: "Known"
+    rules:
+      - field: "from"
+        known_sender: true
+
+  - name: "Newsletter"
+    rules:
+      - field: "from"
+        contains: ["newsletter", "noreply"]
+      - field: "subject"
+        contains: ["unsubscribe", "weekly digest"]
+
+  - name: "Finance"
+    rules:
+      - field: "from"
+        contains: ["billing", "invoice", "receipts"]
+      - field: "subject"
+        contains: ["invoice", "receipt", "payment"]

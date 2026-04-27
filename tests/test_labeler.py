@@ -1,6 +1,46 @@
 """Tests for labeler.py — label rule matching logic."""
+import os
 import pytest
-from labeler import matches_rule, get_matching_labels
+from labeler import matches_rule, get_matching_labels, load_config
+
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+# ---------------------------------------------------------------------------
+# load_config
+# ---------------------------------------------------------------------------
+
+def test_load_config_returns_labels_and_interval():
+    config = load_config(os.path.join(FIXTURES_DIR, "config.yaml"))
+    assert "labels" in config
+    assert config["polling_interval_seconds"] == 30
+
+
+def test_load_config_label_names():
+    config = load_config(os.path.join(FIXTURES_DIR, "config.yaml"))
+    names = [l["name"] for l in config["labels"]]
+    assert "Known" in names
+    assert "Newsletter" in names
+    assert "Finance" in names
+
+
+def test_load_config_label_rules_present():
+    config = load_config(os.path.join(FIXTURES_DIR, "config.yaml"))
+    for label in config["labels"]:
+        assert "rules" in label
+        assert len(label["rules"]) > 0
+
+
+def test_load_config_missing_file_raises():
+    with pytest.raises(FileNotFoundError):
+        load_config("nonexistent.yaml")
+
+
+def test_load_config_malformed_yaml_raises(tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("labels: [unclosed bracket\n  - invalid")
+    with pytest.raises(Exception):
+        load_config(str(bad))
 
 
 # ---------------------------------------------------------------------------
