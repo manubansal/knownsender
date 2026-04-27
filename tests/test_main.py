@@ -296,3 +296,16 @@ class TestInitialScan:
              patch("main.save_scan_checkpoint"):
             initial_scan(service, str(tmp_path), [], {})
             mock_process.assert_not_called()
+
+    def test_max_messages_none_does_not_crash(self, tmp_path):
+        # Regression: 513013a fixed a format crash when max_messages=None was
+        # passed directly to the log string. Verify None is handled cleanly.
+        from main import initial_scan
+        service = MagicMock()
+        with patch("main.list_messages") as mock_list, \
+             patch("main.load_scan_checkpoint", return_value=(set(), 0)), \
+             patch("main.process_message"), \
+             patch("main.save_scan_checkpoint"):
+            mock_list.return_value = []
+            initial_scan(service, str(tmp_path), [], {}, max_messages=None)
+            mock_list.assert_called_once_with(service, query="in:inbox", max_results=None)
