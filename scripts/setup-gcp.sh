@@ -21,7 +21,10 @@ POOL="github-pool"
 PROVIDER="github-provider"
 
 echo ""
-echo "==> Targeting project: $PROJECT_ID"
+echo "==> Creating project: $PROJECT_ID"
+gcloud projects create "$PROJECT_ID" --name="Claven" 2>/dev/null \
+  || echo "    (project already exists, continuing)"
+
 gcloud config set project "$PROJECT_ID"
 
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
