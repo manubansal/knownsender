@@ -10,6 +10,21 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: claven
+          POSTGRES_PASSWORD: claven
+          POSTGRES_DB: claven_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U claven"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,5 +38,12 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://claven:claven@localhost:5432/claven_test
+        run: alembic upgrade head
+
       - name: Run tests
+        env:
+          PYTEST_DATABASE_URL: postgresql://claven:claven@localhost:5432/claven_test
         run: pytest --tb=short

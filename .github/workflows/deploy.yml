@@ -62,13 +62,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Migrations run here before the new container takes traffic.
-      # This step is a no-op until claven/core/db.py and Alembic are set up.
-      # Uncomment when migrations exist:
-      # - name: Run database migrations
-      #   run: alembic upgrade head
-      #   env:
-      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Run database migrations
+        run: alembic upgrade head
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
@@ -79,6 +76,10 @@ jobs:
           env_vars: |-
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             TOKEN_ENCRYPTION_KEY=${{ secrets.TOKEN_ENCRYPTION_KEY }}
+            OAUTH_CLIENT_ID=${{ secrets.OAUTH_CLIENT_ID }}
+            OAUTH_CLIENT_SECRET=${{ secrets.OAUTH_CLIENT_SECRET }}
+            OAUTH_REDIRECT_URI=${{ secrets.OAUTH_REDIRECT_URI }}
+            INTERNAL_API_SECRET=${{ secrets.INTERNAL_API_SECRET }}
           flags: >-
             --min-instances=0
             --max-instances=10

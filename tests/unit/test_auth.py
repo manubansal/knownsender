@@ -1,0 +1,120 @@
+"""Unit tests for claven/core/auth.py — pure logic, no DB or network I/O."""
+
+import pytest
+from cryptography.fernet import InvalidToken
+from unittest.mock import MagicMock, patch
+
+from claven.core.auth import decrypt_token, encrypt_token, load_credentials, store_credentials
+
+# 32 bytes of 0xaa — valid Fernet key material
+VALID_KEY_HEX = "aa" * 32
+
+
+class TestEncryptDecrypt:
+    def test_round_trip(self):
+        ciphertext = encrypt_token("my-secret-token", VALID_KEY_HEX)
+        assert isinstance(ciphertext, bytes)
+        assert decrypt_token(ciphertext, VALID_KEY_HEX) == "my-secret-token"
+
+    def test_wrong_key_raises(self):
+        other_key = "bb" * 32
+        ciphertext = encrypt_token("my-token", VALID_KEY_HEX)
+        with pytest.raises(InvalidToken):
+            decrypt_token(ciphertext, other_key)
+
+    def test_empty_string_round_trip(self):
+        ciphertext = encrypt_token("", VALID_KEY_HEX)
+        assert decrypt_token(ciphertext, VALID_KEY_HEX) == ""
+
+    def test_ciphertext_randomised(self):
+        # Fernet uses a random IV so two encryptions of the same plaintext differ
+        ct1 = encrypt_token("same", VALID_KEY_HEX)
+        ct2 = encrypt_token("same", VALID_KEY_HEX)
+        assert ct1 != ct2
+
+
+class TestStoreCredentials:
+    def test_stores_encrypted_tokens(self):
+        creds = MagicMock()
+        creds.token = "access-token-value"
+        creds.refresh_token = "refresh-token-value"
+        creds.expiry = None
+        creds.scopes = ["https://www.googleapis.com/auth/gmail.modify"]
+
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db:
+            store_credentials(conn, "user-uuid", creds, VALID_KEY_HEX)
+
+        mock_db.store_tokens.assert_called_once()
+        args = mock_db.store_tokens.call_args[0]
+        # args: (conn, user_id, access_enc, refresh_enc, expiry, scopes)
+        assert decrypt_token(args[2], VALID_KEY_HEX) == "access-token-value"
+        assert decrypt_token(args[3], VALID_KEY_HEX) == "refresh-token-value"
+
+    def test_passes_expiry_and_scopes(self):
+        from datetime import datetime, timezone
+
+        expiry = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        creds = MagicMock()
+        creds.token = "tok"
+        creds.refresh_token = "ref"
+        creds.expiry = expiry
+        creds.scopes = ["scope-a", "scope-b"]
+
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db:
+            store_credentials(conn, "uid", creds, VALID_KEY_HEX)
+
+        args = mock_db.store_tokens.call_args[0]
+        assert args[4] == expiry
+        assert args[5] == ["scope-a", "scope-b"]
+
+
+class TestLoadCredentials:
+    def test_returns_none_when_no_tokens(self):
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db:
+            mock_db.load_tokens.return_value = None
+            result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
+        assert result is None
+
+    def test_returns_credentials_with_decrypted_tokens(self):
+        access_enc = encrypt_token("access-token", VALID_KEY_HEX)
+        refresh_enc = encrypt_token("refresh-token", VALID_KEY_HEX)
+
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, patch.dict(
+            "os.environ",
+            {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"},
+        ):
+            mock_db.load_tokens.return_value = {
+                "access_token_enc": access_enc,
+                "refresh_token_enc": refresh_enc,
+                "token_expiry": None,
+                "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+            }
+            result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
+
+        assert result is not None
+        assert result.token == "access-token"
+        assert result.refresh_token == "refresh-token"
+
+    def test_credentials_include_scopes(self):
+        access_enc = encrypt_token("tok", VALID_KEY_HEX)
+        refresh_enc = encrypt_token("ref", VALID_KEY_HEX)
+        scopes = ["https://www.googleapis.com/auth/gmail.modify"]
+
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, patch.dict(
+            "os.environ",
+            {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"},
+        ):
+            mock_db.load_tokens.return_value = {
+                "access_token_enc": access_enc,
+                "refresh_token_enc": refresh_enc,
+                "token_expiry": None,
+                "scopes": scopes,
+            }
+            result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
+
+        assert list(result.scopes) == scopes
