@@ -111,8 +111,8 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://api.claven.app
 
-      - name: Deploy to Cloudflare Pages
-        run: npx wrangler pages deploy .open-next/assets --project-name=claven-web --branch=main
+      - name: Deploy to Cloudflare Workers
+        run: npx opennextjs-cloudflare deploy
         working-directory: web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
