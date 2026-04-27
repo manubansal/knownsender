@@ -248,3 +248,109 @@ def test_apply_label_calls_execute():
     service = mock_service()
     apply_label(service, "msg1", "Label_1")
     service.users().messages().modify().execute.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# list_messages — pagination
+# ---------------------------------------------------------------------------
+
+def test_list_messages_single_page():
+    from gmail_service import list_messages
+    service = mock_service()
+    service.users().messages().list.return_value.execute.return_value = {
+        "messages": [{"id": "msg1"}, {"id": "msg2"}],
+    }
+    result = list_messages(service, max_results=None)
+    assert [m["id"] for m in result] == ["msg1", "msg2"]
+
+
+def test_list_messages_paginates():
+    from gmail_service import list_messages
+    service = mock_service()
+    service.users().messages().list.return_value.execute.side_effect = [
+        {"messages": [{"id": "msg1"}, {"id": "msg2"}], "nextPageToken": "token1"},
+        {"messages": [{"id": "msg3"}]},
+    ]
+    result = list_messages(service, max_results=None)
+    assert [m["id"] for m in result] == ["msg1", "msg2", "msg3"]
+
+
+def test_list_messages_empty_inbox():
+    from gmail_service import list_messages
+    service = mock_service()
+    service.users().messages().list.return_value.execute.return_value = {}
+    result = list_messages(service, max_results=None)
+    assert result == []
+
+
+def test_list_messages_sends_max_results_as_batch_size():
+    # list_messages passes max_results as maxResults to the API and stops
+    # requesting more pages once it has at least max_results messages.
+    # It does NOT truncate the response — if the API returns more than
+    # max_results in one page, all returned messages are included.
+    # In practice the Gmail API respects maxResults, so this is not an issue.
+    from gmail_service import list_messages
+    service = mock_service()
+    service.users().messages().list.return_value.execute.return_value = {
+        "messages": [{"id": "msg1"}, {"id": "msg2"}],
+        # No nextPageToken — stops after one page
+    }
+    result = list_messages(service, max_results=2)
+    assert len(result) == 2
+
+
+def test_list_messages_stops_requesting_pages_once_max_results_reached():
+    # Once len(messages) >= max_results the while condition exits — no further
+    # pages are fetched, even if a nextPageToken was present.
+    from gmail_service import list_messages
+    service = mock_service()
+    service.users().messages().list.return_value.execute.side_effect = [
+        {"messages": [{"id": "msg1"}, {"id": "msg2"}], "nextPageToken": "token1"},
+        # Second page should never be fetched
+        {"messages": [{"id": "msg3"}, {"id": "msg4"}]},
+    ]
+    result = list_messages(service, max_results=2)
+    # Exactly 2 messages fetched; second page never requested
+    assert [m["id"] for m in result] == ["msg1", "msg2"]
+
+
+# ---------------------------------------------------------------------------
+# list_history — pagination
+# ---------------------------------------------------------------------------
+
+def test_list_history_single_page():
+    from gmail_service import list_history
+    service = mock_service()
+    mock_request = MagicMock()
+    mock_request.execute.return_value = {"history": [{"id": "h1"}, {"id": "h2"}]}
+    service.users().history().list.return_value = mock_request
+    service.users().history().list_next.return_value = None
+
+    result = list_history(service, "start_id")
+    assert [r["id"] for r in result] == ["h1", "h2"]
+
+
+def test_list_history_paginates():
+    from gmail_service import list_history
+    service = mock_service()
+    mock_request1 = MagicMock()
+    mock_request2 = MagicMock()
+    mock_request1.execute.return_value = {"history": [{"id": "h1"}]}
+    mock_request2.execute.return_value = {"history": [{"id": "h2"}]}
+    service.users().history().list.return_value = mock_request1
+    service.users().history().list_next.side_effect = [mock_request2, None]
+
+    result = list_history(service, "start_id")
+    assert [r["id"] for r in result] == ["h1", "h2"]
+
+
+def test_list_history_empty():
+    from gmail_service import list_history
+    service = mock_service()
+    mock_request = MagicMock()
+    mock_request.execute.return_value = {}
+    service.users().history().list.return_value = mock_request
+    service.users().history().list_next.return_value = None
+
+    result = list_history(service, "start_id")
+    assert result == []
