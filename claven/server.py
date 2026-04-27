@@ -122,7 +122,8 @@ def oauth_callback(
         db.set_history_id(conn, user_id, int(watch_response["historyId"]))
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
-    return {"status": "ok", "email": email}
+    frontend_url = os.environ.get("FRONTEND_URL", "https://claven.app")
+    return RedirectResponse(url=f"{frontend_url}/connected?email={email}")
 
 
 @app.post("/internal/poll")
