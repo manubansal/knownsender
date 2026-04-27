@@ -276,7 +276,6 @@ def _parse_addresses(header_value):
 
 def apply_label(service, message_id, label_id):
     """Apply a label to a message."""
-
     service.users().messages().modify(
         userId="me", id=message_id, body={"addLabelIds": [label_id]}
     ).execute()

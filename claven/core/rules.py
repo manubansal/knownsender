@@ -1,8 +1,7 @@
 import logging
-import re
 import yaml
 
-from gmail_service import _load_recipients_cache, _parse_addresses
+from claven.core.gmail import _parse_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -13,21 +12,14 @@ def load_config(path="config.yaml"):
         return yaml.safe_load(f)
 
 
-def _get_known_senders():
-    """Load the set of known recipients from the cache."""
-    recipients, _ = _load_recipients_cache()
-    return recipients
-
-
 def matches_rule(headers, rule, known_senders=None):
     """Check if message headers match a single rule."""
     if rule.get("known_sender"):
-        if known_senders is None:
-            known_senders = _get_known_senders()
         field = rule["field"].lower()
         value = headers.get(field, "")
         addresses = _parse_addresses(value)
-        return any(addr.lower() in known_senders for addr in addresses)
+        known = known_senders or set()
+        return any(addr.lower() in known for addr in addresses)
 
     field = rule["field"].lower()
     value = headers.get(field, "").lower()
