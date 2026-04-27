@@ -1,7 +1,7 @@
-"""Tests for gmail_service.py — file-based state and Gmail API wrappers."""
+"""Tests for claven.core.gmail — file-based state and Gmail API wrappers."""
 import pytest
 from unittest.mock import MagicMock, call
-from gmail_service import (
+from claven.core.gmail import (
     _parse_addresses,
     load_scan_checkpoint,
     save_scan_checkpoint,
@@ -255,7 +255,7 @@ def test_apply_label_calls_execute():
 # ---------------------------------------------------------------------------
 
 def test_list_messages_single_page():
-    from gmail_service import list_messages
+    from claven.core.gmail import list_messages
     service = mock_service()
     service.users().messages().list.return_value.execute.return_value = {
         "messages": [{"id": "msg1"}, {"id": "msg2"}],
@@ -265,7 +265,7 @@ def test_list_messages_single_page():
 
 
 def test_list_messages_paginates():
-    from gmail_service import list_messages
+    from claven.core.gmail import list_messages
     service = mock_service()
     service.users().messages().list.return_value.execute.side_effect = [
         {"messages": [{"id": "msg1"}, {"id": "msg2"}], "nextPageToken": "token1"},
@@ -276,7 +276,7 @@ def test_list_messages_paginates():
 
 
 def test_list_messages_empty_inbox():
-    from gmail_service import list_messages
+    from claven.core.gmail import list_messages
     service = mock_service()
     service.users().messages().list.return_value.execute.return_value = {}
     result = list_messages(service, max_results=None)
@@ -289,7 +289,7 @@ def test_list_messages_sends_max_results_as_batch_size():
     # It does NOT truncate the response — if the API returns more than
     # max_results in one page, all returned messages are included.
     # In practice the Gmail API respects maxResults, so this is not an issue.
-    from gmail_service import list_messages
+    from claven.core.gmail import list_messages
     service = mock_service()
     service.users().messages().list.return_value.execute.return_value = {
         "messages": [{"id": "msg1"}, {"id": "msg2"}],
@@ -302,7 +302,7 @@ def test_list_messages_sends_max_results_as_batch_size():
 def test_list_messages_stops_requesting_pages_once_max_results_reached():
     # Once len(messages) >= max_results the while condition exits — no further
     # pages are fetched, even if a nextPageToken was present.
-    from gmail_service import list_messages
+    from claven.core.gmail import list_messages
     service = mock_service()
     service.users().messages().list.return_value.execute.side_effect = [
         {"messages": [{"id": "msg1"}, {"id": "msg2"}], "nextPageToken": "token1"},
@@ -319,7 +319,7 @@ def test_list_messages_stops_requesting_pages_once_max_results_reached():
 # ---------------------------------------------------------------------------
 
 def test_list_history_single_page():
-    from gmail_service import list_history
+    from claven.core.gmail import list_history
     service = mock_service()
     mock_request = MagicMock()
     mock_request.execute.return_value = {"history": [{"id": "h1"}, {"id": "h2"}]}
@@ -331,7 +331,7 @@ def test_list_history_single_page():
 
 
 def test_list_history_paginates():
-    from gmail_service import list_history
+    from claven.core.gmail import list_history
     service = mock_service()
     mock_request1 = MagicMock()
     mock_request2 = MagicMock()
@@ -345,7 +345,7 @@ def test_list_history_paginates():
 
 
 def test_list_history_empty():
-    from gmail_service import list_history
+    from claven.core.gmail import list_history
     service = mock_service()
     mock_request = MagicMock()
     mock_request.execute.return_value = {}
@@ -361,7 +361,7 @@ def test_list_history_empty():
 # ---------------------------------------------------------------------------
 
 def test_extract_recipients_returns_addresses_and_not_interrupted():
-    from gmail_service import _extract_recipients_from_messages
+    from claven.core.gmail import _extract_recipients_from_messages
     service = mock_service()
     messages = [{"id": "m1"}, {"id": "m2"}]
     service.users().messages().get.return_value.execute.side_effect = [
@@ -375,7 +375,7 @@ def test_extract_recipients_returns_addresses_and_not_interrupted():
 
 
 def test_extract_recipients_empty_messages():
-    from gmail_service import _extract_recipients_from_messages
+    from claven.core.gmail import _extract_recipients_from_messages
     service = mock_service()
     recipients, interrupted = _extract_recipients_from_messages(service, [])
     assert recipients == set()
@@ -383,7 +383,7 @@ def test_extract_recipients_empty_messages():
 
 
 def test_extract_recipients_interrupted_returns_partial_and_flag():
-    from gmail_service import _extract_recipients_from_messages
+    from claven.core.gmail import _extract_recipients_from_messages
     service = mock_service()
     messages = [{"id": f"m{i}"} for i in range(5)]
     call_count = 0
@@ -405,7 +405,7 @@ def test_extract_recipients_interrupted_returns_partial_and_flag():
 
 
 def test_extract_recipients_no_should_continue_processes_all():
-    from gmail_service import _extract_recipients_from_messages
+    from claven.core.gmail import _extract_recipients_from_messages
     service = mock_service()
     messages = [{"id": f"m{i}"} for i in range(3)]
     service.users().messages().get.return_value.execute.return_value = {
@@ -417,7 +417,7 @@ def test_extract_recipients_no_should_continue_processes_all():
 
 
 def test_extract_recipients_extracts_cc_and_bcc():
-    from gmail_service import _extract_recipients_from_messages
+    from claven.core.gmail import _extract_recipients_from_messages
     service = mock_service()
     service.users().messages().get.return_value.execute.return_value = {
         "payload": {"headers": [

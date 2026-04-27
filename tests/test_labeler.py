@@ -1,7 +1,7 @@
 """Tests for labeler.py — label rule matching logic."""
 import os
 import pytest
-from labeler import matches_rule, get_matching_labels, load_config
+from claven.core.rules import matches_rule, get_matching_labels, load_config
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
