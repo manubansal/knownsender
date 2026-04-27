@@ -1,0 +1,17 @@
+.git
+.github
+.hooks
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.venv
+venv
+accounts/
+credentials.json
+*.json
+!requirements*.txt
+tests/
+scripts/
