@@ -26,6 +26,7 @@ import claven.core.db as db
 from claven.core.gmail import get_profile
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
+from claven.core.watch import start_watch
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,11 @@ def oauth_callback(
     with db.get_connection() as conn:
         user_id = db.upsert_user(conn, email)
         auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
+
+        # Establish historyId baseline and register push watch
+        service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+        watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
+        db.set_history_id(conn, user_id, int(watch_response["historyId"]))
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
     return {"status": "ok", "email": email}
