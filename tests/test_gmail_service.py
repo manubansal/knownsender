@@ -354,3 +354,77 @@ def test_list_history_empty():
 
     result = list_history(service, "start_id")
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _extract_recipients_from_messages
+# ---------------------------------------------------------------------------
+
+def test_extract_recipients_returns_addresses_and_not_interrupted():
+    from gmail_service import _extract_recipients_from_messages
+    service = mock_service()
+    messages = [{"id": "m1"}, {"id": "m2"}]
+    service.users().messages().get.return_value.execute.side_effect = [
+        {"payload": {"headers": [{"name": "To", "value": "alice@example.com"}]}},
+        {"payload": {"headers": [{"name": "To", "value": "bob@example.com"}]}},
+    ]
+    recipients, interrupted = _extract_recipients_from_messages(service, messages)
+    assert "alice@example.com" in recipients
+    assert "bob@example.com" in recipients
+    assert interrupted is False
+
+
+def test_extract_recipients_empty_messages():
+    from gmail_service import _extract_recipients_from_messages
+    service = mock_service()
+    recipients, interrupted = _extract_recipients_from_messages(service, [])
+    assert recipients == set()
+    assert interrupted is False
+
+
+def test_extract_recipients_interrupted_returns_partial_and_flag():
+    from gmail_service import _extract_recipients_from_messages
+    service = mock_service()
+    messages = [{"id": f"m{i}"} for i in range(5)]
+    call_count = 0
+
+    def stop_after_two():
+        nonlocal call_count
+        call_count += 1
+        return call_count <= 2
+
+    service.users().messages().get.return_value.execute.return_value = {
+        "payload": {"headers": [{"name": "To", "value": "alice@example.com"}]}
+    }
+    recipients, interrupted = _extract_recipients_from_messages(
+        service, messages, should_continue=stop_after_two
+    )
+    assert interrupted is True
+    # Processed fewer than all 5 messages
+    assert service.users().messages().get.call_count < 5
+
+
+def test_extract_recipients_no_should_continue_processes_all():
+    from gmail_service import _extract_recipients_from_messages
+    service = mock_service()
+    messages = [{"id": f"m{i}"} for i in range(3)]
+    service.users().messages().get.return_value.execute.return_value = {
+        "payload": {"headers": [{"name": "To", "value": "alice@example.com"}]}
+    }
+    recipients, interrupted = _extract_recipients_from_messages(service, messages)
+    assert interrupted is False
+    assert service.users().messages().get.call_count == 3
+
+
+def test_extract_recipients_extracts_cc_and_bcc():
+    from gmail_service import _extract_recipients_from_messages
+    service = mock_service()
+    service.users().messages().get.return_value.execute.return_value = {
+        "payload": {"headers": [
+            {"name": "To", "value": "alice@example.com"},
+            {"name": "Cc", "value": "bob@example.com"},
+            {"name": "Bcc", "value": "charlie@example.com"},
+        ]}
+    }
+    recipients, _ = _extract_recipients_from_messages(service, [{"id": "m1"}])
+    assert recipients == {"alice@example.com", "bob@example.com", "charlie@example.com"}
