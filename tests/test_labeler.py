@@ -56,6 +56,14 @@ def test_matches_rule_substring_match():
     assert matches_rule(headers, rule) is True
 
 
+def test_matches_rule_contains_is_substring_not_regex():
+    # The current implementation does substring matching only — not regex.
+    # A dot in a contains value matches a literal dot, not "any character".
+    headers = {"from": "axbxc@example.com"}
+    rule = {"field": "from", "contains": ["a.b"]}  # regex "a.b" would match "axb", but substring won't
+    assert matches_rule(headers, rule) is False
+
+
 # ---------------------------------------------------------------------------
 # matches_rule — known_sender rules
 # ---------------------------------------------------------------------------
