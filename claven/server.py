@@ -2,7 +2,7 @@
 Claven web server — thin HTTP entry point over claven/core/.
 
 Endpoints implemented here so far:
-  GET  /healthz              — liveness probe for Cloud Run
+  GET  /health               — liveness probe for Cloud Run
   POST /webhook/gmail        — Pub/Sub push handler (incoming Gmail notifications)
   POST /internal/poll        — Cloud Scheduler trigger: poll Gmail history for all users
   POST /internal/pull        — Cloud Scheduler trigger: drain Pub/Sub pull subscription
@@ -16,6 +16,6 @@ from fastapi import FastAPI
 app = FastAPI(title="Claven")
 
 
-@app.get("/healthz")
-def healthz():
+@app.get("/health")
+def health():
     return {"status": "ok"}
