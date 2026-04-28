@@ -295,6 +295,14 @@ def api_disconnect(request: Request):
     return response
 
 
+@app.post("/api/logout")
+def api_logout(request: Request):
+    _get_session(request)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("session")
+    return response
+
+
 @app.post("/webhook/gmail")
 async def webhook_gmail(request: Request):
     _verify_pubsub_token(request)

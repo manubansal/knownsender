@@ -441,6 +441,40 @@ class TestApiDisconnect:
         mock_db.delete_credentials.assert_called_once()
 
 
+class TestApiLogout:
+    def test_no_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.post("/api/logout")
+        assert response.status_code == 401
+
+    def test_returns_200(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                client.cookies.set("session", token)
+                response = client.post("/api/logout")
+        assert response.status_code == 200
+
+    def test_clears_session_cookie(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                client.cookies.set("session", token)
+                response = client.post("/api/logout")
+        assert "session" in response.headers.get("set-cookie", "")
+
+    def test_does_not_touch_credentials(self):
+        """Logout ends the session but leaves Gmail credentials intact."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    client.post("/api/logout")
+        mock_db.delete_credentials.assert_not_called()
+
+
 class TestOAuthCallbackSession:
     """Verify the callback issues a session cookie and redirects to /dashboard."""
 
