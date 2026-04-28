@@ -346,7 +346,7 @@ describe("Dashboard page", () => {
     it("does not show read count when read_count is null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, read_count: null, unread_count: 30 } });
       render(<DashboardPage />);
-      await screen.findByText(/30/);
+      await screen.findByText("30");
       expect(screen.queryByText(/^read$/i)).not.toBeInTheDocument();
     });
 
@@ -356,12 +356,13 @@ describe("Dashboard page", () => {
       await screen.findByText(/last updated/i);
     });
 
-    it("shows a time value next to last updated", async () => {
+    it("shows a relative time next to last updated", async () => {
       mockFetch({ ok: true, body: DEFAULT_ME });
       render(<DashboardPage />);
       await screen.findByText(/last updated/i);
-      // time rendered as HH:MM AM/PM or HH:MM
-      expect(screen.getByTestId("last-updated-time").textContent).toMatch(/\d{1,2}:\d{2}/);
+      expect(screen.getByTestId("last-updated-time").textContent).toMatch(
+        /just now|\d+ seconds? ago|\d+ minutes? ago|\d+ hours? ago/,
+      );
     });
 
     it("still shows last updated time after refresh", async () => {

@@ -45,6 +45,12 @@ export default function DashboardPage() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(id);
+  }, []);
 
   async function loadData() {
     try {
@@ -65,6 +71,15 @@ export default function DashboardPage() {
   }
 
   useEffect(() => { loadData(); }, []);
+
+  function formatRelativeTime(date: Date): string {
+    const seconds = Math.floor((now - date.getTime()) / 1000);
+    if (seconds < 60) return seconds <= 5 ? "just now" : `${seconds} seconds ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
+    const hours = Math.floor(minutes / 60);
+    return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  }
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -162,73 +177,77 @@ export default function DashboardPage() {
 
           <p className="text-lg font-medium">{email}</p>
 
-          <div className="w-full flex flex-col items-end gap-1">
-          <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
-            {labels.map((label) => {
-              const isKnownSender = label.rules.some((r) => r.known_sender);
-              const desc = label.rules
-                .map((r) =>
-                  r.known_sender
-                    ? `${r.field} is a known sender`
-                    : `${r.field} contains ${r.contains?.join(", ")}`,
-                )
-                .join("; ");
-              return (
-                <div key={label.name} className="flex items-start justify-between py-3 first:pt-0 last:pb-0">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-medium">{label.name}</span>
-                    <span className="text-xs text-muted-foreground">{desc}</span>
+          <div className="w-full flex flex-col gap-1">
+            <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
+              {labels.map((label) => {
+                const isKnownSender = label.rules.some((r) => r.known_sender);
+                const desc = label.rules
+                  .map((r) =>
+                    r.known_sender
+                      ? `${r.field} is a known sender`
+                      : `${r.field} contains ${r.contains?.join(", ")}`,
+                  )
+                  .join("; ");
+                return (
+                  <div key={label.name} className="flex items-start justify-between py-3 first:pt-0 last:pb-0">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-medium">{label.name}</span>
+                      <span className="text-xs text-muted-foreground">{desc}</span>
+                    </div>
+                    {isKnownSender && (
+                      <span className="tabular-nums text-muted-foreground">{known_senders}</span>
+                    )}
                   </div>
-                  {isKnownSender && (
-                    <span className="tabular-nums text-muted-foreground">{known_senders}</span>
-                  )}
+                );
+              })}
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Processed</span>
+                <span className="tabular-nums">{processed_count}</span>
+              </div>
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Pending</span>
+                <span className="tabular-nums">{pending_count ?? "—"}</span>
+              </div>
+              {inbox_count !== null && (
+                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">In inbox</span>
+                  <span className="tabular-nums">{inbox_count}</span>
                 </div>
-              );
-            })}
-            <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-              <span className="text-muted-foreground">Processed</span>
-              <span className="tabular-nums">{processed_count}</span>
+              )}
+              {read_count !== null && (
+                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">Read</span>
+                  <span className="tabular-nums">{read_count}</span>
+                </div>
+              )}
+              {unread_count !== null && (
+                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">Unread</span>
+                  <span className="tabular-nums">{unread_count}</span>
+                </div>
+              )}
             </div>
-            <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-              <span className="text-muted-foreground">Pending</span>
-              <span className="tabular-nums">{pending_count ?? "—"}</span>
-            </div>
-            {inbox_count !== null && (
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">In inbox</span>
-                <span className="tabular-nums">{inbox_count}</span>
-              </div>
-            )}
-            {read_count !== null && (
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Read</span>
-                <span className="tabular-nums">{read_count}</span>
-              </div>
-            )}
-            {unread_count !== null && (
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Unread</span>
-                <span className="tabular-nums">{unread_count}</span>
-              </div>
-            )}
-            {lastUpdated !== null && (
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Last updated</span>
-                <span data-testid="last-updated-time" className="tabular-nums text-muted-foreground">
-                  {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            <div className="flex items-center justify-between">
+              {lastUpdated !== null ? (
+                <span className="text-xs text-muted-foreground">
+                  Last updated{" "}
+                  <span data-testid="last-updated-time">
+                    {formatRelativeTime(lastUpdated)}
+                  </span>
                 </span>
-              </div>
-            )}
-          </div>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            aria-label="Refresh stats"
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
-            <span>Refresh</span>
-          </button>
+              ) : (
+                <span />
+              )}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                aria-label="Refresh stats"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+                <span>Refresh now</span>
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col items-center gap-3">
