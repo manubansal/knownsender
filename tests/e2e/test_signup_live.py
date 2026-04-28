@@ -48,6 +48,7 @@ _PUBSUB_TOPIC = os.environ.get("PUBSUB_TOPIC")
 _OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID")
 _OAUTH_CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET")
 _TOKEN_ENCRYPTION_KEY = os.environ.get("TOKEN_ENCRYPTION_KEY")
+_SESSION_SECRET = os.environ.get("SESSION_SECRET", "test-session-secret-must-be-at-least-32-bytes!")
 
 _SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
@@ -61,6 +62,7 @@ _ENV = {
     "OAUTH_REDIRECT_URI": "http://localhost/oauth/callback",
     "INTERNAL_API_SECRET": "test-internal-secret",
     "TOKEN_ENCRYPTION_KEY": _TOKEN_ENCRYPTION_KEY or "",
+    "SESSION_SECRET": _SESSION_SECRET,
     "PUBSUB_TOPIC": _PUBSUB_TOPIC or "",
     "FRONTEND_URL": "https://claven.app",
     "DATABASE_URL": _DB_URL or "",

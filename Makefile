@@ -1,10 +1,22 @@
-.PHONY: setup test ci dev
+.PHONY: setup test ci dev dev-read-only
 
 dev:
 	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
 	@set -a; . ./.env.local; set +a; \
 	trap 'kill 0' EXIT; \
 	uvicorn claven.server:app --port 8000 --reload & \
+	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
+	wait
+
+# Read-only view of the production database — safe to run alongside prod.
+# Writes will fail at the DB level (SELECT-only role). Use this to observe
+# dashboard state changes driven by live prod activity.
+dev-read-only:
+	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
+	@set -a; . ./.env.local; set +a; \
+	[ -n "$$DATABASE_URL_READONLY" ] || (echo "Error: DATABASE_URL_READONLY not set in .env.local."; exit 1); \
+	trap 'kill 0' EXIT; \
+	DATABASE_URL=$$DATABASE_URL_READONLY uvicorn claven.server:app --port 8000 --reload & \
 	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
 	wait
 

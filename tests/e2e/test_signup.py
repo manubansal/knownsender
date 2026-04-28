@@ -36,6 +36,7 @@ _ENV = {
     "OAUTH_REDIRECT_URI": "http://localhost/oauth/callback",
     "INTERNAL_API_SECRET": "test-internal-secret",
     "TOKEN_ENCRYPTION_KEY": "aa" * 32,
+    "SESSION_SECRET": "test-session-secret-must-be-at-least-32-bytes!",
     "PUBSUB_TOPIC": "projects/test/topics/test",
     "FRONTEND_URL": "https://claven.app",
     "DATABASE_URL": _DB_URL or "",
