@@ -89,6 +89,7 @@ jobs:
             PUBSUB_TOPIC=${{ secrets.PUBSUB_TOPIC }}
             PUBSUB_AUDIENCE=https://api.claven.app/webhook/gmail
             FRONTEND_URL=https://claven.app
+            CORS_EXTRA_ORIGINS=http://localhost:3000
           flags: >-
             --min-instances=0
             --max-instances=10
