@@ -14,7 +14,10 @@ type MeResponse = {
   connected: boolean;
   history_id: number | null;
   known_senders: number;
+  processed_count: number;
+  pending_count: number | null;
   unread_count: number | null;
+  read_count: number | null;
   inbox_count: number | null;
 };
 
@@ -121,7 +124,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, unread_count, inbox_count } = state.data;
+  const { email, connected, known_senders, processed_count, pending_count, unread_count, read_count, inbox_count } = state.data;
   const { labels } = state;
 
   return (
@@ -169,10 +172,26 @@ export default function DashboardPage() {
                 </div>
               );
             })}
+            <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+              <span className="text-muted-foreground">Processed</span>
+              <span className="tabular-nums">{processed_count}</span>
+            </div>
+            {pending_count !== null && (
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Pending</span>
+                <span className="tabular-nums">{pending_count}</span>
+              </div>
+            )}
             {inbox_count !== null && (
               <div className="flex justify-between py-3 first:pt-0 last:pb-0">
                 <span className="text-muted-foreground">In inbox</span>
                 <span className="tabular-nums">{inbox_count}</span>
+              </div>
+            )}
+            {read_count !== null && (
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Read</span>
+                <span className="tabular-nums">{read_count}</span>
               </div>
             )}
             {unread_count !== null && (

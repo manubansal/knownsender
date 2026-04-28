@@ -290,12 +290,13 @@ class TestInternalPoll:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ):
+            ) as mock_poll:
                 mock_conn = _fake_db_ctx(mock_db)
                 mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "u@example.com"}]
                 mock_db.get_history_id.return_value = 999
                 mock_db.get_known_senders.return_value = set()
                 mock_auth.get_service.return_value = MagicMock()
+                mock_poll.return_value = 0
                 with TestClient(app) as client:
                     response = client.post(
                         "/internal/poll",
@@ -303,6 +304,24 @@ class TestInternalPoll:
                     )
         assert response.status_code == 200
         assert response.json()["processed"] == 1
+
+    def test_increments_processed_count_after_poll(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
+                "claven.server.poll_new_messages"
+            ) as mock_poll:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "u@example.com"}]
+                mock_db.get_history_id.return_value = 999
+                mock_db.get_known_senders.return_value = set()
+                mock_auth.get_service.return_value = MagicMock()
+                mock_poll.return_value = 5
+                with TestClient(app) as client:
+                    client.post(
+                        "/internal/poll",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        mock_db.increment_processed_count.assert_called_once_with(ANY, "uid-1", 5)
 
 
 class TestWebhookGmail:
@@ -406,6 +425,26 @@ class TestWebhookGmail:
         assert response.status_code == 200
         mock_poll.assert_called_once()
 
+    def test_increments_processed_count_after_webhook(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
+                "claven.server.poll_new_messages"
+            ) as mock_poll:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_email.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 100
+                mock_db.get_known_senders.return_value = set()
+                mock_auth.get_service.return_value = MagicMock()
+                mock_poll.return_value = 3
+                with _mock_pubsub_token():
+                    with TestClient(app) as client:
+                        client.post(
+                            "/webhook/gmail",
+                            json=_pubsub_payload(history_id="200"),
+                            headers=_PUBSUB_HEADERS,
+                        )
+        mock_db.increment_processed_count.assert_called_once_with(ANY, "uid-1", 3)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -473,6 +512,18 @@ class TestApiMe:
                     response = client.get("/api/me")
         assert response.json()["connected"] is False
 
+    def _make_gmail_service(self, messages_unread=0, messages_total=0, read_estimate=0):
+        """Return a mock Gmail service with inbox label counts and read message estimate."""
+        svc = MagicMock()
+        svc.users.return_value.labels.return_value.get.return_value.execute.return_value = {
+            "messagesUnread": messages_unread,
+            "messagesTotal": messages_total,
+        }
+        svc.users.return_value.messages.return_value.list.return_value.execute.return_value = {
+            "resultSizeEstimate": read_estimate,
+        }
+        return svc
+
     def test_returns_known_senders_count(self):
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
@@ -482,9 +533,7 @@ class TestApiMe:
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 42
-                mock_auth.get_service.return_value = MagicMock(
-                    **{"users.return_value.labels.return_value.get.return_value.execute.return_value": {"messagesUnread": 7}}
-                )
+                mock_auth.get_service.return_value = self._make_gmail_service()
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
@@ -499,12 +548,9 @@ class TestApiMe:
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
-                mock_service = MagicMock()
-                mock_service.users.return_value.labels.return_value.get.return_value.execute.return_value = {
-                    "messagesUnread": 99,
-                    "messagesTotal": 500,
-                }
-                mock_auth.get_service.return_value = mock_service
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_unread=99, messages_total=500, read_estimate=401
+                )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
@@ -519,19 +565,33 @@ class TestApiMe:
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
-                mock_service = MagicMock()
-                mock_service.users.return_value.labels.return_value.get.return_value.execute.return_value = {
-                    "messagesUnread": 0,
-                    "messagesTotal": 250,
-                }
-                mock_auth.get_service.return_value = mock_service
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=250, read_estimate=250
+                )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["inbox_count"] == 250
 
+    def test_returns_read_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_unread=30, messages_total=100, read_estimate=70
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["read_count"] == 70
+
     def test_unread_count_is_none_when_gmail_api_fails(self):
-        """A Gmail API error must not break /api/me — return null for unread_count."""
+        """A Gmail API error must not break /api/me — return null for all Gmail fields."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -546,7 +606,60 @@ class TestApiMe:
                     response = client.get("/api/me")
         assert response.status_code == 200
         assert response.json()["unread_count"] is None
+        assert response.json()["read_count"] is None
         assert response.json()["inbox_count"] is None
+
+    def test_returns_processed_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_db.get_processed_count.return_value = 42
+                mock_db.get_pending_count.return_value = None
+                mock_auth.get_service.return_value = self._make_gmail_service()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["processed_count"] == 42
+
+    def test_returns_pending_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_db.get_processed_count.return_value = 10
+                mock_db.get_pending_count.return_value = 90
+                mock_auth.get_service.return_value = self._make_gmail_service()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["pending_count"] == 90
+
+    def test_pending_count_is_null_before_connect(self):
+        """pending_count is null when initial_inbox_count has not been recorded yet."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = None
+                mock_db.count_known_senders.return_value = 0
+                mock_db.get_processed_count.return_value = 0
+                mock_db.get_pending_count.return_value = None
+                mock_auth.get_service.side_effect = Exception("no credentials")
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["pending_count"] is None
 
 
 class TestApiConfig:
@@ -675,6 +788,24 @@ class TestApiConnect:
                     client.cookies.set("session", token)
                     client.post("/api/connect")
         mock_db.set_history_id.assert_called_once_with(ANY, "uid-1", 99999)
+
+    def test_stores_initial_inbox_count_on_connect(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.start_watch") as mock_watch:
+                _fake_db_ctx(mock_db)
+                mock_service = MagicMock()
+                mock_service.users.return_value.labels.return_value.get.return_value.execute.return_value = {
+                    "messagesTotal": 150,
+                }
+                mock_auth.get_service.return_value = mock_service
+                mock_watch.return_value = {"historyId": "99999"}
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    client.post("/api/connect")
+        mock_db.set_initial_inbox_count.assert_called_once_with(ANY, "uid-1", 150)
 
     def test_watch_failure_returns_500(self):
         token = _make_session_token()

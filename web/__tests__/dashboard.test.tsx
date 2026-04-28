@@ -21,7 +21,10 @@ const DEFAULT_ME: object = {
   connected: true,
   history_id: 12345,
   known_senders: 0,
+  processed_count: 0,
+  pending_count: null,
   unread_count: null,
+  read_count: null,
   inbox_count: null,
 };
 
@@ -310,6 +313,41 @@ describe("Dashboard page", () => {
       render(<DashboardPage />);
       await screen.findByText(/in inbox/i);
       await screen.findByText("250");
+    });
+
+    it("shows processed count", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, processed_count: 123 } });
+      render(<DashboardPage />);
+      await screen.findByText(/processed/i);
+      await screen.findByText("123");
+    });
+
+    it("shows pending count when available", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, pending_count: 47 } });
+      render(<DashboardPage />);
+      await screen.findByText(/pending/i);
+      await screen.findByText("47");
+    });
+
+    it("does not show pending when pending_count is null", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, pending_count: null } });
+      render(<DashboardPage />);
+      await screen.findByText(/processed/i);
+      expect(screen.queryByText(/pending/i)).not.toBeInTheDocument();
+    });
+
+    it("shows read count from api", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, read_count: 70 } });
+      render(<DashboardPage />);
+      await screen.findByText(/^read$/i);
+      await screen.findByText("70");
+    });
+
+    it("does not show read count when read_count is null", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, read_count: null, unread_count: 30 } });
+      render(<DashboardPage />);
+      await screen.findByText(/30/);
+      expect(screen.queryByText(/^read$/i)).not.toBeInTheDocument();
     });
 
     it("shows rule name and description from /api/config", async () => {

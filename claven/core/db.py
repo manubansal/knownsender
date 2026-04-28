@@ -149,6 +149,47 @@ def set_history_id(conn, user_id: str, history_id: int) -> None:
         )
 
 
+def set_initial_inbox_count(conn, user_id: str, count: int) -> None:
+    """Record the inbox size at connect time — used to compute the pending backlog."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET initial_inbox_count = %s WHERE user_id = %s",
+            (count, user_id),
+        )
+
+
+def get_processed_count(conn, user_id: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT processed_count FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+def get_pending_count(conn, user_id: str) -> int | None:
+    """Return max(0, initial_inbox_count - processed_count), or None if not yet set."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT initial_inbox_count, processed_count FROM scan_state WHERE user_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        return max(0, row[0] - row[1])
+
+
+def increment_processed_count(conn, user_id: str, n: int) -> None:
+    if n <= 0:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET processed_count = processed_count + %s WHERE user_id = %s",
+            (n, user_id),
+        )
+
+
 # ── Sent recipients ───────────────────────────────────────────────────────────
 
 def count_known_senders(conn, user_id: str) -> int:

@@ -26,7 +26,11 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
 
 
 def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):
-    """Check for new messages since the last history ID."""
+    """Check for new messages since the last history ID.
+
+    Returns the number of messages processed, or None if the history ID had
+    expired (404) and the caller should fall back to a full inbox scan.
+    """
     try:
         records = list_history(service, history_id)
     except Exception as e:
@@ -47,4 +51,4 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
         for message_id in message_ids:
             process_message(service, message_id, label_configs, label_id_cache, known_senders)
 
-    return history_id
+    return len(message_ids)

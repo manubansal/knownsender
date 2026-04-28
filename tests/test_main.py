@@ -105,7 +105,7 @@ class TestPollNewMessages:
             }]
             result = poll_new_messages(service, "history123", [], {})
             mock_process.assert_called_once_with(service, "msg1", [], {}, None)
-            assert result == "history123"
+            assert result == 1
 
     def test_ignores_non_inbox_messages(self):
         from claven.core.process import poll_new_messages
@@ -126,7 +126,7 @@ class TestPollNewMessages:
             result = poll_new_messages(service, "expired_id", [], {})
             assert result is None
 
-    def test_returns_history_id_when_no_new_messages(self):
+    def test_returns_zero_when_no_new_messages(self):
         from claven.core.process import poll_new_messages
         service = MagicMock()
         with patch("claven.core.process.list_history") as mock_history, \
@@ -134,7 +134,7 @@ class TestPollNewMessages:
             mock_history.return_value = []
             result = poll_new_messages(service, "history123", [], {})
             mock_process.assert_not_called()
-            assert result == "history123"
+            assert result == 0
 
     def test_processes_multiple_new_messages(self):
         from claven.core.process import poll_new_messages

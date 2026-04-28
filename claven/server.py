@@ -293,8 +293,10 @@ def internal_poll(request: Request):
                 profile = get_profile(service)
                 latest_history_id = int(profile["historyId"])
 
-                poll_new_messages(service, history_id, label_configs, {}, known_senders)
+                count = poll_new_messages(service, history_id, label_configs, {}, known_senders)
                 db.set_history_id(conn, user_id, latest_history_id)
+                if count is not None:
+                    db.increment_processed_count(conn, user_id, count)
                 results.append({"user_id": user_id, "status": "ok"})
             except Exception as exc:
                 logger.exception("Error processing user %s", user_id, exc_info=exc)
@@ -312,15 +314,21 @@ def api_me(request: Request):
             raise HTTPException(status_code=404, detail="User not found")
         history_id = db.get_history_id(conn, session["user_id"])
         known_senders = db.count_known_senders(conn, session["user_id"])
+        processed_count = db.get_processed_count(conn, session["user_id"])
+        pending_count = db.get_pending_count(conn, session["user_id"])
 
         unread_count = None
+        read_count = None
         inbox_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
             inbox = service.users().labels().get(userId="me", id="INBOX").execute()
-            logger.debug("INBOX label response: %s", inbox)
             unread_count = inbox.get("messagesUnread")
             inbox_count = inbox.get("messagesTotal")
+            read_result = service.users().messages().list(
+                userId="me", labelIds=["INBOX"], q="is:read", maxResults=1
+            ).execute()
+            read_count = read_result.get("resultSizeEstimate")
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
@@ -329,7 +337,10 @@ def api_me(request: Request):
         "connected": history_id is not None,
         "history_id": history_id,
         "known_senders": known_senders,
+        "processed_count": processed_count,
+        "pending_count": pending_count,
         "unread_count": unread_count,
+        "read_count": read_count,
         "inbox_count": inbox_count,
     }
 
@@ -354,6 +365,11 @@ def api_connect(request: Request):
             watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
             history_id = int(watch_response["historyId"])
             db.set_history_id(conn, session["user_id"], history_id)
+            try:
+                inbox = service.users().labels().get(userId="me", id="INBOX").execute()
+                db.set_initial_inbox_count(conn, session["user_id"], inbox.get("messagesTotal", 0))
+            except Exception as exc:
+                logger.warning("Could not fetch initial inbox count for %s: %s", session["email"], exc)
         except Exception as exc:
             logger.exception("Connect failed for %s: %s", session["email"], exc)
             raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
@@ -426,7 +442,9 @@ async def webhook_gmail(request: Request):
 
         service = auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
         known_senders = db.get_known_senders(conn, user["id"])
-        poll_new_messages(service, stored_history_id, label_configs, {}, known_senders)
+        count = poll_new_messages(service, stored_history_id, label_configs, {}, known_senders)
         db.set_history_id(conn, user["id"], notification_history_id)
+        if count is not None:
+            db.increment_processed_count(conn, user["id"], count)
 
     return {"status": "ok"}
