@@ -1,6 +1,7 @@
 "use client";
 
 import { buttonVariants } from "@/components/ui/button";
+import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
@@ -33,9 +34,13 @@ function HomeContent() {
       )}
       <a
         href={`${API_URL}/oauth/start`}
+        onClick={(e) => {
+          e.preventDefault();
+          window.location.href = `${API_URL}/oauth/start?return_to=${encodeURIComponent(window.location.origin)}`;
+        }}
         className={cn(buttonVariants({ size: "lg" }), "mt-2")}
       >
-        {errorMessage ? "Try again" : "Sign in with Google"}
+        {errorMessage ? "Try again" : SIGN_IN_LABEL}
       </a>
     </div>
   );

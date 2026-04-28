@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DashboardPage from "@/app/dashboard/page";
+import { SIGN_IN_LABEL } from "@/lib/constants";
 
 // Module-level mocks — defined before vi.mock so the factory can close over them.
 const replaceMock = vi.fn();
@@ -92,7 +93,7 @@ describe("Dashboard page", () => {
     it("shows sign-in prompt when /api/me returns 401", async () => {
       mockFetch({ ok: false, status: 401 });
       render(<DashboardPage />);
-      await screen.findByRole("link", { name: /connect gmail/i });
+      await screen.findByRole("link", { name: SIGN_IN_LABEL });
     });
   });
 
@@ -126,6 +127,55 @@ describe("Dashboard page", () => {
       });
       render(<DashboardPage />);
       const button = await screen.findByRole("button", { name: /disconnect/i });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
+      );
+      await userEvent.click(button);
+      await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/"));
+    });
+  });
+
+  describe("logout", () => {
+    it("shows a log out button", async () => {
+      mockFetch({
+        ok: true,
+        body: { email: "user@example.com", connected: true, history_id: 12345 },
+      });
+      render(<DashboardPage />);
+      await screen.findByRole("button", { name: /log out/i });
+    });
+
+    it("calls /api/logout on click", async () => {
+      mockFetch({
+        ok: true,
+        body: { email: "user@example.com", connected: true, history_id: 12345 },
+      });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /log out/i });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
+      );
+      await userEvent.click(button);
+
+      await waitFor(() =>
+        expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+          `${API_URL}/api/logout`,
+          expect.objectContaining({ method: "POST", credentials: "include" }),
+        ),
+      );
+    });
+
+    it("redirects to home after logout", async () => {
+      mockFetch({
+        ok: true,
+        body: { email: "user@example.com", connected: true, history_id: 12345 },
+      });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /log out/i });
 
       vi.stubGlobal(
         "fetch",
