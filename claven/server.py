@@ -160,7 +160,7 @@ def oauth_start(return_to: str | None = None):
     state = secrets.token_urlsafe(32)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        prompt="consent",
+        prompt="select_account",
         state=state,
     )
     response = RedirectResponse(url=auth_url)
@@ -234,12 +234,13 @@ def oauth_callback(
     try:
         with db.get_connection() as conn:
             user_id = db.upsert_user(conn, email)
-            auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
-
-            # Use the freshly-issued creds directly — no need to reload from DB
-            service = build("gmail", "v1", credentials=creds)
-            watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
-            db.set_history_id(conn, user_id, int(watch_response["historyId"]))
+            existing_tokens = db.load_tokens(conn, user_id)
+            if not existing_tokens:
+                # New user — store credentials and start Gmail push watch
+                auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
+                service = build("gmail", "v1", credentials=creds)
+                watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
+                db.set_history_id(conn, user_id, int(watch_response["historyId"]))
     except Exception as exc:
         logger.exception("Signup failed for %s: %s", email, exc)
         return _error_redirect(base, "signup_failed")

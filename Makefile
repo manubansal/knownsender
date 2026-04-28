@@ -1,6 +1,8 @@
-.PHONY: setup test ci dev dev-read-only dev-local-frontend
+.PHONY: setup test ci dev-read-write dev-read-only dev-local-frontend
 
-dev:
+# Full local dev stack — local backend + frontend, writable DB connection.
+# Required for testing sign-in/OAuth flows (oauth_callback writes to the DB).
+dev-read-write:
 	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
 	@set -a; . ./.env.local; set +a; \
 	trap 'kill 0' EXIT; \
