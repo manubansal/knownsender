@@ -3,6 +3,7 @@ accounts/
 __pycache__/
 *.pyc
 .env
+.secrets
 *.swp
 *.swo
 *.duckdb

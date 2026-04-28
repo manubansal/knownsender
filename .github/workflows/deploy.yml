@@ -73,13 +73,14 @@ jobs:
           service: ${{ env.SERVICE }}
           region: ${{ env.REGION }}
           image: ${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/claven/server:${{ github.sha }}
+          secrets: |-
+            DATABASE_URL=database-url:latest
+            TOKEN_ENCRYPTION_KEY=token-encryption-key:latest
+            OAUTH_CLIENT_SECRET=oauth-client-secret:latest
+            INTERNAL_API_SECRET=internal-api-secret:latest
           env_vars: |-
-            DATABASE_URL=${{ secrets.DATABASE_URL }}
-            TOKEN_ENCRYPTION_KEY=${{ secrets.TOKEN_ENCRYPTION_KEY }}
             OAUTH_CLIENT_ID=${{ secrets.OAUTH_CLIENT_ID }}
-            OAUTH_CLIENT_SECRET=${{ secrets.OAUTH_CLIENT_SECRET }}
             OAUTH_REDIRECT_URI=${{ secrets.OAUTH_REDIRECT_URI }}
-            INTERNAL_API_SECRET=${{ secrets.INTERNAL_API_SECRET }}
             PUBSUB_TOPIC=${{ secrets.PUBSUB_TOPIC }}
             FRONTEND_URL=https://claven.app
           flags: >-
