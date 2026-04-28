@@ -8,6 +8,10 @@ env:
   REGION: us-central1
   SERVICE: claven
 
+concurrency:
+  group: live-gmail-tests
+  cancel-in-progress: false
+
 jobs:
   deploy-backend:
     name: Test, build, and deploy backend

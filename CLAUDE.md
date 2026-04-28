@@ -56,6 +56,14 @@ git fetch origin && git rebase origin/main && git push origin <branch> --force-w
 
 To re-obtain a refresh token for this account (e.g. after token expiry), run `scripts/get_test_token.py` and update the `TEST_GMAIL_REFRESH_TOKEN` GitHub secret.
 
+## Live test concurrency
+
+`claven.test.inbox@gmail.com` supports only **one active Gmail push watch** at a time. Concurrent `live` test runs will corrupt each other's `historyId` and cancel each other's watch in teardown.
+
+**CI is serialized** via `concurrency: group: live-gmail-tests` in both `ci.yml` and `deploy.yml` — GitHub Actions queues overlapping runs rather than running them in parallel.
+
+**Local `make ci` is not serialized with GitHub CI.** Do not run `make ci` locally while a CI run is active on GitHub. Check GitHub Actions before starting a local CI run.
+
 ## Key decisions
 
 - **Serverless platform:** Cloud Run (`min-instances=0` to start; upgrade to 1 when interactive CLI latency matters)
