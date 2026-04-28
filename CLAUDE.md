@@ -50,6 +50,12 @@ Before opening any PR, rebase the branch onto its base branch:
 git fetch origin && git rebase origin/main && git push origin <branch> --force-with-lease
 ```
 
+## Test accounts
+
+**`claven.test.inbox@gmail.com` is reserved exclusively for automated e2e tests.** Do not sign in with it manually or treat any state it accumulates as persistent. The `clean_test_user` fixture in `tests/e2e/` deletes this account from the DB before and after every test run, so any manually-configured state will be wiped the next time CI runs.
+
+To re-obtain a refresh token for this account (e.g. after token expiry), run `scripts/get_test_token.py` and update the `TEST_GMAIL_REFRESH_TOKEN` GitHub secret.
+
 ## Key decisions
 
 - **Serverless platform:** Cloud Run (`min-instances=0` to start; upgrade to 1 when interactive CLI latency matters)
