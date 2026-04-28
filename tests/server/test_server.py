@@ -501,13 +501,34 @@ class TestApiMe:
                 mock_db.count_known_senders.return_value = 0
                 mock_service = MagicMock()
                 mock_service.users.return_value.labels.return_value.get.return_value.execute.return_value = {
-                    "messagesUnread": 99
+                    "messagesUnread": 99,
+                    "messagesTotal": 500,
                 }
                 mock_auth.get_service.return_value = mock_service
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["unread_count"] == 99
+
+    def test_returns_inbox_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_service = MagicMock()
+                mock_service.users.return_value.labels.return_value.get.return_value.execute.return_value = {
+                    "messagesUnread": 0,
+                    "messagesTotal": 250,
+                }
+                mock_auth.get_service.return_value = mock_service
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["inbox_count"] == 250
 
     def test_unread_count_is_none_when_gmail_api_fails(self):
         """A Gmail API error must not break /api/me — return null for unread_count."""
@@ -525,6 +546,7 @@ class TestApiMe:
                     response = client.get("/api/me")
         assert response.status_code == 200
         assert response.json()["unread_count"] is None
+        assert response.json()["inbox_count"] is None
 
 
 class TestApiConfig:

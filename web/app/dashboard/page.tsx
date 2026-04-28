@@ -15,6 +15,7 @@ type MeResponse = {
   history_id: number | null;
   known_senders: number;
   unread_count: number | null;
+  inbox_count: number | null;
 };
 
 type LabelRule = {
@@ -120,7 +121,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, unread_count } = state.data;
+  const { email, connected, known_senders, unread_count, inbox_count } = state.data;
   const { labels } = state;
 
   return (
@@ -149,6 +150,7 @@ export default function DashboardPage() {
           <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 flex flex-col gap-4 text-sm">
             <div className="flex gap-6 text-muted-foreground">
               <span>{known_senders} known senders</span>
+              {inbox_count !== null && <span>{inbox_count} in inbox</span>}
               {unread_count !== null && <span>{unread_count} unread</span>}
             </div>
 

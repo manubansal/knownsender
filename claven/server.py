@@ -314,10 +314,12 @@ def api_me(request: Request):
         known_senders = db.count_known_senders(conn, session["user_id"])
 
         unread_count = None
+        inbox_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
             inbox = service.users().labels().get(userId="me", id="INBOX").execute()
             unread_count = inbox.get("messagesUnread")
+            inbox_count = inbox.get("messagesTotal")
         except Exception:
             pass  # credentials absent or Gmail API unavailable — degrade gracefully
 
@@ -327,6 +329,7 @@ def api_me(request: Request):
         "history_id": history_id,
         "known_senders": known_senders,
         "unread_count": unread_count,
+        "inbox_count": inbox_count,
     }
 
 

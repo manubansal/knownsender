@@ -22,6 +22,7 @@ const DEFAULT_ME: object = {
   history_id: 12345,
   known_senders: 0,
   unread_count: null,
+  inbox_count: null,
 };
 
 const DEFAULT_CONFIG: object = { labels: [] };
@@ -299,6 +300,12 @@ describe("Dashboard page", () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, unread_count: 99 } });
       render(<DashboardPage />);
       await screen.findByText(/99/);
+    });
+
+    it("shows inbox count", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, inbox_count: 250 } });
+      render(<DashboardPage />);
+      await screen.findByText(/250 in inbox/i);
     });
 
     it("shows rule config from /api/config", async () => {
