@@ -42,6 +42,14 @@ This project follows test-driven development. **Tests are written before impleme
 
 `saas` is the active development branch. `main` is protected — PRs only, no direct pushes.
 
+## Git workflow
+
+Before opening any PR, rebase the branch onto its base branch:
+
+```
+git fetch origin && git rebase origin/main && git push origin <branch> --force-with-lease
+```
+
 ## Key decisions
 
 - **Serverless platform:** Cloud Run (`min-instances=0` to start; upgrade to 1 when interactive CLI latency matters)
