@@ -9,3 +9,4 @@ __pycache__/
 *.duckdb
 .DS_Store
 web/.open-next/
+.env.local

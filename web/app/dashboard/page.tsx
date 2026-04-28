@@ -25,13 +25,15 @@ export default function DashboardPage() {
   const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/me`, { credentials: "include" }).then((res) => {
-      if (!res.ok) {
-        setState({ status: "unauthenticated" });
-      } else {
-        res.json().then((data: MeResponse) => setState({ status: "loaded", data }));
-      }
-    });
+    fetch(`${API_URL}/api/me`, { credentials: "include" })
+      .then((res) => {
+        if (!res.ok) {
+          setState({ status: "unauthenticated" });
+        } else {
+          res.json().then((data: MeResponse) => setState({ status: "loaded", data }));
+        }
+      })
+      .catch(() => setState({ status: "unauthenticated" }));
   }, []);
 
   async function handleDisconnect() {

@@ -1,4 +1,12 @@
-.PHONY: setup test ci
+.PHONY: setup test ci dev
+
+dev:
+	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
+	@set -a; . ./.env.local; set +a; \
+	trap 'kill 0' EXIT; \
+	uvicorn claven.server:app --port 8000 --reload & \
+	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
+	wait
 
 setup:
 	git config core.hooksPath .hooks

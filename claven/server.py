@@ -17,6 +17,7 @@ import secrets
 
 import jwt as pyjwt
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -33,6 +34,14 @@ from claven.core.watch import start_watch, stop_watch
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Claven")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.environ.get("FRONTEND_URL", "https://claven.app")],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
