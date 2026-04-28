@@ -15,8 +15,9 @@ import logging
 import os
 import secrets
 
+import jwt as pyjwt
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from google_auth_oauthlib.flow import Flow
@@ -27,7 +28,7 @@ import claven.core.db as db
 from claven.core.gmail import get_profile
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
-from claven.core.watch import start_watch
+from claven.core.watch import start_watch, stop_watch
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,40 @@ def _verify_pubsub_token(request: Request) -> None:
     if not email.endswith(".gserviceaccount.com"):
         logger.warning("Pub/Sub token email is not a GCP service account: %s", email)
         raise HTTPException(status_code=401, detail="Unexpected Pub/Sub service account")
+
+
+def _issue_session(user_id: str, email: str) -> str:
+    """Return a signed JWT encoding the user's identity.
+
+    Accepted by all authenticated endpoints as either a 'session' cookie
+    (browser) or an Authorization: Bearer token (CLI).  No expiry is set
+    for now — rotate SESSION_SECRET to invalidate all sessions.
+    """
+    return pyjwt.encode(
+        {"user_id": user_id, "email": email},
+        os.environ["SESSION_SECRET"],
+        algorithm="HS256",
+    )
+
+
+def _get_session(request: Request) -> dict:
+    """Extract and verify the session JWT from cookie or Bearer header.
+
+    Checks the 'session' cookie first (browser path), then falls back to
+    the Authorization: Bearer header (CLI path).  Raises 401 if missing
+    or invalid so callers can treat the result as trusted.
+    """
+    token = request.cookies.get("session")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[len("Bearer "):]
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        return pyjwt.decode(token, os.environ["SESSION_SECRET"], algorithms=["HS256"])
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid session")
 
 
 def _make_flow() -> Flow:
@@ -176,8 +211,10 @@ def oauth_callback(
         return _error_redirect(frontend_url, "signup_failed")
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
-    response = RedirectResponse(url=f"{frontend_url}/connected?email={email}", status_code=302)
+    session_token = _issue_session(user_id, email)
+    response = RedirectResponse(url=f"{frontend_url}/dashboard", status_code=302)
     response.delete_cookie("oauth_state")
+    response.set_cookie("session", session_token, httponly=True, secure=True, samesite="lax")
     return response
 
 
@@ -213,6 +250,36 @@ def internal_poll(request: Request):
                 results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
 
     return {"processed": len(results), "results": results}
+
+
+@app.get("/api/me")
+def api_me(request: Request):
+    session = _get_session(request)
+    with db.get_connection() as conn:
+        user = db.get_user_by_id(conn, session["user_id"])
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        history_id = db.get_history_id(conn, session["user_id"])
+    return {
+        "email": user["email"],
+        "connected": history_id is not None,
+        "history_id": history_id,
+    }
+
+
+@app.post("/api/disconnect")
+def api_disconnect(request: Request):
+    session = _get_session(request)
+    with db.get_connection() as conn:
+        try:
+            service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+            stop_watch(service)
+        except Exception as exc:
+            logger.warning("stop_watch failed during disconnect for %s: %s", session["email"], exc)
+        db.delete_credentials(conn, session["user_id"])
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("session")
+    return response
 
 
 @app.post("/webhook/gmail")

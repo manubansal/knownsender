@@ -3,7 +3,7 @@
 import base64
 import json
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,6 +50,7 @@ _ENV = {
     "OAUTH_REDIRECT_URI": "http://localhost/oauth/callback",
     "INTERNAL_API_SECRET": "test-internal-secret",
     "TOKEN_ENCRYPTION_KEY": "aa" * 32,
+    "SESSION_SECRET": "test-session-secret-must-be-at-least-32-bytes!",
 }
 
 
@@ -318,3 +319,171 @@ class TestWebhookGmail:
                         )
         assert response.status_code == 200
         mock_poll.assert_called_once()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _make_session_token(payload: dict | None = None) -> str:
+    """Issue a real JWT signed with the test SESSION_SECRET."""
+    import jwt as pyjwt
+    data = payload or {"user_id": "uid-1", "email": "user@example.com"}
+    return pyjwt.encode(data, _ENV["SESSION_SECRET"], algorithm="HS256")
+
+
+class TestApiMe:
+    def test_no_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/api/me")
+        assert response.status_code == 401
+
+    def test_invalid_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/api/me", headers={"Authorization": "Bearer bad.token"})
+        assert response.status_code == 401
+
+    def test_valid_cookie_returns_user_data(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["email"] == "user@example.com"
+        assert body["connected"] is True
+        assert body["history_id"] == 12345
+
+    def test_valid_bearer_token_returns_user_data(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = None
+                with TestClient(app) as client:
+                    response = client.get(
+                        "/api/me", headers={"Authorization": f"Bearer {token}"}
+                    )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["email"] == "user@example.com"
+        assert body["connected"] is False
+
+    def test_not_connected_when_no_history_id(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = None
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["connected"] is False
+
+
+class TestApiDisconnect:
+    def test_no_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.post("/api/disconnect")
+        assert response.status_code == 401
+
+    def test_stops_watch_and_deletes_credentials(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.stop_watch") as mock_stop:
+                _fake_db_ctx(mock_db)
+                mock_auth.get_service.return_value = MagicMock()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.post("/api/disconnect")
+        assert response.status_code == 200
+        mock_stop.assert_called_once()
+        mock_db.delete_credentials.assert_called_once_with(ANY, "uid-1")
+
+    def test_clears_session_cookie(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.stop_watch"):
+                _fake_db_ctx(mock_db)
+                mock_auth.get_service.return_value = MagicMock()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.post("/api/disconnect")
+        # Cookie deleted: Set-Cookie header with empty value / max-age=0
+        assert "session" in response.headers.get("set-cookie", "")
+
+    def test_watch_stop_failure_still_deletes_credentials(self):
+        """stop_watch errors (e.g. already expired) must not block disconnect."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.stop_watch") as mock_stop:
+                _fake_db_ctx(mock_db)
+                mock_auth.get_service.return_value = MagicMock()
+                mock_stop.side_effect = Exception("watch already expired")
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.post("/api/disconnect")
+        assert response.status_code == 200
+        mock_db.delete_credentials.assert_called_once()
+
+
+class TestOAuthCallbackSession:
+    """Verify the callback issues a session cookie and redirects to /dashboard."""
+
+    def _run_full_oauth(self, extra_env=None):
+        """Drive the full start → callback flow and return the callback response."""
+        env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t", **(extra_env or {})}
+        mock_creds = MagicMock()
+        mock_creds.id_token = "fake-id-token"
+        mock_creds.token = "fake-access-token"
+        mock_creds.refresh_token = "fake-refresh-token"
+        mock_creds.expiry = None
+        mock_creds.scopes = []
+
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+        mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+        with patch.dict("os.environ", env), \
+             patch("claven.server.Flow") as mock_flow_cls, \
+             patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify, \
+             patch("claven.server.db") as mock_db, \
+             patch("claven.server.build"), \
+             patch("claven.server.start_watch") as mock_watch:
+            mock_flow_cls.from_client_config.return_value = mock_flow
+            mock_verify.return_value = {"email": "user@example.com"}
+            _fake_db_ctx(mock_db)
+            mock_db.upsert_user.return_value = "uid-1"
+            mock_watch.return_value = {"historyId": "99999"}
+
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+                return client.get(
+                    f"/oauth/callback?code=abc&state={state}",
+                    follow_redirects=False,
+                )
+
+    def test_successful_callback_redirects_to_dashboard(self):
+        response = self._run_full_oauth()
+        assert response.status_code == 302
+        assert "/dashboard" in response.headers["location"]
+
+    def test_successful_callback_sets_session_cookie(self):
+        response = self._run_full_oauth()
+        assert "session" in response.cookies
