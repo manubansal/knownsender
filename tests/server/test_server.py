@@ -21,7 +21,7 @@ def _pubsub_payload(email="user@example.com", history_id="12345"):
 
 _PUBSUB_TOKEN = "fake-pubsub-jwt"
 _PUBSUB_HEADERS = {"Authorization": f"Bearer {_PUBSUB_TOKEN}"}
-_PUBSUB_ID_INFO = {"email": "service-12345@gcp-sa-pubsub.iam.gserviceaccount.com"}
+_PUBSUB_ID_INFO = {"email": "claven-pubsub@claven-prod.iam.gserviceaccount.com"}
 
 
 @contextmanager

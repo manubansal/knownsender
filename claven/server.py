@@ -73,8 +73,8 @@ def _verify_pubsub_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid Pub/Sub token")
 
     email = id_info.get("email", "")
-    if not email.endswith("@gcp-sa-pubsub.iam.gserviceaccount.com"):
-        logger.warning("Pub/Sub token email is not a Pub/Sub SA: %s", email)
+    if not email.endswith(".gserviceaccount.com"):
+        logger.warning("Pub/Sub token email is not a GCP service account: %s", email)
         raise HTTPException(status_code=401, detail="Unexpected Pub/Sub service account")
 
 
