@@ -132,14 +132,18 @@ def oauth_callback(
         return _error_redirect(frontend_url, "token_verification_failed")
     email = id_info["email"]
 
-    with db.get_connection() as conn:
-        user_id = db.upsert_user(conn, email)
-        auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
+    try:
+        with db.get_connection() as conn:
+            user_id = db.upsert_user(conn, email)
+            auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
 
-        # Use the freshly-issued creds directly — no need to reload from DB
-        service = build("gmail", "v1", credentials=creds)
-        watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
-        db.set_history_id(conn, user_id, int(watch_response["historyId"]))
+            # Use the freshly-issued creds directly — no need to reload from DB
+            service = build("gmail", "v1", credentials=creds)
+            watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
+            db.set_history_id(conn, user_id, int(watch_response["historyId"]))
+    except Exception as exc:
+        logger.exception("Signup failed for %s: %s", email, exc)
+        return _error_redirect(frontend_url, "signup_failed")
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
     response = RedirectResponse(url=f"{frontend_url}/connected?email={email}", status_code=302)
