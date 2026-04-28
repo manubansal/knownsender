@@ -350,6 +350,39 @@ describe("Dashboard page", () => {
       expect(screen.queryByText(/^read$/i)).not.toBeInTheDocument();
     });
 
+    it("shows last updated label after data loads", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByText(/last updated/i);
+    });
+
+    it("shows a time value next to last updated", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByText(/last updated/i);
+      // time rendered as HH:MM AM/PM or HH:MM
+      expect(screen.getByTestId("last-updated-time").textContent).toMatch(/\d{1,2}:\d{2}/);
+    });
+
+    it("still shows last updated time after refresh", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByTestId("last-updated-time");
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((url: string) => {
+          if (url.includes("/api/config")) {
+            return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_CONFIG });
+          }
+          return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_ME });
+        }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: /refresh stats/i }));
+
+      await screen.findByTestId("last-updated-time");
+    });
+
     it("shows rule name and description from /api/config", async () => {
       mockFetch(
         { ok: true, body: DEFAULT_ME },
@@ -360,6 +393,61 @@ describe("Dashboard page", () => {
       await screen.findByText(/from is a known sender/i);
     });
 
+  });
+
+  describe("refresh", () => {
+    it("shows a refresh button in the info box", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByRole("button", { name: /refresh stats/i });
+    });
+
+    it("re-fetches /api/me on refresh button click", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /refresh stats/i });
+
+      const refreshedMe = { ...DEFAULT_ME, processed_count: 5, unread_count: 10 };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((url: string) => {
+          if (url.includes("/api/config")) {
+            return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_CONFIG });
+          }
+          return Promise.resolve({ ok: true, status: 200, json: async () => refreshedMe });
+        }),
+      );
+      await userEvent.click(button);
+
+      await waitFor(() =>
+        expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+          `${API_URL}/api/me`,
+          expect.objectContaining({ credentials: "include" }),
+        ),
+      );
+    });
+
+    it("updates counts after refresh", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, processed_count: 0 } });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /refresh stats/i });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((url: string) => {
+          if (url.includes("/api/config")) {
+            return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_CONFIG });
+          }
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ ...DEFAULT_ME, processed_count: 99 }),
+          });
+        }),
+      );
+      await userEvent.click(button);
+      await screen.findByText("99");
+    });
   });
 
   describe("switch account", () => {

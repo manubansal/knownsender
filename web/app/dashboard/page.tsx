@@ -3,7 +3,7 @@
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { CheckCircle, Zap } from "lucide-react";
+import { CheckCircle, RefreshCw, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -43,22 +43,34 @@ export default function DashboardPage() {
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  useEffect(() => {
-    Promise.all([
-      fetch(`${API_URL}/api/me`, { credentials: "include" }),
-      fetch(`${API_URL}/api/config`),
-    ])
-      .then(async ([meRes, configRes]) => {
-        if (!meRes.ok) {
-          setState({ status: "unauthenticated" });
-          return;
-        }
-        const [data, config] = await Promise.all([meRes.json(), configRes.json()]);
-        setState({ status: "loaded", data, labels: config.labels ?? [] });
-      })
-      .catch(() => setState({ status: "unauthenticated" }));
-  }, []);
+  async function loadData() {
+    try {
+      const [meRes, configRes] = await Promise.all([
+        fetch(`${API_URL}/api/me`, { credentials: "include" }),
+        fetch(`${API_URL}/api/config`),
+      ]);
+      if (!meRes.ok) {
+        setState({ status: "unauthenticated" });
+        return;
+      }
+      const [data, config] = await Promise.all([meRes.json(), configRes.json()]);
+      setState({ status: "loaded", data, labels: config.labels ?? [] });
+      setLastUpdated(new Date());
+    } catch {
+      setState({ status: "unauthenticated" });
+    }
+  }
+
+  useEffect(() => { loadData(); }, []);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  }
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -150,6 +162,7 @@ export default function DashboardPage() {
 
           <p className="text-lg font-medium">{email}</p>
 
+          <div className="w-full flex flex-col items-end gap-1">
           <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
             {labels.map((label) => {
               const isKnownSender = label.rules.some((r) => r.known_sender);
@@ -198,6 +211,24 @@ export default function DashboardPage() {
                 <span className="tabular-nums">{unread_count}</span>
               </div>
             )}
+            {lastUpdated !== null && (
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Last updated</span>
+                <span data-testid="last-updated-time" className="tabular-nums text-muted-foreground">
+                  {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh stats"
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+            <span>Refresh</span>
+          </button>
           </div>
 
           <div className="flex flex-col items-center gap-3">
