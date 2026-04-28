@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DashboardPage from "@/app/dashboard/page";
+import { SIGN_IN_LABEL } from "@/lib/constants";
 
 // Module-level mocks — defined before vi.mock so the factory can close over them.
 const replaceMock = vi.fn();
@@ -92,7 +93,7 @@ describe("Dashboard page", () => {
     it("shows sign-in prompt when /api/me returns 401", async () => {
       mockFetch({ ok: false, status: 401 });
       render(<DashboardPage />);
-      await screen.findByRole("link", { name: /sign in with google/i });
+      await screen.findByRole("link", { name: SIGN_IN_LABEL });
     });
   });
 

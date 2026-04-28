@@ -1,6 +1,7 @@
 "use client";
 
 import { buttonVariants } from "@/components/ui/button";
+import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { CheckCircle, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -62,8 +63,15 @@ export default function DashboardPage() {
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-24">
         <div className="flex flex-col items-center gap-6 text-center max-w-md">
           <p className="text-muted-foreground">You are not signed in.</p>
-          <a href={`${API_URL}/oauth/start`} className={cn(buttonVariants())}>
-            Sign in with Google
+          <a
+            href={`${API_URL}/oauth/start`}
+            onClick={(e) => {
+              e.preventDefault();
+              window.location.href = `${API_URL}/oauth/start?return_to=${encodeURIComponent(window.location.origin)}`;
+            }}
+            className={cn(buttonVariants())}
+          >
+            {SIGN_IN_LABEL}
           </a>
         </div>
       </main>

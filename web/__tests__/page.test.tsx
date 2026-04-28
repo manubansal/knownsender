@@ -3,6 +3,7 @@ import { useSearchParams } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import Home from "@/app/page";
+import { SIGN_IN_LABEL } from "@/lib/constants";
 
 vi.mock("next/navigation");
 
@@ -22,12 +23,12 @@ describe("Home page", () => {
   describe("no error param", () => {
     it("shows Sign in with Google button", () => {
       render(<Home />);
-      expect(screen.getByRole("link", { name: "Sign in with Google" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: SIGN_IN_LABEL })).toBeInTheDocument();
     });
 
     it("Sign in with Google link points to the OAuth start endpoint", () => {
       render(<Home />);
-      expect(screen.getByRole("link", { name: "Sign in with Google" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: SIGN_IN_LABEL })).toHaveAttribute(
         "href",
         `${API_URL}/oauth/start`,
       );
@@ -44,7 +45,7 @@ describe("Home page", () => {
       mockParams({ error: "oauth_denied" });
       render(<Home />);
       expect(screen.getByRole("link", { name: "Try again" })).toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: "Sign in with Google" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: SIGN_IN_LABEL })).not.toBeInTheDocument();
     });
 
     it("Try again link still points to the OAuth start endpoint", () => {

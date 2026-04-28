@@ -82,6 +82,31 @@ class TestOAuthStart:
                 response = client.get("/oauth/start", follow_redirects=False)
         assert "oauth_state" in response.cookies
 
+    def test_valid_return_to_stored_in_cookie(self):
+        env = {**_ENV, "CORS_EXTRA_ORIGINS": "http://localhost:3000"}
+        with patch.dict("os.environ", env):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/oauth/start?return_to=http://localhost:3000",
+                    follow_redirects=False,
+                )
+        assert "http://localhost:3000" in response.cookies.get("oauth_return_to", "")
+
+    def test_invalid_return_to_returns_400(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get(
+                    "/oauth/start?return_to=https://evil.example.com",
+                    follow_redirects=False,
+                )
+        assert response.status_code == 400
+
+    def test_missing_return_to_no_cookie(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/oauth/start", follow_redirects=False)
+        assert "oauth_return_to" not in response.cookies
+
 
 class TestOAuthCallback:
     def test_missing_code_redirects_with_error(self):
@@ -478,7 +503,7 @@ class TestApiLogout:
 class TestOAuthCallbackSession:
     """Verify the callback issues a session cookie and redirects to /dashboard."""
 
-    def _run_full_oauth(self, extra_env=None):
+    def _run_full_oauth(self, extra_env=None, return_to=None):
         """Drive the full start → callback flow and return the callback response."""
         env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t", **(extra_env or {})}
         mock_creds = MagicMock()
@@ -505,9 +530,14 @@ class TestOAuthCallbackSession:
             mock_watch.return_value = {"historyId": "99999"}
 
             with TestClient(app) as client:
-                start = client.get("/oauth/start", follow_redirects=False)
+                start_url = "/oauth/start"
+                if return_to:
+                    start_url += f"?return_to={return_to}"
+                start = client.get(start_url, follow_redirects=False)
                 state = start.cookies.get("oauth_state")
                 client.cookies.set("oauth_state", state)
+                if return_to:
+                    client.cookies.set("oauth_return_to", return_to)
                 return client.get(
                     f"/oauth/callback?code=abc&state={state}",
                     follow_redirects=False,
@@ -516,8 +546,22 @@ class TestOAuthCallbackSession:
     def test_successful_callback_redirects_to_dashboard(self):
         response = self._run_full_oauth()
         assert response.status_code == 302
-        assert "/dashboard" in response.headers["location"]
+        assert response.headers["location"] == "https://claven.app/dashboard"
+
+    def test_return_to_redirects_to_custom_frontend(self):
+        env = {"CORS_EXTRA_ORIGINS": "http://localhost:3000"}
+        response = self._run_full_oauth(extra_env=env, return_to="http://localhost:3000")
+        assert response.status_code == 302
+        assert response.headers["location"] == "http://localhost:3000/dashboard"
 
     def test_successful_callback_sets_session_cookie(self):
         response = self._run_full_oauth()
         assert "session" in response.cookies
+
+    def test_session_cookie_is_samesite_none(self):
+        """Session cookie must be SameSite=None so cross-origin frontends
+        (e.g. localhost:3000 calling api.claven.app) can include it in
+        credentialed fetch requests."""
+        response = self._run_full_oauth()
+        set_cookie = response.headers.get("set-cookie", "").lower()
+        assert "samesite=none" in set_cookie

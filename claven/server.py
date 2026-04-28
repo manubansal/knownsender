@@ -35,13 +35,16 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Claven")
 
-_cors_origins = [os.environ.get("FRONTEND_URL", "https://claven.app")]
-if _extra := os.environ.get("CORS_EXTRA_ORIGINS", ""):
-    _cors_origins += [o.strip() for o in _extra.split(",") if o.strip()]
+def _allowed_origins() -> list[str]:
+    origins = [os.environ.get("FRONTEND_URL", "https://claven.app")]
+    if extra := os.environ.get("CORS_EXTRA_ORIGINS", ""):
+        origins += [o.strip() for o in extra.split(",") if o.strip()]
+    return origins
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
@@ -149,7 +152,9 @@ def health():
 
 
 @app.get("/oauth/start")
-def oauth_start():
+def oauth_start(return_to: str | None = None):
+    if return_to and return_to not in _allowed_origins():
+        raise HTTPException(status_code=400, detail="Invalid return_to")
     flow = _make_flow()
     flow.redirect_uri = os.environ["OAUTH_REDIRECT_URI"]
     state = secrets.token_urlsafe(32)
@@ -160,12 +165,28 @@ def oauth_start():
     )
     response = RedirectResponse(url=auth_url)
     response.set_cookie("oauth_state", state, httponly=True, max_age=600, samesite="lax", secure=True)
+    if return_to:
+        response.set_cookie("oauth_return_to", return_to, httponly=True, max_age=600, samesite="lax", secure=True)
     return response
 
 
-def _error_redirect(frontend_url: str, reason: str) -> RedirectResponse:
-    response = RedirectResponse(url=f"{frontend_url}/?error={reason}", status_code=302)
+def _redirect_base(request: Request) -> str:
+    """Return the frontend origin to redirect to after OAuth.
+
+    Uses the oauth_return_to cookie (set by oauth/start) if present and
+    in the allowed-origins list; otherwise falls back to FRONTEND_URL.
+    """
+    frontend_url = os.environ.get("FRONTEND_URL", "https://claven.app")
+    return_to = request.cookies.get("oauth_return_to")
+    if return_to and return_to in _allowed_origins():
+        return return_to
+    return frontend_url
+
+
+def _error_redirect(base: str, reason: str) -> RedirectResponse:
+    response = RedirectResponse(url=f"{base}/?error={reason}", status_code=302)
     response.delete_cookie("oauth_state")
+    response.delete_cookie("oauth_return_to")
     return response
 
 
@@ -176,18 +197,18 @@ def oauth_callback(
     state: str | None = None,
     error: str | None = None,
 ):
-    frontend_url = os.environ.get("FRONTEND_URL", "https://claven.app")
+    base = _redirect_base(request)
 
     if error:
         logger.warning("OAuth error from Google: %s", error)
-        return _error_redirect(frontend_url, "oauth_denied")
+        return _error_redirect(base, "oauth_denied")
     if not code or not state:
-        return _error_redirect(frontend_url, "invalid_request")
+        return _error_redirect(base, "invalid_request")
 
     stored_state = request.cookies.get("oauth_state")
     if not stored_state or stored_state != state:
         logger.warning("State mismatch: stored=%r param=%r", stored_state, state)
-        return _error_redirect(frontend_url, "invalid_state")
+        return _error_redirect(base, "invalid_state")
 
     # State verified — delete the cookie immediately so it can't be replayed
     flow = _make_flow()
@@ -196,7 +217,7 @@ def oauth_callback(
         flow.fetch_token(code=code)
     except Exception as exc:
         logger.warning("Token exchange failed: %s", exc)
-        return _error_redirect(frontend_url, "token_exchange_failed")
+        return _error_redirect(base, "token_exchange_failed")
     creds = flow.credentials
 
     try:
@@ -207,7 +228,7 @@ def oauth_callback(
         )
     except Exception as exc:
         logger.warning("ID token verification failed: %s", exc)
-        return _error_redirect(frontend_url, "token_verification_failed")
+        return _error_redirect(base, "token_verification_failed")
     email = id_info["email"]
 
     try:
@@ -221,13 +242,14 @@ def oauth_callback(
             db.set_history_id(conn, user_id, int(watch_response["historyId"]))
     except Exception as exc:
         logger.exception("Signup failed for %s: %s", email, exc)
-        return _error_redirect(frontend_url, "signup_failed")
+        return _error_redirect(base, "signup_failed")
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
     session_token = _issue_session(user_id, email)
-    response = RedirectResponse(url=f"{frontend_url}/dashboard", status_code=302)
+    response = RedirectResponse(url=f"{base}/dashboard", status_code=302)
     response.delete_cookie("oauth_state")
-    response.set_cookie("session", session_token, httponly=True, secure=True, samesite="lax")
+    response.delete_cookie("oauth_return_to")
+    response.set_cookie("session", session_token, httponly=True, secure=True, samesite="none")
     return response
 
 
