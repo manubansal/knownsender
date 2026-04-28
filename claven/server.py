@@ -35,9 +35,13 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Claven")
 
+_cors_origins = [os.environ.get("FRONTEND_URL", "https://claven.app")]
+if _extra := os.environ.get("CORS_EXTRA_ORIGINS", ""):
+    _cors_origins += [o.strip() for o in _extra.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ.get("FRONTEND_URL", "https://claven.app")],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],

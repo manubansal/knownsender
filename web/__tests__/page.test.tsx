@@ -20,14 +20,14 @@ describe("Home page", () => {
   });
 
   describe("no error param", () => {
-    it("shows Connect Gmail button", () => {
+    it("shows Sign in with Google button", () => {
       render(<Home />);
-      expect(screen.getByRole("link", { name: "Connect Gmail" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Sign in with Google" })).toBeInTheDocument();
     });
 
-    it("Connect Gmail link points to the OAuth start endpoint", () => {
+    it("Sign in with Google link points to the OAuth start endpoint", () => {
       render(<Home />);
-      expect(screen.getByRole("link", { name: "Connect Gmail" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "Sign in with Google" })).toHaveAttribute(
         "href",
         `${API_URL}/oauth/start`,
       );
@@ -40,11 +40,11 @@ describe("Home page", () => {
   });
 
   describe("with error param", () => {
-    it("shows Try again instead of Connect Gmail", () => {
+    it("shows Try again instead of Sign in with Google", () => {
       mockParams({ error: "oauth_denied" });
       render(<Home />);
       expect(screen.getByRole("link", { name: "Try again" })).toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: "Connect Gmail" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Sign in with Google" })).not.toBeInTheDocument();
     });
 
     it("Try again link still points to the OAuth start endpoint", () => {

@@ -1,4 +1,4 @@
-.PHONY: setup test ci dev dev-read-only
+.PHONY: setup test ci dev dev-read-only dev-local-frontend
 
 dev:
 	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
@@ -19,6 +19,13 @@ dev-read-only:
 	DATABASE_URL=$$DATABASE_URL_READONLY uvicorn claven.server:app --port 8000 --reload & \
 	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
 	wait
+
+# Frontend-only dev against the prod API — no local backend.
+# Sign-in and all API calls go through https://api.claven.app.
+# Safe: no local DB connection, no backend code running.
+# Requires: CORS_EXTRA_ORIGINS=http://localhost:3000 set on the prod Cloud Run service.
+dev-local-frontend:
+	NEXT_PUBLIC_API_URL=https://api.claven.app npm --prefix web run dev
 
 setup:
 	git config core.hooksPath .hooks
