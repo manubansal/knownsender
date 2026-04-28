@@ -118,3 +118,50 @@ class TestLoadCredentials:
             result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
 
         assert list(result.scopes) == scopes
+
+    def test_naive_expiry_gets_utc_timezone(self):
+        """Postgres returns naive datetimes; expiry must be tz-aware for google-auth."""
+        from datetime import datetime, timezone
+
+        access_enc = encrypt_token("tok", VALID_KEY_HEX)
+        refresh_enc = encrypt_token("ref", VALID_KEY_HEX)
+        naive_expiry = datetime(2030, 6, 1, 12, 0, 0)  # no tzinfo
+
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, patch.dict(
+            "os.environ",
+            {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"},
+        ):
+            mock_db.load_tokens.return_value = {
+                "access_token_enc": access_enc,
+                "refresh_token_enc": refresh_enc,
+                "token_expiry": naive_expiry,
+                "scopes": [],
+            }
+            result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
+
+        assert result.expiry.tzinfo == timezone.utc
+        assert result.expiry == datetime(2030, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_aware_expiry_is_unchanged(self):
+        """Already-aware expiry should pass through unmodified."""
+        from datetime import datetime, timezone
+
+        access_enc = encrypt_token("tok", VALID_KEY_HEX)
+        refresh_enc = encrypt_token("ref", VALID_KEY_HEX)
+        aware_expiry = datetime(2030, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, patch.dict(
+            "os.environ",
+            {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"},
+        ):
+            mock_db.load_tokens.return_value = {
+                "access_token_enc": access_enc,
+                "refresh_token_enc": refresh_enc,
+                "token_expiry": aware_expiry,
+                "scopes": [],
+            }
+            result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
+
+        assert result.expiry == aware_expiry

@@ -7,6 +7,7 @@ representing 32 bytes — generated once by scripts/setup-gcp.sh.
 
 import base64
 import os
+from datetime import timezone
 
 from cryptography.fernet import Fernet
 from google.auth.transport.requests import Request
@@ -51,7 +52,10 @@ def load_credentials(conn, user_id: str, key_hex: str) -> Credentials | None:
         client_secret=os.environ.get("OAUTH_CLIENT_SECRET"),
         scopes=row.get("scopes") or [],
     )
-    creds.expiry = row.get("token_expiry")
+    expiry = row.get("token_expiry")
+    if expiry is not None and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    creds.expiry = expiry
     return creds
 
 
