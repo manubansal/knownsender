@@ -13,14 +13,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure node is in system PATH
+        run: |
+          NODE_BIN=$(which node 2>/dev/null || true)
+          if [ -n "$NODE_BIN" ] && [ ! -e /usr/local/bin/node ]; then
+            sudo ln -sf "$NODE_BIN" /usr/local/bin/node
+          fi
+
       - name: Start Postgres
         run: |
+          sudo chmod 666 /var/run/docker.sock
+          docker rm -f postgres 2>/dev/null || true
           docker run -d \
             --name postgres \
+            --network host \
             -e POSTGRES_USER=claven \
             -e POSTGRES_PASSWORD=claven \
             -e POSTGRES_DB=claven_test \
-            -p 5432:5432 \
             postgres:16
           until docker exec postgres pg_isready -U claven -q; do sleep 1; done
 
