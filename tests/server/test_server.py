@@ -99,6 +99,25 @@ class TestOAuthCallback:
         assert response.status_code == 302
         assert "error=oauth_denied" in response.headers["location"]
 
+    def test_token_exchange_failure_redirects_with_error(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                # Start flow to capture the generated state value
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+
+                # secure=True cookies aren't sent by TestClient (HTTP), so set manually
+                client.cookies.set("oauth_state", state)
+
+                with patch("claven.server.Flow") as mock_flow_cls:
+                    mock_flow_cls.from_client_config.return_value.fetch_token.side_effect = Exception("scope mismatch")
+                    response = client.get(
+                        f"/oauth/callback?code=abc&state={state}",
+                        follow_redirects=False,
+                    )
+        assert response.status_code == 302
+        assert "error=token_exchange_failed" in response.headers["location"]
+
 
 class TestInternalPoll:
     def test_no_auth_returns_401(self):
