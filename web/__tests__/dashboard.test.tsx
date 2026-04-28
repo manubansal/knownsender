@@ -293,10 +293,10 @@ describe("Dashboard page", () => {
   });
 
   describe("stats", () => {
-    it("shows known senders count next to its rule label", async () => {
+    it("shows known senders count after rule title and description", async () => {
       mockFetch(
         { ok: true, body: { ...DEFAULT_ME, known_senders: 42 } },
-        { labels: [{ name: "Known", rules: [{ field: "from", known_sender: true }] }] },
+        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
       await screen.findByText("42");
@@ -384,13 +384,23 @@ describe("Dashboard page", () => {
       await screen.findByTestId("last-updated-time");
     });
 
-    it("shows rule name and description from /api/config", async () => {
+    it("shows description from config when provided", async () => {
       mockFetch(
         { ok: true, body: DEFAULT_ME },
-        { labels: [{ name: "Known", rules: [{ field: "from", known_sender: true }] }] },
+        { labels: [{ id: "known-sender", name: "Known Sender", description: "Someone you've emailed before", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByText("Known");
+      await screen.findByText("Known Sender");
+      await screen.findByText("Someone you've emailed before");
+    });
+
+    it("falls back to computed description when description is absent", async () => {
+      mockFetch(
+        { ok: true, body: DEFAULT_ME },
+        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
+      );
+      render(<DashboardPage />);
+      await screen.findByText("Known Sender");
       await screen.findByText(/from is a known sender/i);
     });
 

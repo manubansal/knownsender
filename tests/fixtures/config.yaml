@@ -1,19 +1,25 @@
 polling_interval_seconds: 30
 
 labels:
-  - name: "Known"
+  - id: known-sender
+    name: "Known Sender"
+    description: "Someone you've emailed before"
     rules:
       - field: "from"
         known_sender: true
 
-  - name: "Newsletter"
+  - id: newsletter
+    name: "Newsletter"
+    description: "Newsletters and mailing lists"
     rules:
       - field: "from"
         contains: ["newsletter", "noreply"]
       - field: "subject"
         contains: ["unsubscribe", "weekly digest"]
 
-  - name: "Finance"
+  - id: finance
+    name: "Finance"
+    description: "Billing, invoices, and payment receipts"
     rules:
       - field: "from"
         contains: ["billing", "invoice", "receipts"]

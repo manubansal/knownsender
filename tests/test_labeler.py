@@ -19,7 +19,7 @@ def test_load_config_returns_labels_and_interval():
 def test_load_config_label_names():
     config = load_config(os.path.join(FIXTURES_DIR, "config.yaml"))
     names = [l["name"] for l in config["labels"]]
-    assert "Known" in names
+    assert "Known Sender" in names
     assert "Newsletter" in names
     assert "Finance" in names
 
@@ -214,13 +214,13 @@ def test_get_matching_labels_empty_config():
 
 def test_get_matching_labels_known_sender():
     headers = {"from": "alice@example.com"}
-    label_configs = [{"name": "Known", "rules": [{"field": "from", "known_sender": True}]}]
+    label_configs = [{"id": "known-sender", "name": "Known Sender", "rules": [{"field": "from", "known_sender": True}]}]
     result = get_matching_labels(headers, label_configs, known_senders={"alice@example.com"})
-    assert result == ["Known"]
+    assert result == ["Known Sender"]
 
 
 def test_get_matching_labels_known_sender_no_match():
     headers = {"from": "stranger@example.com"}
-    label_configs = [{"name": "Known", "rules": [{"field": "from", "known_sender": True}]}]
+    label_configs = [{"id": "known-sender", "name": "Known Sender", "rules": [{"field": "from", "known_sender": True}]}]
     result = get_matching_labels(headers, label_configs, known_senders={"alice@example.com"})
     assert result == []

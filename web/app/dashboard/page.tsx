@@ -28,7 +28,9 @@ type LabelRule = {
 };
 
 type LabelConfig = {
+  id: string;
   name: string;
+  description?: string;
   rules: LabelRule[];
 };
 
@@ -181,7 +183,7 @@ export default function DashboardPage() {
             <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
               {labels.map((label) => {
                 const isKnownSender = label.rules.some((r) => r.known_sender);
-                const desc = label.rules
+                const desc = label.description ?? label.rules
                   .map((r) =>
                     r.known_sender
                       ? `${r.field} is a known sender`
@@ -189,13 +191,14 @@ export default function DashboardPage() {
                   )
                   .join("; ");
                 return (
-                  <div key={label.name} className="flex items-start justify-between py-3 first:pt-0 last:pb-0">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-medium">{label.name}</span>
-                      <span className="text-xs text-muted-foreground">{desc}</span>
-                    </div>
+                  <div key={label.id} className="flex flex-col gap-0.5 py-3 first:pt-0 last:pb-0">
+                    <span className="font-medium">{label.name}</span>
+                    <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
-                      <span className="tabular-nums text-muted-foreground">{known_senders}</span>
+                      <div className="flex justify-between mt-1.5">
+                        <span className="text-xs text-muted-foreground">Known senders</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
+                      </div>
                     )}
                   </div>
                 );

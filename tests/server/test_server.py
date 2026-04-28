@@ -682,12 +682,13 @@ class TestApiConfig:
     def test_returns_label_rules(self):
         with patch("claven.server.load_config") as mock_config:
             mock_config.return_value = {
-                "labels": [{"name": "Known", "rules": [{"field": "from", "known_sender": True}]}]
+                "labels": [{"id": "known-sender", "name": "Known Sender", "rules": [{"field": "from", "known_sender": True}]}]
             }
             with TestClient(app) as client:
                 response = client.get("/api/config")
         assert response.status_code == 200
-        assert response.json()["labels"][0]["name"] == "Known"
+        assert response.json()["labels"][0]["id"] == "known-sender"
+        assert response.json()["labels"][0]["name"] == "Known Sender"
 
     def test_returns_empty_labels_when_none_configured(self):
         with patch("claven.server.load_config") as mock_config:
