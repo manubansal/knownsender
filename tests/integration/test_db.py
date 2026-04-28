@@ -88,6 +88,41 @@ class TestScanState:
         assert db.get_history_id(db_conn, user_id) == 200
 
 
+class TestGetUserById:
+    def test_found(self, db_conn):
+        user_id = db.upsert_user(db_conn, "byid@example.com")
+        user = db.get_user_by_id(db_conn, user_id)
+        assert user is not None
+        assert user["email"] == "byid@example.com"
+        assert user["id"] == user_id
+
+    def test_missing_returns_none(self, db_conn):
+        import uuid
+        assert db.get_user_by_id(db_conn, str(uuid.uuid4())) is None
+
+
+class TestDeleteCredentials:
+    def test_removes_tokens_and_scan_state(self, db_conn):
+        user_id = db.upsert_user(db_conn, "disconnect@example.com")
+        db.store_tokens(db_conn, user_id, b"a-enc", b"r-enc", None, [])
+        db.set_history_id(db_conn, user_id, 999)
+
+        db.delete_credentials(db_conn, user_id)
+
+        assert db.load_tokens(db_conn, user_id) is None
+        assert db.get_history_id(db_conn, user_id) is None
+
+    def test_keeps_user_row(self, db_conn):
+        user_id = db.upsert_user(db_conn, "keepuser@example.com")
+        db.store_tokens(db_conn, user_id, b"a-enc", b"r-enc", None, [])
+        db.delete_credentials(db_conn, user_id)
+        assert db.get_user_by_email(db_conn, "keepuser@example.com") is not None
+
+    def test_noop_when_no_credentials(self, db_conn):
+        user_id = db.upsert_user(db_conn, "nocreds@example.com")
+        db.delete_credentials(db_conn, user_id)  # must not raise
+
+
 class TestSentRecipients:
     def test_add_and_get_known_senders(self, db_conn):
         user_id = db.upsert_user(db_conn, "senders@example.com")

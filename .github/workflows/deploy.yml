@@ -82,6 +82,7 @@ jobs:
             TOKEN_ENCRYPTION_KEY=token-encryption-key:latest
             OAUTH_CLIENT_SECRET=oauth-client-secret:latest
             INTERNAL_API_SECRET=internal-api-secret:latest
+            SESSION_SECRET=session-secret:latest
           env_vars: |-
             OAUTH_CLIENT_ID=${{ secrets.OAUTH_CLIENT_ID }}
             OAUTH_REDIRECT_URI=${{ secrets.OAUTH_REDIRECT_URI }}
