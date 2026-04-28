@@ -104,6 +104,9 @@ class TestSignupFlow:
 
         mock_flow = MagicMock()
         mock_flow.credentials = mock_creds
+        # authorization_url() must return a 2-tuple; the server discards the
+        # second value (state) because it generates its own via secrets.token_urlsafe
+        mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
 
         with patch.dict("os.environ", _ENV):
             with (
