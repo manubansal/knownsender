@@ -107,9 +107,9 @@ class TestOAuthStart:
                 response = client.get("/oauth/start", follow_redirects=False)
         assert "oauth_return_to" not in response.cookies
 
-    def test_does_not_force_consent_for_returning_users(self):
-        """oauth/start must not force prompt=consent so returning users skip the
-        full consent screen and only see the account picker."""
+    def test_default_uses_select_account_prompt(self):
+        """oauth/start without force_consent uses select_account so returning
+        users skip the full consent screen and only see the account picker."""
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.Flow") as mock_flow_cls:
                 mock_flow = MagicMock()
@@ -118,7 +118,20 @@ class TestOAuthStart:
                 with TestClient(app) as client:
                     client.get("/oauth/start", follow_redirects=False)
         call_kwargs = mock_flow.authorization_url.call_args[1]
-        assert call_kwargs.get("prompt") != "consent"
+        assert call_kwargs.get("prompt") == "select_account"
+
+    def test_force_consent_uses_consent_prompt(self):
+        """oauth/start?force_consent=true uses prompt=consent to obtain a fresh
+        refresh token (needed when reconnecting after disconnect)."""
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.Flow") as mock_flow_cls:
+                mock_flow = MagicMock()
+                mock_flow.authorization_url.return_value = ("https://accounts.google.com/auth", "state")
+                mock_flow_cls.from_client_config.return_value = mock_flow
+                with TestClient(app) as client:
+                    client.get("/oauth/start?force_consent=true", follow_redirects=False)
+        call_kwargs = mock_flow.authorization_url.call_args[1]
+        assert call_kwargs.get("prompt") == "consent"
 
 
 class TestOAuthCallback:
@@ -169,6 +182,43 @@ class TestOAuthCallback:
                     )
         assert response.status_code == 302
         assert "error=token_exchange_failed" in response.headers["location"]
+
+    def test_no_refresh_token_redirects_to_force_consent(self):
+        """When reconnecting after disconnect Google won't return a refresh token.
+        The callback must redirect back to oauth/start?force_consent=true instead
+        of failing with signup_failed."""
+        with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+
+                mock_creds = MagicMock()
+                mock_creds.id_token = "fake-id-token"
+                mock_creds.refresh_token = None  # Google didn't return one
+
+                mock_flow = MagicMock()
+                mock_flow.credentials = mock_creds
+                mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+                with (
+                    patch("claven.server.Flow") as mock_flow_cls,
+                    patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify,
+                    patch("claven.server.db") as mock_db,
+                ):
+                    mock_flow_cls.from_client_config.return_value = mock_flow
+                    mock_verify.return_value = {"email": "user@example.com"}
+                    _fake_db_ctx(mock_db)
+                    mock_db.upsert_user.return_value = "uid-1"
+                    mock_db.load_tokens.return_value = None  # no stored tokens
+
+                    response = client.get(
+                        f"/oauth/callback?code=abc&state={state}",
+                        follow_redirects=False,
+                    )
+        assert response.status_code == 302
+        assert "force_consent=true" in response.headers["location"]
+        assert "/oauth/start" in response.headers["location"]
 
     def test_watch_failure_redirects_with_error(self):
         """start_watch errors (e.g. Gmail API disabled) must redirect, not 500."""
