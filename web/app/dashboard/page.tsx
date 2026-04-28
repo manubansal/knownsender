@@ -1,6 +1,7 @@
 "use client";
 
 import { buttonVariants } from "@/components/ui/button";
+import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { CheckCircle, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -23,6 +24,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [state, setState] = useState<State>({ status: "loading" });
   const [disconnecting, setDisconnecting] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     fetch(`${API_URL}/api/me`, { credentials: "include" })
@@ -35,6 +37,12 @@ export default function DashboardPage() {
       })
       .catch(() => setState({ status: "unauthenticated" }));
   }, []);
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    await fetch(`${API_URL}/api/logout`, { method: "POST", credentials: "include" });
+    router.replace("/");
+  }
 
   async function handleDisconnect() {
     setDisconnecting(true);
@@ -55,8 +63,15 @@ export default function DashboardPage() {
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-24">
         <div className="flex flex-col items-center gap-6 text-center max-w-md">
           <p className="text-muted-foreground">You are not signed in.</p>
-          <a href={`${API_URL}/oauth/start`} className={cn(buttonVariants())}>
-            Connect Gmail
+          <a
+            href={`${API_URL}/oauth/start`}
+            onClick={(e) => {
+              e.preventDefault();
+              window.location.href = `${API_URL}/oauth/start?return_to=${encodeURIComponent(window.location.origin)}`;
+            }}
+            className={cn(buttonVariants())}
+          >
+            {SIGN_IN_LABEL}
           </a>
         </div>
       </main>
@@ -86,13 +101,22 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <button
-          onClick={handleDisconnect}
-          disabled={disconnecting}
-          className={cn(buttonVariants({ variant: "outline" }), "mt-2")}
-        >
-          {disconnecting ? "Disconnecting…" : "Disconnect"}
-        </button>
+        <div className="flex gap-3 mt-2">
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className={cn(buttonVariants({ variant: "ghost" }))}
+          >
+            {loggingOut ? "Logging out…" : "Log out"}
+          </button>
+          <button
+            onClick={handleDisconnect}
+            disabled={disconnecting}
+            className={cn(buttonVariants({ variant: "outline" }))}
+          >
+            {disconnecting ? "Disconnecting…" : "Disconnect"}
+          </button>
+        </div>
       </div>
     </main>
   );
