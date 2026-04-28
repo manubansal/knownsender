@@ -84,6 +84,12 @@ def oauth_start():
     return response
 
 
+def _error_redirect(frontend_url: str, reason: str) -> RedirectResponse:
+    response = RedirectResponse(url=f"{frontend_url}/?error={reason}", status_code=302)
+    response.delete_cookie("oauth_state")
+    return response
+
+
 @app.get("/oauth/callback")
 def oauth_callback(
     request: Request,
@@ -91,22 +97,27 @@ def oauth_callback(
     state: str | None = None,
     error: str | None = None,
 ):
+    frontend_url = os.environ.get("FRONTEND_URL", "https://claven.app")
+
     if error:
-        raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
+        logger.warning("OAuth error from Google: %s", error)
+        return _error_redirect(frontend_url, "oauth_denied")
     if not code or not state:
-        raise HTTPException(status_code=400, detail="Missing code or state parameter")
+        return _error_redirect(frontend_url, "invalid_request")
 
     stored_state = request.cookies.get("oauth_state")
     if not stored_state or stored_state != state:
-        raise HTTPException(status_code=400, detail="Invalid state parameter")
+        logger.warning("State mismatch: stored=%r param=%r", stored_state, state)
+        return _error_redirect(frontend_url, "invalid_state")
 
+    # State verified — delete the cookie immediately so it can't be replayed
     flow = _make_flow()
     flow.redirect_uri = os.environ["OAUTH_REDIRECT_URI"]
     try:
         flow.fetch_token(code=code)
     except Exception as exc:
         logger.warning("Token exchange failed: %s", exc)
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
+        return _error_redirect(frontend_url, "token_exchange_failed")
     creds = flow.credentials
 
     try:
@@ -117,7 +128,7 @@ def oauth_callback(
         )
     except Exception as exc:
         logger.warning("ID token verification failed: %s", exc)
-        raise HTTPException(status_code=400, detail="ID token verification failed")
+        return _error_redirect(frontend_url, "token_verification_failed")
     email = id_info["email"]
 
     with db.get_connection() as conn:
@@ -130,8 +141,9 @@ def oauth_callback(
         db.set_history_id(conn, user_id, int(watch_response["historyId"]))
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
-    frontend_url = os.environ.get("FRONTEND_URL", "https://claven.app")
-    return RedirectResponse(url=f"{frontend_url}/connected?email={email}")
+    response = RedirectResponse(url=f"{frontend_url}/connected?email={email}", status_code=302)
+    response.delete_cookie("oauth_state")
+    return response
 
 
 @app.post("/internal/poll")
