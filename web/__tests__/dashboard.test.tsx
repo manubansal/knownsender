@@ -290,10 +290,13 @@ describe("Dashboard page", () => {
   });
 
   describe("stats", () => {
-    it("shows known senders count", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, known_senders: 42 } });
+    it("shows known senders count next to its rule label", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, known_senders: 42 } },
+        { labels: [{ name: "Known", rules: [{ field: "from", known_sender: true }] }] },
+      );
       render(<DashboardPage />);
-      await screen.findByText(/42/);
+      await screen.findByText("42");
     });
 
     it("shows unread count", async () => {
@@ -305,17 +308,20 @@ describe("Dashboard page", () => {
     it("shows inbox count", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, inbox_count: 250 } });
       render(<DashboardPage />);
-      await screen.findByText(/250 in inbox/i);
+      await screen.findByText(/in inbox/i);
+      await screen.findByText("250");
     });
 
-    it("shows rule config from /api/config", async () => {
+    it("shows rule name and description from /api/config", async () => {
       mockFetch(
         { ok: true, body: DEFAULT_ME },
         { labels: [{ name: "Known", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
       await screen.findByText("Known");
+      await screen.findByText(/from is a known sender/i);
     });
+
   });
 
   describe("switch account", () => {

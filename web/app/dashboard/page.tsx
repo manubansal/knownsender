@@ -147,31 +147,38 @@ export default function DashboardPage() {
 
           <p className="text-lg font-medium">{email}</p>
 
-          <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 flex flex-col gap-4 text-sm">
-            <div className="flex gap-6 text-muted-foreground">
-              <span>{known_senders} known senders</span>
-              {inbox_count !== null && <span>{inbox_count} in inbox</span>}
-              {unread_count !== null && <span>{unread_count} unread</span>}
-            </div>
-
-            {labels.length > 0 && (
-              <div className="text-left">
-                <p className="font-medium mb-2">Label rules</p>
-                <ul className="space-y-1">
-                  {labels.map((label) => (
-                    <li key={label.name} className="text-muted-foreground">
-                      <span className="font-mono text-foreground">{label.name}</span>
-                      {" — "}
-                      {label.rules.map((r, i) => (
-                        <span key={i}>
-                          {r.known_sender
-                            ? `${r.field} is a known sender`
-                            : `${r.field} contains ${r.contains?.join(", ")}`}
-                        </span>
-                      ))}
-                    </li>
-                  ))}
-                </ul>
+          <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
+            {labels.map((label) => {
+              const isKnownSender = label.rules.some((r) => r.known_sender);
+              const desc = label.rules
+                .map((r) =>
+                  r.known_sender
+                    ? `${r.field} is a known sender`
+                    : `${r.field} contains ${r.contains?.join(", ")}`,
+                )
+                .join("; ");
+              return (
+                <div key={label.name} className="flex items-start justify-between py-3 first:pt-0 last:pb-0">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium">{label.name}</span>
+                    <span className="text-xs text-muted-foreground">{desc}</span>
+                  </div>
+                  {isKnownSender && (
+                    <span className="tabular-nums text-muted-foreground">{known_senders}</span>
+                  )}
+                </div>
+              );
+            })}
+            {inbox_count !== null && (
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">In inbox</span>
+                <span className="tabular-nums">{inbox_count}</span>
+              </div>
+            )}
+            {unread_count !== null && (
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Unread</span>
+                <span className="tabular-nums">{unread_count}</span>
               </div>
             )}
           </div>
