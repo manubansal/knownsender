@@ -3,7 +3,7 @@
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { CheckCircle, XCircle } from "lucide-react";
+import { CheckCircle, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -125,8 +125,8 @@ export default function DashboardPage() {
               </>
             ) : (
               <>
-                <XCircle className="h-5 w-5 text-destructive" />
-                <span className="text-sm text-muted-foreground">Ready to connect</span>
+                <Zap className="h-5 w-5 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Connected and ready to start filtering</span>
               </>
             )}
           </div>
@@ -146,7 +146,7 @@ export default function DashboardPage() {
                 disabled={connecting}
                 className={cn(buttonVariants())}
               >
-                {connecting ? "Connecting…" : "Connect Gmail"}
+                {connecting ? "Starting…" : "Start filtering"}
               </button>
             )}
           </div>

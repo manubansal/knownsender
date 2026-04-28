@@ -88,23 +88,23 @@ describe("Dashboard page", () => {
 
     it("shows ready to connect status when history_id is absent", async () => {
       render(<DashboardPage />);
-      await screen.findByText(/ready to connect/i);
+      await screen.findByText(/connected and ready to start filtering/i);
     });
 
     it("shows connect gmail button", async () => {
       render(<DashboardPage />);
-      await screen.findByRole("button", { name: /connect gmail/i });
+      await screen.findByRole("button", { name: /start filtering/i });
     });
 
     it("does not show disconnect button", async () => {
       render(<DashboardPage />);
-      await screen.findByText(/ready to connect/i);
+      await screen.findByText(/connected and ready to start filtering/i);
       expect(screen.queryByRole("button", { name: /disconnect/i })).not.toBeInTheDocument();
     });
 
     it("calls /api/connect on connect button click", async () => {
       render(<DashboardPage />);
-      const button = await screen.findByRole("button", { name: /connect gmail/i });
+      const button = await screen.findByRole("button", { name: /start filtering/i });
 
       vi.stubGlobal(
         "fetch",
@@ -125,7 +125,7 @@ describe("Dashboard page", () => {
 
     it("shows connected after successful connect", async () => {
       render(<DashboardPage />);
-      const button = await screen.findByRole("button", { name: /connect gmail/i });
+      const button = await screen.findByRole("button", { name: /start filtering/i });
 
       vi.stubGlobal(
         "fetch",
@@ -136,7 +136,7 @@ describe("Dashboard page", () => {
       );
       await userEvent.click(button);
       await screen.findByText(/connected/i);
-      expect(screen.queryByText(/ready to connect/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/connected and ready to start filtering/i)).not.toBeInTheDocument();
     });
   });
 
@@ -200,7 +200,7 @@ describe("Dashboard page", () => {
         vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
       );
       await userEvent.click(button);
-      await screen.findByText(/ready to connect/i);
+      await screen.findByText(/connected and ready to start filtering/i);
     });
 
     it("shows connect gmail button after disconnect", async () => {
@@ -216,7 +216,7 @@ describe("Dashboard page", () => {
         vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
       );
       await userEvent.click(button);
-      await screen.findByRole("button", { name: /connect gmail/i });
+      await screen.findByRole("button", { name: /start filtering/i });
     });
   });
 
