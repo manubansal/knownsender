@@ -31,6 +31,28 @@ To run tests manually:
 make test
 ```
 
+### Running CI locally with `act`
+
+`act` runs the GitHub Actions workflow locally inside Docker, injecting the same secrets CI uses. This is the recommended way to run the `e2e` and `live` test tiers.
+
+**One-time setup:**
+
+```bash
+brew install act        # install act
+# Start Docker Desktop
+cp .secrets.example .secrets   # then fill in .secrets with real values
+```
+
+The real secret values are in [GitHub → Settings → Secrets](https://github.com/manubansal/claven/settings/secrets/actions). Fill in `.secrets` from there. `.secrets` is gitignored.
+
+**Run:**
+
+```bash
+make ci       # runs the full CI test job locally
+```
+
+`act` spins up the Postgres service container, runs migrations, and executes the full pytest suite — including `e2e` and `live` tests — exactly as CI does.
+
 ### Testing
 
 Tests are organized by layer:
