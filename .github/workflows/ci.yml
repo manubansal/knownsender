@@ -46,4 +46,6 @@ jobs:
       - name: Run tests
         env:
           PYTEST_DATABASE_URL: postgresql://claven:claven@localhost:5432/claven_test
+          TEST_GMAIL_REFRESH_TOKEN: ${{ secrets.TEST_GMAIL_REFRESH_TOKEN }}
+          TEST_GMAIL_EMAIL: ${{ secrets.TEST_GMAIL_EMAIL }}
         run: pytest --tb=short

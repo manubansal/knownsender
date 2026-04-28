@@ -31,6 +31,27 @@ To run tests manually:
 make test
 ```
 
+### Testing
+
+Tests are organized by layer:
+
+| Marker | Command | Requires |
+|--------|---------|----------|
+| `unit` | `pytest -m unit` | nothing |
+| `server` | `pytest -m server` | nothing |
+| `integration` | `pytest -m integration` | `PYTEST_DATABASE_URL` |
+| `e2e` | `pytest -m e2e` | `PYTEST_DATABASE_URL` + `TEST_GMAIL_REFRESH_TOKEN` + `TEST_GMAIL_EMAIL` |
+
+**`claven.test.inbox@gmail.com` is reserved exclusively for automated e2e tests.** Do not sign in with it manually or rely on any state it accumulates — the e2e fixture wipes and recreates this account in the DB on every run. Any manually-configured state for it will be destroyed the next time the e2e suite runs.
+
+To re-obtain a refresh token for this account (e.g. after expiry), run:
+
+```bash
+OAUTH_CLIENT_ID=... OAUTH_CLIENT_SECRET=... python scripts/get_test_token.py
+```
+
+Then update the `TEST_GMAIL_REFRESH_TOKEN` GitHub secret.
+
 ## Prerequisites
 
 - Python 3.x
