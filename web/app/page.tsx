@@ -12,6 +12,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_state: "The sign-in session expired. Please try again.",
   token_exchange_failed: "Could not complete sign-in. Please try again.",
   token_verification_failed: "Could not verify your account. Please try again.",
+  signup_failed: "Sign-in succeeded but account setup failed. Please try again.",
   invalid_request: "Something went wrong. Please try again.",
 };
 

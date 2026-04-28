@@ -118,6 +118,44 @@ class TestOAuthCallback:
         assert response.status_code == 302
         assert "error=token_exchange_failed" in response.headers["location"]
 
+    def test_watch_failure_redirects_with_error(self):
+        """start_watch errors (e.g. Gmail API disabled) must redirect, not 500."""
+        with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+
+                mock_creds = MagicMock()
+                mock_creds.id_token = "fake-id-token"
+                mock_creds.token = "fake-access-token"
+                mock_creds.refresh_token = "fake-refresh-token"
+                mock_creds.expiry = None
+                mock_creds.scopes = []
+
+                mock_flow = MagicMock()
+                mock_flow.credentials = mock_creds
+                mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+                with (
+                    patch("claven.server.Flow") as mock_flow_cls,
+                    patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify,
+                    patch("claven.server.db") as mock_db,
+                    patch("claven.server.start_watch") as mock_watch,
+                ):
+                    mock_flow_cls.from_client_config.return_value = mock_flow
+                    mock_verify.return_value = {"email": "user@example.com"}
+                    _fake_db_ctx(mock_db)
+                    mock_db.upsert_user.return_value = "uid-1"
+                    mock_watch.side_effect = Exception("HttpError 403: Gmail API disabled")
+
+                    response = client.get(
+                        f"/oauth/callback?code=abc&state={state}",
+                        follow_redirects=False,
+                    )
+        assert response.status_code == 302
+        assert "error=signup_failed" in response.headers["location"]
+
 
 class TestInternalPoll:
     def test_no_auth_returns_401(self):

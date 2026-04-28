@@ -41,6 +41,7 @@ Tests are organized by layer:
 | `server` | `pytest -m server` | nothing |
 | `integration` | `pytest -m integration` | `PYTEST_DATABASE_URL` |
 | `e2e` | `pytest -m e2e` | `PYTEST_DATABASE_URL` + `TEST_GMAIL_REFRESH_TOKEN` + `TEST_GMAIL_EMAIL` |
+| `live` | `pytest -m live` | all of the above + `PUBSUB_TOPIC` + `OAUTH_CLIENT_ID/SECRET` + `TOKEN_ENCRYPTION_KEY`; makes real Gmail API calls |
 
 **`claven.test.inbox@gmail.com` is reserved exclusively for automated e2e tests.** Do not sign in with it manually or rely on any state it accumulates — the e2e fixture wipes and recreates this account in the DB on every run. Any manually-configured state for it will be destroyed the next time the e2e suite runs.
 
