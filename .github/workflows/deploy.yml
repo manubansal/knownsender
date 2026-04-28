@@ -86,6 +86,7 @@ jobs:
             OAUTH_CLIENT_ID=${{ secrets.OAUTH_CLIENT_ID }}
             OAUTH_REDIRECT_URI=${{ secrets.OAUTH_REDIRECT_URI }}
             PUBSUB_TOPIC=${{ secrets.PUBSUB_TOPIC }}
+            PUBSUB_AUDIENCE=https://api.claven.app/webhook/gmail
             FRONTEND_URL=https://claven.app
           flags: >-
             --min-instances=0
