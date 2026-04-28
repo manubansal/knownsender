@@ -146,47 +146,49 @@ export default function DashboardPage() {
 
           <p className="text-lg font-medium">{email}</p>
 
-          <div className="flex items-center gap-2">
-            {connected ? (
-              <>
-                <CheckCircle className="h-5 w-5 text-green-500" />
-                <span className="text-sm text-muted-foreground">Connected</span>
-              </>
-            ) : (
-              <>
-                <Zap className="h-5 w-5 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Connected and ready to start filtering</span>
-              </>
+          <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 flex flex-col gap-4 text-sm">
+            <div className="flex gap-6 text-muted-foreground">
+              <span>{known_senders} known senders</span>
+              {unread_count !== null && <span>{unread_count} unread</span>}
+            </div>
+
+            {labels.length > 0 && (
+              <div className="text-left">
+                <p className="font-medium mb-2">Label rules</p>
+                <ul className="space-y-1">
+                  {labels.map((label) => (
+                    <li key={label.name} className="text-muted-foreground">
+                      <span className="font-mono text-foreground">{label.name}</span>
+                      {" — "}
+                      {label.rules.map((r, i) => (
+                        <span key={i}>
+                          {r.known_sender
+                            ? `${r.field} is a known sender`
+                            : `${r.field} contains ${r.contains?.join(", ")}`}
+                        </span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
 
-          <div className="flex gap-6 text-sm text-muted-foreground">
-            <span>{known_senders} known senders</span>
-            {unread_count !== null && <span>{unread_count} unread</span>}
-          </div>
-
-          {labels.length > 0 && (
-            <div className="w-full text-left text-sm">
-              <p className="font-medium mb-2">Label rules</p>
-              <ul className="space-y-1">
-                {labels.map((label) => (
-                  <li key={label.name} className="text-muted-foreground">
-                    <span className="font-mono text-foreground">{label.name}</span>
-                    {" — "}
-                    {label.rules.map((r, i) => (
-                      <span key={i}>
-                        {r.known_sender
-                          ? `${r.field} is a known sender`
-                          : `${r.field} contains ${r.contains?.join(", ")}`}
-                      </span>
-                    ))}
-                  </li>
-                ))}
-              </ul>
+          <div className="flex flex-col items-center gap-3">
+            <div className="flex items-center gap-2">
+              {connected ? (
+                <>
+                  <CheckCircle className="h-5 w-5 text-green-500" />
+                  <span className="text-sm text-muted-foreground">Connected</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="h-5 w-5 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Connected and ready to start filtering</span>
+                </>
+              )}
             </div>
-          )}
 
-          <div className="flex gap-3 mt-2">
             {connected ? (
               <button
                 onClick={handleDisconnect}
