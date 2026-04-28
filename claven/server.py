@@ -23,8 +23,6 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
-
 import claven.core.auth as auth
 import claven.core.db as db
 from claven.core.gmail import get_profile
@@ -255,11 +253,9 @@ def oauth_callback(
                     response.delete_cookie("oauth_state")
                     response.delete_cookie("oauth_return_to")
                     return response
-                # New user — store credentials and start Gmail push watch
+                # New user — store credentials only.
+                # Starting the Gmail watch is an explicit user step via /api/connect.
                 auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
-                service = build("gmail", "v1", credentials=creds)
-                watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
-                db.set_history_id(conn, user_id, int(watch_response["historyId"]))
     except Exception as exc:
         logger.exception("Signup failed for %s: %s", email, exc)
         return _error_redirect(base, "signup_failed")
@@ -322,8 +318,33 @@ def api_me(request: Request):
     }
 
 
+@app.post("/api/connect")
+def api_connect(request: Request):
+    """Start the Gmail push watch for the authenticated user.
+
+    This is the explicit user-initiated step that begins inbox filtering.
+    Credentials must already be stored (via the OAuth sign-in flow).
+    """
+    session = _get_session(request)
+    with db.get_connection() as conn:
+        try:
+            service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+            watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
+            history_id = int(watch_response["historyId"])
+            db.set_history_id(conn, session["user_id"], history_id)
+        except Exception as exc:
+            logger.exception("Connect failed for %s: %s", session["email"], exc)
+            raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
+    return JSONResponse({"ok": True, "history_id": history_id})
+
+
 @app.post("/api/disconnect")
 def api_disconnect(request: Request):
+    """Stop the Gmail push watch and clear scan state.
+
+    Keeps OAuth credentials intact so the user can reconnect with a single
+    click (no OAuth round-trip required).
+    """
     session = _get_session(request)
     with db.get_connection() as conn:
         try:
@@ -331,7 +352,7 @@ def api_disconnect(request: Request):
             stop_watch(service)
         except Exception as exc:
             logger.warning("stop_watch failed during disconnect for %s: %s", session["email"], exc)
-        db.delete_credentials(conn, session["user_id"])
+        db.clear_watch_state(conn, session["user_id"])
     return JSONResponse({"ok": True})
 
 

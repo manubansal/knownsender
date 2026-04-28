@@ -116,6 +116,16 @@ def delete_credentials(conn, user_id: str) -> None:
         cur.execute("DELETE FROM scan_state WHERE user_id = %s", (user_id,))
 
 
+def clear_watch_state(conn, user_id: str) -> None:
+    """Clear the Gmail watch / scan position without removing OAuth credentials.
+
+    Use this for disconnect — the user stays authorized and can reconnect
+    with a single click (no OAuth round-trip required).
+    """
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM scan_state WHERE user_id = %s", (user_id,))
+
+
 # ── Scan state ────────────────────────────────────────────────────────────────
 
 def get_history_id(conn, user_id: str) -> int | None:

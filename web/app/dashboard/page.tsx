@@ -23,6 +23,7 @@ type State =
 export default function DashboardPage() {
   const router = useRouter();
   const [state, setState] = useState<State>({ status: "loading" });
+  const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -42,6 +43,20 @@ export default function DashboardPage() {
     setLoggingOut(true);
     await fetch(`${API_URL}/api/logout`, { method: "POST", credentials: "include" });
     router.replace("/");
+  }
+
+  async function handleConnect() {
+    setConnecting(true);
+    const res = await fetch(`${API_URL}/api/connect`, { method: "POST", credentials: "include" });
+    if (res.ok) {
+      const data = await res.json();
+      setState((prev) =>
+        prev.status === "loaded"
+          ? { status: "loaded", data: { ...prev.data, connected: true, history_id: data.history_id } }
+          : prev,
+      );
+    }
+    setConnecting(false);
   }
 
   async function handleDisconnect() {
@@ -111,7 +126,7 @@ export default function DashboardPage() {
             ) : (
               <>
                 <XCircle className="h-5 w-5 text-destructive" />
-                <span className="text-sm text-muted-foreground">Not connected</span>
+                <span className="text-sm text-muted-foreground">Ready to connect</span>
               </>
             )}
           </div>
@@ -126,16 +141,13 @@ export default function DashboardPage() {
                 {disconnecting ? "Disconnecting…" : "Disconnect"}
               </button>
             ) : (
-              <a
-                href={`${API_URL}/oauth/start`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  window.location.href = `${API_URL}/oauth/start?return_to=${encodeURIComponent(window.location.origin)}`;
-                }}
+              <button
+                onClick={handleConnect}
+                disabled={connecting}
                 className={cn(buttonVariants())}
               >
-                Connect Gmail
-              </a>
+                {connecting ? "Connecting…" : "Connect Gmail"}
+              </button>
             )}
           </div>
         </div>
