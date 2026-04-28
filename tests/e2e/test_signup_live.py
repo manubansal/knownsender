@@ -148,7 +148,7 @@ class TestSignupLive:
           - The test account credentials are still valid
           - start_watch() succeeds against the live Gmail API and Pub/Sub topic
           - The historyId stored in the DB is a real value from Gmail (>0)
-          - The server redirects to /connected?email=...
+          - The server redirects to /dashboard
         """
         real_creds = _build_real_creds()
 
@@ -180,8 +180,7 @@ class TestSignupLive:
 
         assert response.status_code == 302, response.text
         location = response.headers["location"]
-        assert "/connected" in location, f"Expected /connected in redirect, got: {location}"
-        assert _EMAIL in location, f"Expected email in redirect, got: {location}"
+        assert "/dashboard" in location, f"Expected /dashboard in redirect, got: {location}"
 
         # Verify DB: user row and tokens exist
         conn = psycopg2.connect(_DB_URL)
