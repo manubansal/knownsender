@@ -329,11 +329,11 @@ describe("Dashboard page", () => {
       await screen.findByText("47");
     });
 
-    it("does not show pending when pending_count is null", async () => {
+    it("shows em dash for pending when pending_count is null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, pending_count: null } });
       render(<DashboardPage />);
-      await screen.findByText(/processed/i);
-      expect(screen.queryByText(/pending/i)).not.toBeInTheDocument();
+      await screen.findByText(/pending/i);
+      await screen.findByText("—");
     });
 
     it("shows read count from api", async () => {

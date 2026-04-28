@@ -176,12 +176,10 @@ export default function DashboardPage() {
               <span className="text-muted-foreground">Processed</span>
               <span className="tabular-nums">{processed_count}</span>
             </div>
-            {pending_count !== null && (
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Pending</span>
-                <span className="tabular-nums">{pending_count}</span>
-              </div>
-            )}
+            <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+              <span className="text-muted-foreground">Pending</span>
+              <span className="tabular-nums">{pending_count ?? "—"}</span>
+            </div>
             {inbox_count !== null && (
               <div className="flex justify-between py-3 first:pt-0 last:pb-0">
                 <span className="text-muted-foreground">In inbox</span>
