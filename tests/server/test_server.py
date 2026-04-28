@@ -473,6 +473,78 @@ class TestApiMe:
                     response = client.get("/api/me")
         assert response.json()["connected"] is False
 
+    def test_returns_known_senders_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 42
+                mock_auth.get_service.return_value = MagicMock(
+                    **{"users.return_value.labels.return_value.get.return_value.execute.return_value": {"messagesUnread": 7}}
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["known_senders"] == 42
+
+    def test_returns_unread_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_service = MagicMock()
+                mock_service.users.return_value.labels.return_value.get.return_value.execute.return_value = {
+                    "messagesUnread": 99
+                }
+                mock_auth.get_service.return_value = mock_service
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["unread_count"] == 99
+
+    def test_unread_count_is_none_when_gmail_api_fails(self):
+        """A Gmail API error must not break /api/me — return null for unread_count."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.side_effect = Exception("token expired")
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.status_code == 200
+        assert response.json()["unread_count"] is None
+
+
+class TestApiConfig:
+    def test_returns_label_rules(self):
+        with patch("claven.server.load_config") as mock_config:
+            mock_config.return_value = {
+                "labels": [{"name": "Known", "rules": [{"field": "from", "known_sender": True}]}]
+            }
+            with TestClient(app) as client:
+                response = client.get("/api/config")
+        assert response.status_code == 200
+        assert response.json()["labels"][0]["name"] == "Known"
+
+    def test_returns_empty_labels_when_none_configured(self):
+        with patch("claven.server.load_config") as mock_config:
+            mock_config.return_value = {}
+            with TestClient(app) as client:
+                response = client.get("/api/config")
+        assert response.json()["labels"] == []
+
 
 class TestApiDisconnect:
     def test_no_token_returns_401(self):

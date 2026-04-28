@@ -151,6 +151,12 @@ def set_history_id(conn, user_id: str, history_id: int) -> None:
 
 # ── Sent recipients ───────────────────────────────────────────────────────────
 
+def count_known_senders(conn, user_id: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM sent_recipients WHERE user_id = %s", (user_id,))
+        return cur.fetchone()[0]
+
+
 def get_known_senders(conn, user_id: str) -> set[str]:
     with conn.cursor() as cur:
         cur.execute("SELECT email FROM sent_recipients WHERE user_id = %s", (user_id,))

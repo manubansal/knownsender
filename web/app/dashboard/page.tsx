@@ -13,12 +13,25 @@ type MeResponse = {
   email: string;
   connected: boolean;
   history_id: number | null;
+  known_senders: number;
+  unread_count: number | null;
+};
+
+type LabelRule = {
+  field: string;
+  known_sender?: boolean;
+  contains?: string[];
+};
+
+type LabelConfig = {
+  name: string;
+  rules: LabelRule[];
 };
 
 type State =
   | { status: "loading" }
   | { status: "unauthenticated" }
-  | { status: "loaded"; data: MeResponse };
+  | { status: "loaded"; data: MeResponse; labels: LabelConfig[] };
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -28,13 +41,17 @@ export default function DashboardPage() {
   const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/me`, { credentials: "include" })
-      .then((res) => {
-        if (!res.ok) {
+    Promise.all([
+      fetch(`${API_URL}/api/me`, { credentials: "include" }),
+      fetch(`${API_URL}/api/config`),
+    ])
+      .then(async ([meRes, configRes]) => {
+        if (!meRes.ok) {
           setState({ status: "unauthenticated" });
-        } else {
-          res.json().then((data: MeResponse) => setState({ status: "loaded", data }));
+          return;
         }
+        const [data, config] = await Promise.all([meRes.json(), configRes.json()]);
+        setState({ status: "loaded", data, labels: config.labels ?? [] });
       })
       .catch(() => setState({ status: "unauthenticated" }));
   }, []);
@@ -45,6 +62,11 @@ export default function DashboardPage() {
     router.replace("/");
   }
 
+  async function handleSwitchAccount() {
+    await fetch(`${API_URL}/api/logout`, { method: "POST", credentials: "include" });
+    window.location.href = `${API_URL}/oauth/start?return_to=${encodeURIComponent(window.location.origin)}`;
+  }
+
   async function handleConnect() {
     setConnecting(true);
     const res = await fetch(`${API_URL}/api/connect`, { method: "POST", credentials: "include" });
@@ -52,7 +74,7 @@ export default function DashboardPage() {
       const data = await res.json();
       setState((prev) =>
         prev.status === "loaded"
-          ? { status: "loaded", data: { ...prev.data, connected: true, history_id: data.history_id } }
+          ? { ...prev, data: { ...prev.data, connected: true, history_id: data.history_id } }
           : prev,
       );
     }
@@ -64,7 +86,7 @@ export default function DashboardPage() {
     await fetch(`${API_URL}/api/disconnect`, { method: "POST", credentials: "include" });
     setState((prev) =>
       prev.status === "loaded"
-        ? { status: "loaded", data: { ...prev.data, connected: false, history_id: null } }
+        ? { ...prev, data: { ...prev.data, connected: false, history_id: null } }
         : prev,
     );
     setDisconnecting(false);
@@ -98,11 +120,18 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected } = state.data;
+  const { email, connected, known_senders, unread_count } = state.data;
+  const { labels } = state;
 
   return (
     <>
-      <header className="flex items-center justify-end border-b px-6 py-3">
+      <header className="flex items-center justify-end gap-2 border-b px-6 py-3">
+        <button
+          onClick={handleSwitchAccount}
+          className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+        >
+          Switch account
+        </button>
         <button
           onClick={handleLogout}
           disabled={loggingOut}
@@ -130,6 +159,32 @@ export default function DashboardPage() {
               </>
             )}
           </div>
+
+          <div className="flex gap-6 text-sm text-muted-foreground">
+            <span>{known_senders} known senders</span>
+            {unread_count !== null && <span>{unread_count} unread</span>}
+          </div>
+
+          {labels.length > 0 && (
+            <div className="w-full text-left text-sm">
+              <p className="font-medium mb-2">Label rules</p>
+              <ul className="space-y-1">
+                {labels.map((label) => (
+                  <li key={label.name} className="text-muted-foreground">
+                    <span className="font-mono text-foreground">{label.name}</span>
+                    {" — "}
+                    {label.rules.map((r, i) => (
+                      <span key={i}>
+                        {r.known_sender
+                          ? `${r.field} is a known sender`
+                          : `${r.field} contains ${r.contains?.join(", ")}`}
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="flex gap-3 mt-2">
             {connected ? (

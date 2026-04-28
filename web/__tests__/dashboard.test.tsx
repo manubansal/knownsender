@@ -16,13 +16,32 @@ vi.mock("next/navigation", () => ({
 
 const API_URL = "https://api.claven.app";
 
-function mockFetch(response: { ok: boolean; status?: number; body?: object }) {
+const DEFAULT_ME: object = {
+  email: "user@example.com",
+  connected: true,
+  history_id: 12345,
+  known_senders: 0,
+  unread_count: null,
+};
+
+const DEFAULT_CONFIG: object = { labels: [] };
+
+function mockFetch(
+  me: { ok: boolean; status?: number; body?: object } = { ok: true, body: DEFAULT_ME },
+  config: object = DEFAULT_CONFIG,
+) {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({
-      ok: response.ok,
-      status: response.status ?? (response.ok ? 200 : 401),
-      json: async () => response.body ?? {},
+    vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/config")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => config });
+      }
+      // /api/me and everything else
+      return Promise.resolve({
+        ok: me.ok,
+        status: me.status ?? (me.ok ? 200 : 401),
+        json: async () => me.body ?? {},
+      });
     }),
   );
 }
@@ -49,7 +68,7 @@ describe("Dashboard page", () => {
     beforeEach(() => {
       mockFetch({
         ok: true,
-        body: { email: "user@example.com", connected: true, history_id: 12345 },
+        body: { email: "user@example.com", connected: true, history_id: 12345, known_senders: 7, unread_count: 42 },
       });
     });
 
@@ -82,7 +101,7 @@ describe("Dashboard page", () => {
     beforeEach(() => {
       mockFetch({
         ok: true,
-        body: { email: "user@example.com", connected: false, history_id: null },
+        body: { email: "user@example.com", connected: false, history_id: null, known_senders: 3, unread_count: 10 },
       });
     });
 
@@ -266,6 +285,56 @@ describe("Dashboard page", () => {
       );
       await userEvent.click(button);
       await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/"));
+    });
+  });
+
+  describe("stats", () => {
+    it("shows known senders count", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, known_senders: 42 } });
+      render(<DashboardPage />);
+      await screen.findByText(/42/);
+    });
+
+    it("shows unread count", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, unread_count: 99 } });
+      render(<DashboardPage />);
+      await screen.findByText(/99/);
+    });
+
+    it("shows rule config from /api/config", async () => {
+      mockFetch(
+        { ok: true, body: DEFAULT_ME },
+        { labels: [{ name: "Known", rules: [{ field: "from", known_sender: true }] }] },
+      );
+      render(<DashboardPage />);
+      await screen.findByText("Known");
+    });
+  });
+
+  describe("switch account", () => {
+    it("shows a switch account button", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByRole("button", { name: /switch account/i });
+    });
+
+    it("calls /api/logout and redirects to sign-in on switch account", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /switch account/i });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
+      );
+      await userEvent.click(button);
+
+      await waitFor(() =>
+        expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+          `${API_URL}/api/logout`,
+          expect.objectContaining({ method: "POST", credentials: "include" }),
+        ),
+      );
     });
   });
 });

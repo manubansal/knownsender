@@ -311,11 +311,29 @@ def api_me(request: Request):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         history_id = db.get_history_id(conn, session["user_id"])
+        known_senders = db.count_known_senders(conn, session["user_id"])
+
+        unread_count = None
+        try:
+            service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+            inbox = service.users().labels().get(userId="me", id="INBOX").execute()
+            unread_count = inbox.get("messagesUnread")
+        except Exception:
+            pass  # credentials absent or Gmail API unavailable — degrade gracefully
+
     return {
         "email": user["email"],
         "connected": history_id is not None,
         "history_id": history_id,
+        "known_senders": known_senders,
+        "unread_count": unread_count,
     }
+
+
+@app.get("/api/config")
+def api_config():
+    config = load_config()
+    return {"labels": config.get("labels", [])}
 
 
 @app.post("/api/connect")
