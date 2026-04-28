@@ -218,6 +218,20 @@ class TestGetService:
                 get_service(conn, "user-uuid", VALID_KEY_HEX)
             mock_store.assert_called_once()
 
+    def test_does_not_refresh_when_token_is_valid(self):
+        """A non-expired token must not trigger a refresh call."""
+        from datetime import datetime
+
+        future_naive = datetime(2099, 1, 1)  # far future, not expired
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, \
+             patch("claven.core.auth.build"), \
+             patch.dict("os.environ", {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"}):
+            mock_db.load_tokens.return_value = self._make_token_row(future_naive)
+            with patch("google.oauth2.credentials.Credentials.refresh") as mock_refresh:
+                get_service(conn, "user-uuid", VALID_KEY_HEX)
+            mock_refresh.assert_not_called()
+
     def test_raises_when_no_credentials(self):
         conn = MagicMock()
         with patch("claven.core.auth.db") as mock_db:
