@@ -315,7 +315,6 @@ def api_me(request: Request):
         history_id = db.get_history_id(conn, session["user_id"])
         known_senders = db.count_known_senders(conn, session["user_id"])
         processed_count = db.get_processed_count(conn, session["user_id"])
-        pending_count = db.get_pending_count(conn, session["user_id"])
 
         unread_count = None
         read_count = None
@@ -331,6 +330,10 @@ def api_me(request: Request):
             read_count = read_result.get("resultSizeEstimate")
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
+
+        pending_count = (
+            max(0, inbox_count - processed_count) if inbox_count is not None else None
+        )
 
     return {
         "email": user["email"],
@@ -365,11 +368,6 @@ def api_connect(request: Request):
             watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
             history_id = int(watch_response["historyId"])
             db.set_history_id(conn, session["user_id"], history_id)
-            try:
-                inbox = service.users().labels().get(userId="me", id="INBOX").execute()
-                db.set_initial_inbox_count(conn, session["user_id"], inbox.get("messagesTotal", 0))
-            except Exception as exc:
-                logger.warning("Could not fetch initial inbox count for %s: %s", session["email"], exc)
         except Exception as exc:
             logger.exception("Connect failed for %s: %s", session["email"], exc)
             raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
