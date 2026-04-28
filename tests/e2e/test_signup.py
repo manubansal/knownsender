@@ -36,6 +36,7 @@ _ENV = {
     "OAUTH_REDIRECT_URI": "http://localhost/oauth/callback",
     "INTERNAL_API_SECRET": "test-internal-secret",
     "TOKEN_ENCRYPTION_KEY": "aa" * 32,
+    "SESSION_SECRET": "test-session-secret-must-be-at-least-32-bytes!",
     "PUBSUB_TOPIC": "projects/test/topics/test",
     "FRONTEND_URL": "https://claven.app",
     "DATABASE_URL": _DB_URL or "",
@@ -83,7 +84,7 @@ class TestSignupFlow:
           - state cookie roundtrip works
           - user is created in the DB
           - tokens are stored (encrypted)
-          - response redirects to /connected?email=...
+          - response redirects to /dashboard
 
         Mocked: Flow.fetch_token (we hold a refresh token, not an auth code),
                 google_id_token.verify_oauth2_token (ID token only issued on
@@ -134,11 +135,10 @@ class TestSignupFlow:
                         follow_redirects=False,
                     )
 
-        # Redirect to the connected page
+        # Redirect to the dashboard
         assert response.status_code == 302, response.text
         location = response.headers["location"]
-        assert "/connected" in location, f"Expected /connected in redirect, got: {location}"
-        assert _EMAIL in location, f"Expected email in redirect, got: {location}"
+        assert "/dashboard" in location, f"Expected /dashboard in redirect, got: {location}"
 
         # State cookie must be cleared
         assert response.cookies.get("oauth_state") in (None, ""), \

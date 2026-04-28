@@ -55,6 +55,16 @@ def get_user_by_email(conn, email: str) -> dict | None:
         return dict(row) if row else None
 
 
+def get_user_by_id(conn, user_id: str) -> dict | None:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT id::text, email, created_at FROM users WHERE id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def get_all_users(conn) -> list[dict]:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT id::text, email, created_at FROM users")
@@ -97,6 +107,13 @@ def load_tokens(conn, user_id: str) -> dict | None:
         )
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+def delete_credentials(conn, user_id: str) -> None:
+    """Remove gmail_tokens and scan_state for a user (keeps the users row)."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM gmail_tokens WHERE user_id = %s", (user_id,))
+        cur.execute("DELETE FROM scan_state WHERE user_id = %s", (user_id,))
 
 
 # ── Scan state ────────────────────────────────────────────────────────────────
