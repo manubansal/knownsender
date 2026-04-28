@@ -54,6 +54,8 @@ def require_e2e_secrets():
 def clean_test_user():
     """Remove the test user before and after each test for a clean slate."""
     def _delete():
+        if not _DB_URL:
+            return
         conn = psycopg2.connect(_DB_URL)
         psycopg2.extras.register_uuid(conn_or_curs=conn)
         try:
