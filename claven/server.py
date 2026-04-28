@@ -20,6 +20,7 @@ from fastapi.responses import RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
 
 import claven.core.auth as auth
 import claven.core.db as db
@@ -135,8 +136,8 @@ def oauth_callback(
         user_id = db.upsert_user(conn, email)
         auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
 
-        # Establish historyId baseline and register push watch
-        service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+        # Use the freshly-issued creds directly — no need to reload from DB
+        service = build("gmail", "v1", credentials=creds)
         watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
         db.set_history_id(conn, user_id, int(watch_response["historyId"]))
 
