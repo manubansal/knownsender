@@ -119,9 +119,9 @@ class TestLoadCredentials:
 
         assert list(result.scopes) == scopes
 
-    def test_naive_expiry_gets_utc_timezone(self):
-        """Postgres returns naive datetimes; expiry must be tz-aware for google-auth."""
-        from datetime import datetime, timezone
+    def test_naive_expiry_passes_through_unchanged(self):
+        """Naive expiry (already UTC) is left as-is — google-auth expects naive UTC."""
+        from datetime import datetime
 
         access_enc = encrypt_token("tok", VALID_KEY_HEX)
         refresh_enc = encrypt_token("ref", VALID_KEY_HEX)
@@ -140,11 +140,15 @@ class TestLoadCredentials:
             }
             result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
 
-        assert result.expiry.tzinfo == timezone.utc
-        assert result.expiry == datetime(2030, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        assert result.expiry.tzinfo is None
+        assert result.expiry == naive_expiry
 
-    def test_aware_expiry_is_unchanged(self):
-        """Already-aware expiry should pass through unmodified."""
+    def test_aware_expiry_is_stripped_to_naive_utc(self):
+        """Aware expiry (psycopg2 returns TIMESTAMPTZ as aware) is converted to naive UTC.
+
+        google-auth's expired property uses datetime.utcnow() (naive) for comparison;
+        leaving expiry as aware raises 'can't compare offset-naive and offset-aware datetimes'.
+        """
         from datetime import datetime, timezone
 
         access_enc = encrypt_token("tok", VALID_KEY_HEX)
@@ -164,4 +168,5 @@ class TestLoadCredentials:
             }
             result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
 
-        assert result.expiry == aware_expiry
+        assert result.expiry.tzinfo is None
+        assert result.expiry == datetime(2030, 6, 1, 12, 0, 0)

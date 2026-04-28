@@ -318,10 +318,11 @@ def api_me(request: Request):
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
             inbox = service.users().labels().get(userId="me", id="INBOX").execute()
+            logger.debug("INBOX label response: %s", inbox)
             unread_count = inbox.get("messagesUnread")
             inbox_count = inbox.get("messagesTotal")
-        except Exception:
-            pass  # credentials absent or Gmail API unavailable — degrade gracefully
+        except Exception as exc:
+            logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
     return {
         "email": user["email"],
