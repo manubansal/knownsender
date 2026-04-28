@@ -80,7 +80,7 @@ def oauth_start():
         state=state,
     )
     response = RedirectResponse(url=auth_url)
-    response.set_cookie("oauth_state", state, httponly=True, max_age=600, samesite="lax")
+    response.set_cookie("oauth_state", state, httponly=True, max_age=600, samesite="lax", secure=True)
     return response
 
 
