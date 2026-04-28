@@ -114,13 +114,26 @@ export default function DashboardPage() {
           >
             {loggingOut ? "Logging out…" : "Log out"}
           </button>
-          <button
-            onClick={handleDisconnect}
-            disabled={disconnecting}
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            {disconnecting ? "Disconnecting…" : "Disconnect"}
-          </button>
+          {connected ? (
+            <button
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              {disconnecting ? "Disconnecting…" : "Disconnect"}
+            </button>
+          ) : (
+            <a
+              href={`${API_URL}/oauth/start`}
+              onClick={(e) => {
+                e.preventDefault();
+                window.location.href = `${API_URL}/oauth/start?return_to=${encodeURIComponent(window.location.origin)}`;
+              }}
+              className={cn(buttonVariants())}
+            >
+              Connect Gmail
+            </a>
+          )}
         </div>
       </div>
     </main>
