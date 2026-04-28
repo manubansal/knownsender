@@ -70,27 +70,34 @@ class TestOAuthStart:
 
 
 class TestOAuthCallback:
-    def test_missing_code_returns_400(self):
-        with TestClient(app) as client:
-            response = client.get("/oauth/callback?state=abc")
-        assert response.status_code == 400
+    def test_missing_code_redirects_with_error(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/oauth/callback?state=abc", follow_redirects=False)
+        assert response.status_code == 302
+        assert "error=invalid_request" in response.headers["location"]
 
-    def test_missing_state_returns_400(self):
-        with TestClient(app) as client:
-            response = client.get("/oauth/callback?code=abc")
-        assert response.status_code == 400
+    def test_missing_state_redirects_with_error(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/oauth/callback?code=abc", follow_redirects=False)
+        assert response.status_code == 302
+        assert "error=invalid_request" in response.headers["location"]
 
-    def test_state_mismatch_returns_400(self):
+    def test_state_mismatch_redirects_with_error(self):
         with patch.dict("os.environ", _ENV):
             with TestClient(app) as client:
                 client.get("/oauth/start", follow_redirects=False)  # sets cookie
-                response = client.get("/oauth/callback?code=abc&state=wrong-state")
-        assert response.status_code == 400
+                response = client.get("/oauth/callback?code=abc&state=wrong-state", follow_redirects=False)
+        assert response.status_code == 302
+        assert "error=invalid_state" in response.headers["location"]
 
-    def test_oauth_error_param_returns_400(self):
-        with TestClient(app) as client:
-            response = client.get("/oauth/callback?error=access_denied")
-        assert response.status_code == 400
+    def test_oauth_error_param_redirects_with_error(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/oauth/callback?error=access_denied", follow_redirects=False)
+        assert response.status_code == 302
+        assert "error=oauth_denied" in response.headers["location"]
 
 
 class TestInternalPoll:
