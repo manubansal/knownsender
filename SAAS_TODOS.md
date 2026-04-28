@@ -166,6 +166,31 @@ tests/
 - [ ] Write `tests/README.md` documenting the test plan before any implementation begins
 - [ ] Add unit + integration + server tests to GitHub Actions CI; E2E tests gated to merge-to-main only
 
+### Live test concurrency
+
+`claven.test.inbox@gmail.com` supports only one active Gmail push watch. To enable concurrent live test runs (multiple CI jobs, local + CI simultaneously), each run needs its own Gmail account.
+
+**Option A — Static account pool + shared lease table (recommended first step)**
+
+Pre-create N Gmail accounts (`claven.test.1@gmail.com`, …), store their refresh tokens as secrets, and coordinate via a lease table in the shared Neon DB:
+
+- [ ] Create 3–5 `claven.test.N@gmail.com` accounts; run `scripts/get_test_token.py` for each to obtain a refresh token
+- [ ] Add GitHub Actions secrets `TEST_GMAIL_ACCOUNT_1` … `TEST_GMAIL_ACCOUNT_N` (JSON blob with `email` + `refresh_token`)
+- [ ] Write Alembic migration: `test_account_leases(email PK, leased_by TEXT, leased_at TIMESTAMPTZ, expires_at TIMESTAMPTZ)` — seed with the pool accounts on migration
+- [ ] Add `claim_test_account` / `release_test_account` helpers in `tests/fixtures/gmail_accounts.py` using `SELECT ... FOR UPDATE SKIP LOCKED` against the shared Neon DB; auto-expire leases older than 10 minutes
+- [ ] Replace hardcoded `TEST_GMAIL_EMAIL` / `TEST_GMAIL_REFRESH_TOKEN` in `test_signup_live.py` with the claimed account; release in teardown
+- [ ] Update CI workflow to pass the pool secrets and the Neon `DATABASE_URL` (for lease coordination, separate from the ephemeral test DB)
+
+**Option B — Google Workspace Admin SDK (scalable, requires domain)**
+
+With a Google Workspace org (e.g. `test.claven.app`) each test run creates and deletes a throwaway `run-{uuid}@test.claven.app` account on demand — unlimited concurrency, no lease coordination needed:
+
+- [ ] Set up a Google Workspace org on a test subdomain (e.g. `test.claven.app`); provision an admin service account with Directory API access
+- [ ] Write `tests/fixtures/gmail_accounts.py`: `create_throwaway_account()` / `delete_throwaway_account()` via Admin SDK `users.insert` / `users.delete`
+- [ ] Add session-scoped fixture that creates the account, waits for Gmail API propagation (~60s), yields credentials, then deletes the account in teardown
+- [ ] Update `test_signup_live.py` to use the throwaway account instead of the shared inbox
+- [ ] Store the admin service account key as a GitHub Actions secret; document the Workspace setup
+
 ### Unit test cases — `core/rules.py`
 
 - [ ] Rule matches on `From` header
@@ -447,8 +472,8 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 - [ ] Document how a user obtains and stores their credentials for the CLI (env var? `~/.claven/credentials`?)
 
 ### Webhook verification
-- [ ] Verify that Pub/Sub push requests to `/webhook/gmail` carry a valid Google service account token in the `Authorization` header
-- [ ] Reject unauthenticated webhook calls with 401 before any processing occurs
+- [x] Verify that Pub/Sub push requests to `/webhook/gmail` carry a valid Google service account token in the `Authorization` header
+- [x] Reject unauthenticated webhook calls with 401 before any processing occurs
 
 ### Multi-tenancy isolation
 - [ ] All DB queries must be scoped to the authenticated user — no cross-user data access possible at the query level

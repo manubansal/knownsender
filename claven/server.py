@@ -48,6 +48,36 @@ def _require_internal_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def _verify_pubsub_token(request: Request) -> None:
+    """Verify the OIDC bearer token Google attaches to Pub/Sub push deliveries.
+
+    Rejects requests that don't carry a token signed by Google whose email
+    claim identifies a Pub/Sub service account.  If PUBSUB_AUDIENCE is set,
+    the token's 'aud' claim must also match — recommended in production.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Pub/Sub auth token")
+
+    token = auth_header[len("Bearer "):]
+    audience = os.environ.get("PUBSUB_AUDIENCE")  # None → skip audience check
+
+    try:
+        id_info = google_id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            audience=audience,
+        )
+    except Exception as exc:
+        logger.warning("Pub/Sub token verification failed: %s", exc)
+        raise HTTPException(status_code=401, detail="Invalid Pub/Sub token")
+
+    email = id_info.get("email", "")
+    if not email.endswith(".gserviceaccount.com"):
+        logger.warning("Pub/Sub token email is not a GCP service account: %s", email)
+        raise HTTPException(status_code=401, detail="Unexpected Pub/Sub service account")
+
+
 def _make_flow() -> Flow:
     return Flow.from_client_config(
         {
@@ -187,6 +217,8 @@ def internal_poll(request: Request):
 
 @app.post("/webhook/gmail")
 async def webhook_gmail(request: Request):
+    _verify_pubsub_token(request)
+
     try:
         body = await request.json()
     except Exception:

@@ -19,6 +19,19 @@ def _pubsub_payload(email="user@example.com", history_id="12345"):
     return {"message": {"data": data, "messageId": "msg-1", "publishTime": "2026-01-01T00:00:00Z"}}
 
 
+_PUBSUB_TOKEN = "fake-pubsub-jwt"
+_PUBSUB_HEADERS = {"Authorization": f"Bearer {_PUBSUB_TOKEN}"}
+_PUBSUB_ID_INFO = {"email": "claven-pubsub@claven-prod.iam.gserviceaccount.com"}
+
+
+@contextmanager
+def _mock_pubsub_token():
+    """Patch Pub/Sub JWT verification to return a valid service-account identity."""
+    with patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify:
+        mock_verify.return_value = _PUBSUB_ID_INFO
+        yield mock_verify
+
+
 def _fake_db_ctx(mock_db, conn=None):
     """Wire mock_db.get_connection() as a context manager returning conn."""
     mock_conn = conn or MagicMock()
@@ -206,34 +219,84 @@ class TestInternalPoll:
 
 
 class TestWebhookGmail:
-    def test_valid_payload_unknown_user_returns_ok(self):
-        with patch.dict("os.environ", _ENV):
-            with patch("claven.server.db") as mock_db:
-                _fake_db_ctx(mock_db)
-                mock_db.get_user_by_email.return_value = None
-                with TestClient(app) as client:
-                    response = client.post("/webhook/gmail", json=_pubsub_payload())
-        assert response.status_code == 200
+    # ── Auth ──────────────────────────────────────────────────────────────────
+
+    def test_missing_auth_header_returns_401(self):
+        with TestClient(app) as client:
+            response = client.post("/webhook/gmail", json=_pubsub_payload())
+        assert response.status_code == 401
+
+    def test_invalid_token_returns_401(self):
+        with patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify:
+            mock_verify.side_effect = Exception("invalid token")
+            with TestClient(app) as client:
+                response = client.post(
+                    "/webhook/gmail",
+                    json=_pubsub_payload(),
+                    headers={"Authorization": "Bearer bad-token"},
+                )
+        assert response.status_code == 401
+
+    def test_non_pubsub_service_account_returns_401(self):
+        with patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify:
+            mock_verify.return_value = {"email": "attacker@gmail.com"}
+            with TestClient(app) as client:
+                response = client.post(
+                    "/webhook/gmail",
+                    json=_pubsub_payload(),
+                    headers={"Authorization": "Bearer some-valid-google-token"},
+                )
+        assert response.status_code == 401
+
+    # ── Payload validation ────────────────────────────────────────────────────
 
     def test_missing_message_field_returns_400(self):
-        with TestClient(app) as client:
-            response = client.post("/webhook/gmail", json={"not": "a message"})
+        with _mock_pubsub_token():
+            with TestClient(app) as client:
+                response = client.post(
+                    "/webhook/gmail",
+                    json={"not": "a message"},
+                    headers=_PUBSUB_HEADERS,
+                )
         assert response.status_code == 400
 
     def test_malformed_base64_returns_400(self):
-        with TestClient(app) as client:
-            response = client.post(
-                "/webhook/gmail",
-                json={"message": {"data": "!!!not-valid-base64!!!"}},
-            )
+        with _mock_pubsub_token():
+            with TestClient(app) as client:
+                response = client.post(
+                    "/webhook/gmail",
+                    json={"message": {"data": "!!!not-valid-base64!!!"}},
+                    headers=_PUBSUB_HEADERS,
+                )
         assert response.status_code == 400
 
     def test_missing_email_address_returns_400(self):
         notification = json.dumps({"historyId": "123"})  # no emailAddress
         data = base64.b64encode(notification.encode()).decode()
-        with TestClient(app) as client:
-            response = client.post("/webhook/gmail", json={"message": {"data": data}})
+        with _mock_pubsub_token():
+            with TestClient(app) as client:
+                response = client.post(
+                    "/webhook/gmail",
+                    json={"message": {"data": data}},
+                    headers=_PUBSUB_HEADERS,
+                )
         assert response.status_code == 400
+
+    # ── Processing ────────────────────────────────────────────────────────────
+
+    def test_valid_payload_unknown_user_returns_ok(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_email.return_value = None
+                with _mock_pubsub_token():
+                    with TestClient(app) as client:
+                        response = client.post(
+                            "/webhook/gmail",
+                            json=_pubsub_payload(),
+                            headers=_PUBSUB_HEADERS,
+                        )
+        assert response.status_code == 200
 
     def test_known_user_triggers_processing(self):
         with patch.dict("os.environ", _ENV):
@@ -246,7 +309,12 @@ class TestWebhookGmail:
                 mock_db.get_known_senders.return_value = set()
                 mock_auth.get_service.return_value = MagicMock()
                 mock_poll.return_value = 200
-                with TestClient(app) as client:
-                    response = client.post("/webhook/gmail", json=_pubsub_payload(history_id="200"))
+                with _mock_pubsub_token():
+                    with TestClient(app) as client:
+                        response = client.post(
+                            "/webhook/gmail",
+                            json=_pubsub_payload(history_id="200"),
+                            headers=_PUBSUB_HEADERS,
+                        )
         assert response.status_code == 200
         mock_poll.assert_called_once()
