@@ -35,7 +35,7 @@ function HomeContent() {
         href={`${API_URL}/oauth/start`}
         className={cn(buttonVariants({ size: "lg" }), "mt-2")}
       >
-        {errorMessage ? "Try again" : "Connect Gmail"}
+        {errorMessage ? "Try again" : "Sign in with Google"}
       </a>
     </div>
   );
