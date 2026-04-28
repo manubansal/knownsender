@@ -449,7 +449,8 @@ class TestApiDisconnect:
         mock_stop.assert_called_once()
         mock_db.delete_credentials.assert_called_once_with(ANY, "uid-1")
 
-    def test_clears_session_cookie(self):
+    def test_does_not_clear_session_cookie(self):
+        """Disconnect removes Gmail credentials but keeps the user signed in."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -460,8 +461,9 @@ class TestApiDisconnect:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.post("/api/disconnect")
-        # Cookie deleted: Set-Cookie header with empty value / max-age=0
-        assert "session" in response.headers.get("set-cookie", "")
+        set_cookie = response.headers.get("set-cookie", "")
+        # session cookie must NOT be deleted — user stays signed in
+        assert "session" not in set_cookie
 
     def test_watch_stop_failure_still_deletes_credentials(self):
         """stop_watch errors (e.g. already expired) must not block disconnect."""

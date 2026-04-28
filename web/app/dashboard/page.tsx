@@ -47,7 +47,12 @@ export default function DashboardPage() {
   async function handleDisconnect() {
     setDisconnecting(true);
     await fetch(`${API_URL}/api/disconnect`, { method: "POST", credentials: "include" });
-    router.replace("/");
+    setState((prev) =>
+      prev.status === "loaded"
+        ? { status: "loaded", data: { ...prev.data, connected: false, history_id: null } }
+        : prev,
+    );
+    setDisconnecting(false);
   }
 
   if (state.status === "loading") {

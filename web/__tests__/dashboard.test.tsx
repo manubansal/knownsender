@@ -120,7 +120,7 @@ describe("Dashboard page", () => {
       );
     });
 
-    it("redirects to home after disconnect", async () => {
+    it("stays on dashboard after disconnect", async () => {
       mockFetch({
         ok: true,
         body: { email: "user@example.com", connected: true, history_id: 12345 },
@@ -133,7 +133,23 @@ describe("Dashboard page", () => {
         vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
       );
       await userEvent.click(button);
-      await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/"));
+      await waitFor(() => expect(replaceMock).not.toHaveBeenCalled());
+    });
+
+    it("shows not connected after disconnect", async () => {
+      mockFetch({
+        ok: true,
+        body: { email: "user@example.com", connected: true, history_id: 12345 },
+      });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /disconnect/i });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
+      );
+      await userEvent.click(button);
+      await screen.findByText(/not connected/i);
     });
   });
 

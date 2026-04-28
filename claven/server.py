@@ -313,9 +313,7 @@ def api_disconnect(request: Request):
         except Exception as exc:
             logger.warning("stop_watch failed during disconnect for %s: %s", session["email"], exc)
         db.delete_credentials(conn, session["user_id"])
-    response = JSONResponse({"ok": True})
-    response.delete_cookie("session")
-    return response
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/logout")
