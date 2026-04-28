@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import secrets
+from urllib.parse import urlencode
 
 import jwt as pyjwt
 from fastapi import FastAPI, HTTPException, Request
@@ -152,15 +153,18 @@ def health():
 
 
 @app.get("/oauth/start")
-def oauth_start(return_to: str | None = None):
+def oauth_start(return_to: str | None = None, force_consent: bool = False):
     if return_to and return_to not in _allowed_origins():
         raise HTTPException(status_code=400, detail="Invalid return_to")
     flow = _make_flow()
     flow.redirect_uri = os.environ["OAUTH_REDIRECT_URI"]
     state = secrets.token_urlsafe(32)
+    # Use consent prompt only when forced (e.g. reconnecting after disconnect
+    # where Google won't return a refresh token without explicit re-consent).
+    prompt = "consent" if force_consent else "select_account"
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        prompt="consent",
+        prompt=prompt,
         state=state,
     )
     response = RedirectResponse(url=auth_url)
@@ -234,12 +238,28 @@ def oauth_callback(
     try:
         with db.get_connection() as conn:
             user_id = db.upsert_user(conn, email)
-            auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
-
-            # Use the freshly-issued creds directly — no need to reload from DB
-            service = build("gmail", "v1", credentials=creds)
-            watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
-            db.set_history_id(conn, user_id, int(watch_response["historyId"]))
+            existing_tokens = db.load_tokens(conn, user_id)
+            if not existing_tokens:
+                if not creds.refresh_token:
+                    # User previously authorized the app but Google didn't
+                    # return a refresh token (happens when reconnecting after
+                    # disconnect). Redirect back to force re-consent.
+                    api_base = os.environ["OAUTH_REDIRECT_URI"].rsplit("/oauth/callback", 1)[0]
+                    params: dict = {"force_consent": "true"}
+                    if base != os.environ.get("FRONTEND_URL", "https://claven.app"):
+                        params["return_to"] = base
+                    response = RedirectResponse(
+                        url=f"{api_base}/oauth/start?{urlencode(params)}",
+                        status_code=302,
+                    )
+                    response.delete_cookie("oauth_state")
+                    response.delete_cookie("oauth_return_to")
+                    return response
+                # New user — store credentials and start Gmail push watch
+                auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
+                service = build("gmail", "v1", credentials=creds)
+                watch_response = start_watch(service, os.environ["PUBSUB_TOPIC"])
+                db.set_history_id(conn, user_id, int(watch_response["historyId"]))
     except Exception as exc:
         logger.exception("Signup failed for %s: %s", email, exc)
         return _error_redirect(base, "signup_failed")
@@ -312,9 +332,7 @@ def api_disconnect(request: Request):
         except Exception as exc:
             logger.warning("stop_watch failed during disconnect for %s: %s", session["email"], exc)
         db.delete_credentials(conn, session["user_id"])
-    response = JSONResponse({"ok": True})
-    response.delete_cookie("session")
-    return response
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/logout")

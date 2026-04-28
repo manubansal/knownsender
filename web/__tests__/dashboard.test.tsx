@@ -79,13 +79,33 @@ describe("Dashboard page", () => {
   });
 
   describe("not connected", () => {
-    it("shows not connected status when history_id is absent", async () => {
+    beforeEach(() => {
       mockFetch({
         ok: true,
         body: { email: "user@example.com", connected: false, history_id: null },
       });
+    });
+
+    it("shows not connected status when history_id is absent", async () => {
       render(<DashboardPage />);
       await screen.findByText(/not connected/i);
+    });
+
+    it("shows connect button", async () => {
+      render(<DashboardPage />);
+      await screen.findByRole("link", { name: /connect gmail/i });
+    });
+
+    it("connect button points to oauth start", async () => {
+      render(<DashboardPage />);
+      const link = await screen.findByRole("link", { name: /connect gmail/i });
+      expect(link).toHaveAttribute("href", `${API_URL}/oauth/start`);
+    });
+
+    it("does not show disconnect button", async () => {
+      render(<DashboardPage />);
+      await screen.findByText(/not connected/i); // wait for load
+      expect(screen.queryByRole("button", { name: /disconnect/i })).not.toBeInTheDocument();
     });
   });
 
@@ -120,7 +140,7 @@ describe("Dashboard page", () => {
       );
     });
 
-    it("redirects to home after disconnect", async () => {
+    it("stays on dashboard after disconnect", async () => {
       mockFetch({
         ok: true,
         body: { email: "user@example.com", connected: true, history_id: 12345 },
@@ -133,7 +153,39 @@ describe("Dashboard page", () => {
         vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
       );
       await userEvent.click(button);
-      await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/"));
+      await waitFor(() => expect(replaceMock).not.toHaveBeenCalled());
+    });
+
+    it("shows not connected after disconnect", async () => {
+      mockFetch({
+        ok: true,
+        body: { email: "user@example.com", connected: true, history_id: 12345 },
+      });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /disconnect/i });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
+      );
+      await userEvent.click(button);
+      await screen.findByText(/not connected/i);
+    });
+
+    it("shows connect button after disconnect", async () => {
+      mockFetch({
+        ok: true,
+        body: { email: "user@example.com", connected: true, history_id: 12345 },
+      });
+      render(<DashboardPage />);
+      const button = await screen.findByRole("button", { name: /disconnect/i });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
+      );
+      await userEvent.click(button);
+      await screen.findByRole("link", { name: /connect gmail/i });
     });
   });
 

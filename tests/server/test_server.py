@@ -107,6 +107,32 @@ class TestOAuthStart:
                 response = client.get("/oauth/start", follow_redirects=False)
         assert "oauth_return_to" not in response.cookies
 
+    def test_default_uses_select_account_prompt(self):
+        """oauth/start without force_consent uses select_account so returning
+        users skip the full consent screen and only see the account picker."""
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.Flow") as mock_flow_cls:
+                mock_flow = MagicMock()
+                mock_flow.authorization_url.return_value = ("https://accounts.google.com/auth", "state")
+                mock_flow_cls.from_client_config.return_value = mock_flow
+                with TestClient(app) as client:
+                    client.get("/oauth/start", follow_redirects=False)
+        call_kwargs = mock_flow.authorization_url.call_args[1]
+        assert call_kwargs.get("prompt") == "select_account"
+
+    def test_force_consent_uses_consent_prompt(self):
+        """oauth/start?force_consent=true uses prompt=consent to obtain a fresh
+        refresh token (needed when reconnecting after disconnect)."""
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.Flow") as mock_flow_cls:
+                mock_flow = MagicMock()
+                mock_flow.authorization_url.return_value = ("https://accounts.google.com/auth", "state")
+                mock_flow_cls.from_client_config.return_value = mock_flow
+                with TestClient(app) as client:
+                    client.get("/oauth/start?force_consent=true", follow_redirects=False)
+        call_kwargs = mock_flow.authorization_url.call_args[1]
+        assert call_kwargs.get("prompt") == "consent"
+
 
 class TestOAuthCallback:
     def test_missing_code_redirects_with_error(self):
@@ -157,6 +183,43 @@ class TestOAuthCallback:
         assert response.status_code == 302
         assert "error=token_exchange_failed" in response.headers["location"]
 
+    def test_no_refresh_token_redirects_to_force_consent(self):
+        """When reconnecting after disconnect Google won't return a refresh token.
+        The callback must redirect back to oauth/start?force_consent=true instead
+        of failing with signup_failed."""
+        with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+
+                mock_creds = MagicMock()
+                mock_creds.id_token = "fake-id-token"
+                mock_creds.refresh_token = None  # Google didn't return one
+
+                mock_flow = MagicMock()
+                mock_flow.credentials = mock_creds
+                mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+                with (
+                    patch("claven.server.Flow") as mock_flow_cls,
+                    patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify,
+                    patch("claven.server.db") as mock_db,
+                ):
+                    mock_flow_cls.from_client_config.return_value = mock_flow
+                    mock_verify.return_value = {"email": "user@example.com"}
+                    _fake_db_ctx(mock_db)
+                    mock_db.upsert_user.return_value = "uid-1"
+                    mock_db.load_tokens.return_value = None  # no stored tokens
+
+                    response = client.get(
+                        f"/oauth/callback?code=abc&state={state}",
+                        follow_redirects=False,
+                    )
+        assert response.status_code == 302
+        assert "force_consent=true" in response.headers["location"]
+        assert "/oauth/start" in response.headers["location"]
+
     def test_watch_failure_redirects_with_error(self):
         """start_watch errors (e.g. Gmail API disabled) must redirect, not 500."""
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
@@ -186,6 +249,7 @@ class TestOAuthCallback:
                     mock_verify.return_value = {"email": "user@example.com"}
                     _fake_db_ctx(mock_db)
                     mock_db.upsert_user.return_value = "uid-1"
+                    mock_db.load_tokens.return_value = None  # new user — full setup path
                     mock_watch.side_effect = Exception("HttpError 403: Gmail API disabled")
 
                     response = client.get(
@@ -435,7 +499,8 @@ class TestApiDisconnect:
         mock_stop.assert_called_once()
         mock_db.delete_credentials.assert_called_once_with(ANY, "uid-1")
 
-    def test_clears_session_cookie(self):
+    def test_does_not_clear_session_cookie(self):
+        """Disconnect removes Gmail credentials but keeps the user signed in."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -446,8 +511,9 @@ class TestApiDisconnect:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.post("/api/disconnect")
-        # Cookie deleted: Set-Cookie header with empty value / max-age=0
-        assert "session" in response.headers.get("set-cookie", "")
+        set_cookie = response.headers.get("set-cookie", "")
+        # session cookie must NOT be deleted — user stays signed in
+        assert "session" not in set_cookie
 
     def test_watch_stop_failure_still_deletes_credentials(self):
         """stop_watch errors (e.g. already expired) must not block disconnect."""
@@ -503,8 +569,13 @@ class TestApiLogout:
 class TestOAuthCallbackSession:
     """Verify the callback issues a session cookie and redirects to /dashboard."""
 
-    def _run_full_oauth(self, extra_env=None, return_to=None):
-        """Drive the full start → callback flow and return the callback response."""
+    def _run_full_oauth(self, extra_env=None, return_to=None, has_existing_tokens=False):
+        """Drive the full start → callback flow and return the callback response.
+
+        has_existing_tokens=True simulates a returning user who already has
+        credentials stored — the callback should skip store_credentials and
+        start_watch and just issue a new session JWT.
+        """
         env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t", **(extra_env or {})}
         mock_creds = MagicMock()
         mock_creds.id_token = "fake-id-token"
@@ -517,16 +588,20 @@ class TestOAuthCallbackSession:
         mock_flow.credentials = mock_creds
         mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
 
+        existing_tokens = {"access_token": "existing-token"} if has_existing_tokens else None
+
         with patch.dict("os.environ", env), \
              patch("claven.server.Flow") as mock_flow_cls, \
              patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify, \
              patch("claven.server.db") as mock_db, \
+             patch("claven.server.auth") as mock_auth, \
              patch("claven.server.build"), \
              patch("claven.server.start_watch") as mock_watch:
             mock_flow_cls.from_client_config.return_value = mock_flow
             mock_verify.return_value = {"email": "user@example.com"}
             _fake_db_ctx(mock_db)
             mock_db.upsert_user.return_value = "uid-1"
+            mock_db.load_tokens.return_value = existing_tokens
             mock_watch.return_value = {"historyId": "99999"}
 
             with TestClient(app) as client:
@@ -565,3 +640,111 @@ class TestOAuthCallbackSession:
         response = self._run_full_oauth()
         set_cookie = response.headers.get("set-cookie", "").lower()
         assert "samesite=none" in set_cookie
+
+    def test_new_user_calls_store_credentials(self):
+        """First-time sign-in stores OAuth credentials in the DB."""
+        env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}
+        mock_creds = MagicMock()
+        mock_creds.id_token = "fake-id-token"
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+        mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+        with patch.dict("os.environ", env), \
+             patch("claven.server.Flow") as mock_flow_cls, \
+             patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify, \
+             patch("claven.server.db") as mock_db, \
+             patch("claven.server.auth") as mock_auth, \
+             patch("claven.server.build"), \
+             patch("claven.server.start_watch") as mock_watch:
+            mock_flow_cls.from_client_config.return_value = mock_flow
+            mock_verify.return_value = {"email": "user@example.com"}
+            _fake_db_ctx(mock_db)
+            mock_db.upsert_user.return_value = "uid-1"
+            mock_db.load_tokens.return_value = None  # new user
+            mock_watch.return_value = {"historyId": "99999"}
+
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+                client.get(f"/oauth/callback?code=abc&state={state}", follow_redirects=False)
+
+        mock_auth.store_credentials.assert_called_once()
+
+    def test_new_user_calls_start_watch(self):
+        """First-time sign-in starts a Gmail push watch."""
+        env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}
+        mock_creds = MagicMock()
+        mock_creds.id_token = "fake-id-token"
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+        mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+        with patch.dict("os.environ", env), \
+             patch("claven.server.Flow") as mock_flow_cls, \
+             patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify, \
+             patch("claven.server.db") as mock_db, \
+             patch("claven.server.auth"), \
+             patch("claven.server.build"), \
+             patch("claven.server.start_watch") as mock_watch:
+            mock_flow_cls.from_client_config.return_value = mock_flow
+            mock_verify.return_value = {"email": "user@example.com"}
+            _fake_db_ctx(mock_db)
+            mock_db.upsert_user.return_value = "uid-1"
+            mock_db.load_tokens.return_value = None  # new user
+            mock_watch.return_value = {"historyId": "99999"}
+
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+                client.get(f"/oauth/callback?code=abc&state={state}", follow_redirects=False)
+
+        mock_watch.assert_called_once()
+
+    def test_returning_user_skips_store_credentials(self):
+        """Returning user sign-in must not overwrite existing credentials."""
+        response = self._run_full_oauth(has_existing_tokens=True)
+        assert response.status_code == 302  # sanity check the flow succeeded
+
+    def test_returning_user_skips_start_watch(self):
+        """Returning user sign-in must not restart the Gmail push watch."""
+        env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}
+        mock_creds = MagicMock()
+        mock_creds.id_token = "fake-id-token"
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+        mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+        with patch.dict("os.environ", env), \
+             patch("claven.server.Flow") as mock_flow_cls, \
+             patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify, \
+             patch("claven.server.db") as mock_db, \
+             patch("claven.server.auth") as mock_auth, \
+             patch("claven.server.build"), \
+             patch("claven.server.start_watch") as mock_watch:
+            mock_flow_cls.from_client_config.return_value = mock_flow
+            mock_verify.return_value = {"email": "user@example.com"}
+            _fake_db_ctx(mock_db)
+            mock_db.upsert_user.return_value = "uid-1"
+            mock_db.load_tokens.return_value = {"access_token": "existing-token"}
+
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+                client.get(f"/oauth/callback?code=abc&state={state}", follow_redirects=False)
+
+        mock_watch.assert_not_called()
+        mock_auth.store_credentials.assert_not_called()
+
+    def test_returning_user_still_redirects_to_dashboard(self):
+        """Returning users land on /dashboard just like new users."""
+        response = self._run_full_oauth(has_existing_tokens=True)
+        assert response.headers["location"] == "https://claven.app/dashboard"
+
+    def test_returning_user_still_gets_session_cookie(self):
+        """Returning users receive a fresh session JWT."""
+        response = self._run_full_oauth(has_existing_tokens=True)
+        assert "session" in response.cookies
