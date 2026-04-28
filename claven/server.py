@@ -80,7 +80,7 @@ def oauth_start():
         state=state,
     )
     response = RedirectResponse(url=auth_url)
-    response.set_cookie("oauth_state", state, httponly=True, max_age=600, samesite="lax")
+    response.set_cookie("oauth_state", state, httponly=True, max_age=600, samesite="lax", secure=True)
     return response
 
 
@@ -102,14 +102,22 @@ def oauth_callback(
 
     flow = _make_flow()
     flow.redirect_uri = os.environ["OAUTH_REDIRECT_URI"]
-    flow.fetch_token(code=code)
+    try:
+        flow.fetch_token(code=code)
+    except Exception as exc:
+        logger.warning("Token exchange failed: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
     creds = flow.credentials
 
-    id_info = google_id_token.verify_oauth2_token(
-        creds.id_token,
-        google_requests.Request(),
-        os.environ["OAUTH_CLIENT_ID"],
-    )
+    try:
+        id_info = google_id_token.verify_oauth2_token(
+            creds.id_token,
+            google_requests.Request(),
+            os.environ["OAUTH_CLIENT_ID"],
+        )
+    except Exception as exc:
+        logger.warning("ID token verification failed: %s", exc)
+        raise HTTPException(status_code=400, detail="ID token verification failed")
     email = id_info["email"]
 
     with db.get_connection() as conn:
