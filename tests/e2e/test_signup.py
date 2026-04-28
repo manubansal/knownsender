@@ -52,7 +52,11 @@ def require_e2e_secrets():
 
 @pytest.fixture(autouse=True)
 def clean_test_user():
-    """Remove the test user before and after each test for a clean slate."""
+    """Guarantee the test account is absent before and after every test.
+
+    Deleting from users cascades to gmail_tokens, scan_state, and
+    sent_recipients, so no related rows are left behind.
+    """
     def _delete():
         if not _DB_URL:
             return
@@ -66,8 +70,10 @@ def clean_test_user():
             conn.close()
 
     _delete()
-    yield
-    _delete()
+    try:
+        yield
+    finally:
+        _delete()
 
 
 class TestSignupFlow:
