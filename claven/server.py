@@ -462,10 +462,11 @@ def api_me(request: Request):
             max(0, inbox_count - processed_count) if inbox_count is not None else None
         )
 
-        # Auto-trigger inbox scan if sent scan is done and inbox hasn't been scanned yet
+        # Auto-trigger inbox scan if sent scan is done and inbox hasn't been fully scanned
         if (sent_scan_progress["status"] == "complete"
                 and history_id is not None
-                and session["user_id"] not in _inbox_scan_done
+                and inbox_count is not None
+                and processed_count < inbox_count
                 and session["user_id"] not in _inbox_scan_running):
             threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
 
@@ -497,8 +498,6 @@ def api_config():
 
 
 _inbox_scan_running: set[str] = set()
-_inbox_scan_done: set[str] = set()
-
 
 def _run_inbox_scan(user_id: str):
     """Background task: scan all inbox messages and apply labels."""
@@ -513,7 +512,6 @@ def _run_inbox_scan(user_id: str):
             label_id_cache = _label_id_cache_for_config(service, label_configs)
             count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
             logger.info("Inbox scan for %s: processed %d message(s)", user_id, count)
-            _inbox_scan_done.add(user_id)
     except Exception as exc:
         logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
     finally:
@@ -559,7 +557,6 @@ def _run_sent_scan(user_id: str):
             label_id_cache = _label_id_cache_for_config(service, label_configs)
             count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
             logger.info("Post-scan inbox scan for %s: processed %d message(s)", user_id, count)
-            _inbox_scan_done.add(user_id)
     except Exception as exc:
         logger.exception("Post-scan inbox scan failed for user %s: %s", user_id, exc)
     finally:
@@ -603,7 +600,6 @@ def api_disconnect(request: Request):
         except Exception as exc:
             logger.warning("stop_watch failed during disconnect for %s: %s", session["email"], exc)
         db.clear_watch_state(conn, session["user_id"])
-    _inbox_scan_done.discard(session["user_id"])
     return JSONResponse({"ok": True})
 
 

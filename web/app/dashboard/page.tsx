@@ -170,6 +170,15 @@ export default function DashboardPage() {
   return (
     <>
       <header className="flex items-center justify-end gap-2 border-b px-6 py-3">
+        {connected && (
+          <button
+            onClick={handleDisconnect}
+            disabled={disconnecting}
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+          >
+            {disconnecting ? "Disconnecting…" : "Disconnect"}
+          </button>
+        )}
         <button
           onClick={handleSwitchAccount}
           className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
@@ -189,6 +198,20 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
 
           <p className="text-lg font-medium">{email}</p>
+
+          <div className="flex items-center gap-2">
+            {connected ? (
+              <>
+                <CheckCircle className="h-5 w-5 text-green-500" />
+                <span className="text-sm text-muted-foreground">Connected</span>
+              </>
+            ) : (
+              <>
+                <Zap className="h-5 w-5 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Connected and ready to start filtering</span>
+              </>
+            )}
+          </div>
 
           <div className="w-full flex flex-col gap-1">
             <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
@@ -238,31 +261,34 @@ export default function DashboardPage() {
                     <span className="font-medium">{label.name}</span>
                     <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
-                      <div className="flex justify-between gap-4 items-center mt-1.5">
-                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          {sent_scan_status === "in_progress" ? (
-                            <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
-                          ) : sent_scan_status === "complete" ? (
-                            <CheckCircle className="h-3 w-3 text-green-500" data-testid="sent-scan-complete" />
-                          ) : null}
-                          Sent messages scanned
-                        </span>
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                          {sent_messages_scanned}{sent_messages_total !== null ? ` / ${sent_messages_total}` : ""}
-                        </span>
-                      </div>
-                    )}
-                    {isKnownSender && (
-                      <div className="flex justify-between gap-4 items-center">
-                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          {sent_scan_status === "in_progress" ? (
-                            <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
-                          ) : sent_scan_status === "complete" ? (
-                            <CheckCircle className="h-3 w-3 text-green-500" data-testid="known-senders-complete" />
-                          ) : null}
-                          Known senders
-                        </span>
-                        <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
+                      <div className="flex flex-col gap-2 mt-2">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Sent scan</span>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex justify-between gap-4 items-center">
+                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              {sent_scan_status === "in_progress" ? (
+                                <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
+                              ) : sent_scan_status === "complete" ? (
+                                <CheckCircle className="h-3 w-3 text-green-500" data-testid="sent-scan-complete" />
+                              ) : null}
+                              Messages scanned
+                            </span>
+                            <span className="text-xs tabular-nums text-muted-foreground">
+                              {sent_messages_scanned}{sent_messages_total !== null ? ` / ${sent_messages_total}` : ""}
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-4 items-center">
+                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              {sent_scan_status === "in_progress" ? (
+                                <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
+                              ) : sent_scan_status === "complete" ? (
+                                <CheckCircle className="h-3 w-3 text-green-500" data-testid="known-senders-complete" />
+                              ) : null}
+                              Known senders found
+                            </span>
+                            <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
+                          </div>
+                        </div>
                       </div>
                     )}
                     {label.unknown_label !== undefined && (() => {
@@ -273,46 +299,49 @@ export default function DashboardPage() {
                       const iconExtra = inbox_scan_in_progress ? "animate-spin" : "";
                       const iconTestId = inbox_scan_in_progress ? "filter-labeling-icon" : filterActive ? "filter-active-icon" : "filter-waiting-icon";
                       return (
-                        <>
-                          {inbox_count !== null && (
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Received messages labeled
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {(filtered_in_count ?? 0) + (filtered_out_count ?? 0)} / {inbox_count}
-                              </span>
-                            </div>
-                          )}
-                          {unlabeled_count !== null && (
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Unlabeled
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count}</span>
-                            </div>
-                          )}
-                          {filtered_in_count !== null && (
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Labeled as known-sender
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count}</span>
-                            </div>
-                          )}
-                          {filtered_out_count !== null && (
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Labeled as unknown-sender
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
-                            </div>
-                          )}
-                        </>
+                        <div className="flex flex-col gap-2 mt-2">
+                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Received scan</span>
+                          <div className="flex flex-col gap-0.5">
+                            {inbox_count !== null && (
+                              <div className="flex justify-between gap-4 items-center">
+                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                  Messages labeled
+                                </span>
+                                <span className="text-xs tabular-nums text-muted-foreground">
+                                  {(filtered_in_count ?? 0) + (filtered_out_count ?? 0)} / {inbox_count}
+                                </span>
+                              </div>
+                            )}
+                            {unlabeled_count !== null && (
+                              <div className="flex justify-between gap-4 items-center">
+                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                  Unlabeled
+                                </span>
+                                <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count}</span>
+                              </div>
+                            )}
+                            {filtered_in_count !== null && (
+                              <div className="flex justify-between gap-4 items-center">
+                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                  Labeled as known-sender
+                                </span>
+                                <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count}</span>
+                              </div>
+                            )}
+                            {filtered_out_count !== null && (
+                              <div className="flex justify-between gap-4 items-center">
+                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                  Labeled as unknown-sender
+                                </span>
+                                <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       );
                     })()}
                   </div>
@@ -342,39 +371,13 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center gap-2">
-              {connected ? (
-                <>
-                  <CheckCircle className="h-5 w-5 text-green-500" />
-                  <span className="text-sm text-muted-foreground">Connected</span>
-                </>
-              ) : (
-                <>
-                  <Zap className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Connected and ready to start filtering</span>
-                </>
-              )}
-            </div>
-
-            {connected ? (
-              <button
-                onClick={handleDisconnect}
-                disabled={disconnecting}
-                className={cn(buttonVariants({ variant: "outline" }))}
-              >
-                {disconnecting ? "Disconnecting…" : "Disconnect"}
-              </button>
-            ) : (
-              <button
-                onClick={handleConnect}
-                disabled={connecting}
-                className={cn(buttonVariants())}
-              >
-                {connecting ? "Starting…" : "Start filtering"}
-              </button>
-            )}
-          </div>
+          <button
+            onClick={connected ? handleDisconnect : handleConnect}
+            disabled={connecting || disconnecting}
+            className={cn(buttonVariants(connected ? { variant: "outline" } : {}))}
+          >
+            {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause filtering" : "Start filtering"}
+          </button>
         </div>
       </main>
     </>

@@ -920,8 +920,7 @@ class TestApiMe:
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
                  patch("claven.server.threading") as mock_threading, \
-                 patch("claven.server._inbox_scan_running", set()), \
-                 patch("claven.server._inbox_scan_done", set()):
+                 patch("claven.server._inbox_scan_running", set()):
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 999

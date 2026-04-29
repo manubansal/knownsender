@@ -312,33 +312,33 @@ describe("Dashboard page", () => {
       await screen.findByText("42");
     });
 
-    it("shows sent messages scanned as fraction before known senders", async () => {
+    it("shows messages scanned as fraction before known senders", async () => {
       mockFetch(
         { ok: true, body: { ...DEFAULT_ME, known_senders: 10, sent_messages_scanned: 150, sent_messages_total: 500 } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByText(/sent messages scanned/i);
+      await screen.findByText(/messages scanned/i);
       await screen.findByText("150 / 500");
     });
 
-    it("shows sent messages scanned without total when total is null", async () => {
+    it("shows messages scanned without total when total is null", async () => {
       mockFetch(
         { ok: true, body: { ...DEFAULT_ME, known_senders: 10, sent_messages_scanned: 75, sent_messages_total: null } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByText(/sent messages scanned/i);
+      await screen.findByText(/messages scanned/i);
       await screen.findByText("75");
     });
 
-    it("shows sent messages scanned row even when zero", async () => {
+    it("shows messages scanned row even when zero", async () => {
       mockFetch(
         { ok: true, body: { ...DEFAULT_ME, known_senders: 0, sent_messages_scanned: 0, sent_messages_total: null } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByText(/sent messages scanned/i);
+      await screen.findByText(/messages scanned/i);
     });
 
     it("shows spinner when sent scan is in progress", async () => {
@@ -356,7 +356,7 @@ describe("Dashboard page", () => {
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByText(/sent messages scanned/i);
+      await screen.findByText(/messages scanned/i);
       expect(screen.queryByTestId("sent-scan-spinner")).not.toBeInTheDocument();
     });
 

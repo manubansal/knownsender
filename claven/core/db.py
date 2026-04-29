@@ -117,13 +117,17 @@ def delete_credentials(conn, user_id: str) -> None:
 
 
 def clear_watch_state(conn, user_id: str) -> None:
-    """Clear the Gmail watch / scan position without removing OAuth credentials.
+    """Clear the Gmail watch without losing scan progress.
 
-    Use this for disconnect — the user stays authorized and can reconnect
-    with a single click (no OAuth round-trip required).
+    Nulls out history_id so polling/webhook processing stops, but keeps
+    processed_count, sent scan state, and known senders intact. The user
+    can resume filtering with a single click (no re-scan required).
     """
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM scan_state WHERE user_id = %s", (user_id,))
+        cur.execute(
+            "UPDATE scan_state SET history_id = 0, updated_at = NOW() WHERE user_id = %s",
+            (user_id,),
+        )
 
 
 # ── Scan state ────────────────────────────────────────────────────────────────
@@ -132,7 +136,7 @@ def get_history_id(conn, user_id: str) -> int | None:
     with conn.cursor() as cur:
         cur.execute("SELECT history_id FROM scan_state WHERE user_id = %s", (user_id,))
         row = cur.fetchone()
-        return row[0] if row else None
+        return row[0] if row and row[0] else None
 
 
 def set_history_id(conn, user_id: str, history_id: int) -> None:
