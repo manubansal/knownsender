@@ -143,11 +143,13 @@ def build_known_senders(service, conn, user_id, should_continue=None):
     return {"known_senders": count, "messages_scanned": messages_scanned}
 
 
-def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None):
+def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None):
     """Scan all inbox messages and apply labels using batch API calls.
 
-    Fetches message headers in batches of 100, evaluates rules locally,
+    Fetches message headers in batches, evaluates rules locally,
     then batch-applies labels. ~100x faster than per-message API calls.
+    If should_continue is provided and returns False, the scan stops
+    and saves progress.
 
     Returns the number of messages processed.
     """
@@ -163,6 +165,11 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
     for batch_start in range(0, total, _BATCH_SIZE):
         if batch_start > 0:
             time.sleep(1)
+        if should_continue is not None and not should_continue():
+            logger.info("Inbox scan stopped by caller at %d/%d", batch_start, total)
+            db.set_processed_count(conn, user_id, batch_start)
+            conn.commit()
+            return batch_start
         batch_ids = [m["id"] for m in messages[batch_start:batch_start + _BATCH_SIZE]]
         batch_end = batch_start + len(batch_ids)
 
@@ -216,9 +223,12 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
 
     profile = get_profile(service)
     db.set_history_id(conn, user_id, int(profile["historyId"]))
-    db.set_inbox_scan_completed(conn, user_id)
+    if errors == 0:
+        db.set_inbox_scan_completed(conn, user_id)
+        logger.info("Inbox scan complete: %d messages processed, 0 errors", total)
+    else:
+        logger.warning("Inbox scan finished with %d errors out of %d — will retry on next load", errors, total)
     conn.commit()
-    logger.info("Inbox scan complete: %d messages processed, %d errors", total, errors)
     return total
 
 
