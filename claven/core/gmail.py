@@ -298,3 +298,65 @@ def apply_label(service, message_id, label_id):
         userId="me", id=message_id, body={"addLabelIds": [label_id]}
     ).execute()
     logger.debug("Applied label %s to message %s", label_id, message_id)
+
+
+_BATCH_LIMIT = 100
+
+
+def batch_get_message_headers(service, message_ids):
+    """Fetch headers and labels for up to 100 messages in a single batch request.
+
+    Returns {message_id: (headers_dict, label_ids_list)} for successful fetches.
+    Failed fetches are omitted from the result.
+    """
+    results = {}
+
+    def _callback(request_id, response, exception):
+        if exception:
+            logger.warning("Batch get failed for %s: %s", request_id, exception)
+            return
+        headers = {}
+        for header in response.get("payload", {}).get("headers", []):
+            name = header["name"].lower()
+            if name in ("from", "subject", "to"):
+                headers[name] = header["value"]
+        results[request_id] = (headers, response.get("labelIds", []))
+
+    batch = service.new_batch_http_request(callback=_callback)
+    for msg_id in message_ids[:_BATCH_LIMIT]:
+        batch.add(
+            service.users().messages().get(
+                userId="me", id=msg_id, format="metadata",
+                metadataHeaders=["From", "Subject", "To"],
+            ),
+            request_id=msg_id,
+        )
+    batch.execute()
+    return results
+
+
+def batch_apply_labels(service, message_label_pairs):
+    """Apply labels to up to 100 messages in a single batch request.
+
+    message_label_pairs: list of (message_id, label_id) tuples.
+    Returns the number of successful applications.
+    """
+    applied = 0
+
+    def _callback(request_id, response, exception):
+        nonlocal applied
+        if exception:
+            logger.warning("Batch label failed for %s: %s", request_id, exception)
+            return
+        applied += 1
+
+    batch = service.new_batch_http_request(callback=_callback)
+    for msg_id, label_id in message_label_pairs[:_BATCH_LIMIT]:
+        batch.add(
+            service.users().messages().modify(
+                userId="me", id=msg_id, body={"addLabelIds": [label_id]},
+            ),
+            request_id=msg_id,
+        )
+    batch.execute()
+    return applied

@@ -117,13 +117,17 @@ def delete_credentials(conn, user_id: str) -> None:
 
 
 def clear_watch_state(conn, user_id: str) -> None:
-    """Clear the Gmail watch / scan position without removing OAuth credentials.
+    """Clear the Gmail watch without losing scan progress.
 
-    Use this for disconnect — the user stays authorized and can reconnect
-    with a single click (no OAuth round-trip required).
+    Nulls out history_id so polling/webhook processing stops, but keeps
+    processed_count, sent scan state, and known senders intact. The user
+    can resume filtering with a single click (no re-scan required).
     """
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM scan_state WHERE user_id = %s", (user_id,))
+        cur.execute(
+            "UPDATE scan_state SET history_id = 0, updated_at = NOW() WHERE user_id = %s",
+            (user_id,),
+        )
 
 
 # ── Scan state ────────────────────────────────────────────────────────────────
@@ -132,7 +136,7 @@ def get_history_id(conn, user_id: str) -> int | None:
     with conn.cursor() as cur:
         cur.execute("SELECT history_id FROM scan_state WHERE user_id = %s", (user_id,))
         row = cur.fetchone()
-        return row[0] if row else None
+        return row[0] if row and row[0] else None
 
 
 def set_history_id(conn, user_id: str, history_id: int) -> None:
@@ -146,6 +150,23 @@ def set_history_id(conn, user_id: str, history_id: int) -> None:
                 updated_at = NOW()
             """,
             (user_id, history_id),
+        )
+
+
+def is_inbox_scan_completed(conn, user_id: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT inbox_scan_completed FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return bool(row[0]) if row else False
+
+
+def set_inbox_scan_completed(conn, user_id: str, completed: bool = True) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET inbox_scan_completed = %s, updated_at = NOW() WHERE user_id = %s",
+            (completed, user_id),
         )
 
 
@@ -165,6 +186,79 @@ def increment_processed_count(conn, user_id: str, n: int) -> None:
         cur.execute(
             "UPDATE scan_state SET processed_count = processed_count + %s WHERE user_id = %s",
             (n, user_id),
+        )
+
+
+def set_processed_count(conn, user_id: str, n: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET processed_count = %s WHERE user_id = %s",
+            (n, user_id),
+        )
+
+
+def get_sent_scan_cursor(conn, user_id: str) -> int | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT sent_scan_cursor FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def set_sent_scan_cursor(conn, user_id: str, cursor: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO scan_state (user_id, history_id, sent_scan_cursor)
+            VALUES (%s, 0, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                sent_scan_cursor = EXCLUDED.sent_scan_cursor,
+                updated_at = NOW()
+            """,
+            (user_id, cursor),
+        )
+
+
+def get_sent_scan_progress(conn, user_id: str) -> dict:
+    """Return sent scan progress: messages_scanned, messages_total, status, updated_at."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT sent_messages_scanned, sent_messages_total, sent_scan_status, updated_at FROM scan_state WHERE user_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            return {"messages_scanned": row[0], "messages_total": row[1], "status": row[2], "updated_at": row[3]}
+        return {"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}
+
+
+def set_sent_scan_status(conn, user_id: str, status: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO scan_state (user_id, history_id, sent_scan_status)
+            VALUES (%s, 0, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                sent_scan_status = EXCLUDED.sent_scan_status,
+                updated_at = NOW()
+            """,
+            (user_id, status),
+        )
+
+
+def set_sent_scan_progress(conn, user_id: str, scanned: int, total: int | None) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO scan_state (user_id, history_id, sent_messages_scanned, sent_messages_total)
+            VALUES (%s, 0, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                sent_messages_scanned = EXCLUDED.sent_messages_scanned,
+                sent_messages_total = EXCLUDED.sent_messages_total,
+                updated_at = NOW()
+            """,
+            (user_id, scanned, total),
         )
 
 

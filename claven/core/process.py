@@ -15,11 +15,14 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
 
     This ensures every processed message lands in exactly one state per label
     config: matched, unmatched, or (if no unknown_label configured) unchanged.
+
+    Returns True if at least one label was newly applied, False otherwise.
     """
     headers, existing_labels = get_message_headers(service, message_id)
     if not headers:
-        return
+        return False
 
+    applied = False
     for label_config in label_configs:
         matched = any(
             matches_rule(headers, rule, known_senders)
@@ -36,6 +39,8 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
                     headers.get("subject", ""),
                     apply_id,
                 )
+                applied = True
+    return applied
 
 
 def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):
