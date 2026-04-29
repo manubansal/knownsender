@@ -18,10 +18,8 @@ type MeResponse = {
   sent_messages_total: number | null;
   sent_scan_status: string | null;
   inbox_scan_in_progress: boolean;
-  processed_count: number;
   last_processed_at: string | null;
   newest_labeled_at: string | null;
-  pending_count: number | null;
   unread_count: number | null;
   read_count: number | null;
   inbox_count: number | null;
@@ -168,7 +166,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, sent_scan_status, inbox_scan_in_progress, processed_count, pending_count, unread_count, read_count, inbox_count, all_mail_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
   const { labels } = state;
 
   return (
@@ -237,14 +235,6 @@ export default function DashboardPage() {
                   <span className="tabular-nums">{unread_count}</span>
                 </div>
               )}
-              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Processed</span>
-                <span className="tabular-nums">{processed_count}</span>
-              </div>
-              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Pending</span>
-                <span className="tabular-nums">{pending_count ?? "—"}</span>
-              </div>
               {all_mail_count !== null && (
                 <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
                   <span className="text-muted-foreground">All mail</span>

@@ -863,73 +863,7 @@ class TestApiMe:
         assert response.json()["read_count"] is None
         assert response.json()["inbox_count"] is None
 
-    def test_returns_processed_count(self):
-        token = _make_session_token()
-        with patch.dict("os.environ", _ENV):
-            with patch("claven.server.db") as mock_db, \
-                 patch("claven.server.auth") as mock_auth:
-                _fake_db_ctx(mock_db)
-                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
-                mock_db.get_history_id.return_value = 12345
-                mock_db.count_known_senders.return_value = 0
-                mock_db.get_processed_count.return_value = 42
-                mock_auth.get_service.return_value = self._make_gmail_service(messages_total=100)
-                with TestClient(app) as client:
-                    client.cookies.set("session", token)
-                    response = client.get("/api/me")
-        assert response.json()["processed_count"] == 42
-
-    def test_returns_pending_count_as_inbox_minus_processed(self):
-        """pending = max(0, inbox_count - processed_count) when scan not complete."""
-        token = _make_session_token()
-        with patch.dict("os.environ", _ENV):
-            with patch("claven.server.db") as mock_db, \
-                 patch("claven.server.auth") as mock_auth:
-                _fake_db_ctx(mock_db)
-                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
-                mock_db.get_history_id.return_value = 12345
-                mock_db.count_known_senders.return_value = 0
-                mock_db.get_processed_count.return_value = 10
-                mock_db.is_inbox_scan_completed.return_value = False
-                mock_auth.get_service.return_value = self._make_gmail_service(messages_total=100)
-                with TestClient(app) as client:
-                    client.cookies.set("session", token)
-                    response = client.get("/api/me")
-        assert response.json()["pending_count"] == 90
-
-    def test_pending_count_is_null_when_gmail_api_unavailable(self):
-        """If inbox_count cannot be fetched, pending_count degrades to null."""
-        token = _make_session_token()
-        with patch.dict("os.environ", _ENV):
-            with patch("claven.server.db") as mock_db, \
-                 patch("claven.server.auth") as mock_auth:
-                _fake_db_ctx(mock_db)
-                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
-                mock_db.get_history_id.return_value = None
-                mock_db.count_known_senders.return_value = 0
-                mock_db.get_processed_count.return_value = 0
-                mock_auth.get_service.side_effect = Exception("no credentials")
-                with TestClient(app) as client:
-                    client.cookies.set("session", token)
-                    response = client.get("/api/me")
-        assert response.json()["pending_count"] is None
-
-    def test_pending_count_shown_before_connecting(self):
-        """pending = inbox_count when processed_count is 0 (user signed in but not yet connected)."""
-        token = _make_session_token()
-        with patch.dict("os.environ", _ENV):
-            with patch("claven.server.db") as mock_db, \
-                 patch("claven.server.auth") as mock_auth:
-                _fake_db_ctx(mock_db)
-                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
-                mock_db.get_history_id.return_value = None   # not connected
-                mock_db.count_known_senders.return_value = 0
-                mock_db.get_processed_count.return_value = 0
-                mock_auth.get_service.return_value = self._make_gmail_service(messages_total=250)
-                with TestClient(app) as client:
-                    client.cookies.set("session", token)
-                    response = client.get("/api/me")
-        assert response.json()["pending_count"] == 250
+    # processed_count and pending_count removed — progress derived from live Gmail label counts
 
     def test_returns_filtered_in_count(self):
         token = _make_session_token()
