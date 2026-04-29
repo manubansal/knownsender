@@ -96,6 +96,60 @@ jobs:
             --concurrency=80
             --timeout=300
 
+      - name: Post-deploy smoke test
+        run: |
+          echo "Waiting for new revision to become ready..."
+          sleep 10
+
+          # Health check — verifies the server is up and DB is reachable
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.claven.app/healthz)
+          if [ "$STATUS" != "200" ]; then
+            echo "FAIL: /healthz returned $STATUS"
+            exit 1
+          fi
+          echo "OK: /healthz returned 200"
+
+          # Sign-in smoke test — exercises the full /api/me code path
+          # Look up test user ID, create a session JWT, and verify /api/me returns 200
+          python - <<'PYEOF'
+          import os, sys, json
+          import psycopg2, jwt
+
+          conn = psycopg2.connect(os.environ["DATABASE_URL"])
+          with conn.cursor() as cur:
+              cur.execute("SELECT id::text FROM users WHERE email = %s", (os.environ["TEST_GMAIL_EMAIL"],))
+              row = cur.fetchone()
+          conn.close()
+
+          if not row:
+              print("SKIP: test user not found in DB")
+              sys.exit(0)
+
+          user_id = row[0]
+          token = jwt.encode(
+              {"user_id": user_id, "email": os.environ["TEST_GMAIL_EMAIL"]},
+              os.environ["SESSION_SECRET"],
+              algorithm="HS256",
+          )
+
+          import urllib.request
+          req = urllib.request.Request(
+              "https://api.claven.app/api/me",
+              headers={"Cookie": f"session={token}"},
+          )
+          try:
+              resp = urllib.request.urlopen(req)
+              print(f"OK: /api/me returned {resp.status}")
+          except urllib.error.HTTPError as e:
+              print(f"FAIL: /api/me returned {e.code}")
+              print(e.read().decode()[:200])
+              sys.exit(1)
+          PYEOF
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TEST_GMAIL_EMAIL: ${{ secrets.TEST_GMAIL_EMAIL }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+
   deploy-frontend:
     name: Build and deploy frontend
     runs-on: ubuntu-latest
