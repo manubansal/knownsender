@@ -50,6 +50,16 @@ Before opening any PR, rebase the branch onto its base branch:
 git fetch origin && git rebase origin/main && git push origin <branch> --force-with-lease
 ```
 
+## Post-deploy verification
+
+After merging any PR to main, **verify the Deploy workflow succeeded** before moving on. The deploy includes a smoke test that hits `/healthz` and `/api/me` on prod — if it fails, prod sign-in is broken.
+
+```
+gh run list --branch main --workflow=deploy.yml --limit 1
+```
+
+If the deploy fails, check logs immediately. Do not merge another PR until the deploy is green.
+
 ## Test accounts
 
 **`claven.test.inbox@gmail.com` is reserved exclusively for automated e2e tests.** Do not sign in with it manually or treat any state it accumulates as persistent. The `clean_test_user` fixture in `tests/e2e/` deletes this account from the DB before and after every test run, so any manually-configured state will be wiped the next time CI runs.
