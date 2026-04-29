@@ -365,7 +365,7 @@ def internal_build_known_senders(request: Request):
 
 
 @app.get("/api/me")
-def api_me(request: Request):
+def api_me(request: Request, background_tasks: BackgroundTasks):
     session = _get_session(request)
     with db.get_connection() as conn:
         user = db.get_user_by_id(conn, session["user_id"])
@@ -375,6 +375,14 @@ def api_me(request: Request):
         known_senders = db.count_known_senders(conn, session["user_id"])
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         processed_count = db.get_processed_count(conn, session["user_id"])
+
+        # Auto-trigger sent scan if it has never run for this user
+        if sent_scan_progress["status"] not in ("in_progress", "complete"):
+            has_tokens = db.load_tokens(conn, session["user_id"]) is not None
+            if has_tokens:
+                db.set_sent_scan_status(conn, session["user_id"], "in_progress")
+                sent_scan_progress["status"] = "in_progress"
+                background_tasks.add_task(_run_sent_scan, session["user_id"])
 
         unread_count = None
         read_count = None
