@@ -116,6 +116,16 @@ def delete_credentials(conn, user_id: str) -> None:
         cur.execute("DELETE FROM scan_state WHERE user_id = %s", (user_id,))
 
 
+def clear_watch_state(conn, user_id: str) -> None:
+    """Clear the Gmail watch / scan position without removing OAuth credentials.
+
+    Use this for disconnect — the user stays authorized and can reconnect
+    with a single click (no OAuth round-trip required).
+    """
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM scan_state WHERE user_id = %s", (user_id,))
+
+
 # ── Scan state ────────────────────────────────────────────────────────────────
 
 def get_history_id(conn, user_id: str) -> int | None:
@@ -139,7 +149,32 @@ def set_history_id(conn, user_id: str, history_id: int) -> None:
         )
 
 
+def get_processed_count(conn, user_id: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT processed_count FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+def increment_processed_count(conn, user_id: str, n: int) -> None:
+    if n <= 0:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET processed_count = processed_count + %s WHERE user_id = %s",
+            (n, user_id),
+        )
+
+
 # ── Sent recipients ───────────────────────────────────────────────────────────
+
+def count_known_senders(conn, user_id: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM sent_recipients WHERE user_id = %s", (user_id,))
+        return cur.fetchone()[0]
+
 
 def get_known_senders(conn, user_id: str) -> set[str]:
     with conn.cursor() as cur:

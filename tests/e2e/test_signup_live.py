@@ -142,13 +142,16 @@ class TestSignupLive:
 
         Mocked: flow.fetch_token (injected with real credentials),
                 google_id_token.verify_oauth2_token (ID token unavailable on refresh).
-        Real:   google.oauth2 token refresh, build(), start_watch(), DB writes.
+        Real:   google.oauth2 token refresh, build(), DB writes.
 
         Verifies:
           - The test account credentials are still valid
-          - start_watch() succeeds against the live Gmail API and Pub/Sub topic
-          - The historyId stored in the DB is a real value from Gmail (>0)
+          - Tokens are stored in the DB after OAuth
           - The server redirects to /dashboard
+
+        Note: start_watch is NOT called during OAuth — the Gmail watch is started
+        explicitly by the user via POST /api/connect (deferred connect).
+        scan_state is populated only after /api/connect, not here.
         """
         real_creds = _build_real_creds()
 
@@ -198,15 +201,6 @@ class TestSignupLive:
                 )
                 tokens = cur.fetchone()
             assert tokens is not None, "Tokens not stored in DB after signup"
-
-            # historyId must be a real value from Gmail (not the mocked 99999)
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(
-                    "SELECT history_id FROM scan_state WHERE user_id = %s",
-                    (user["id"],),
-                )
-                state_row = cur.fetchone()
-            assert state_row is not None, "scan_state row not found after signup"
-            assert state_row["history_id"] > 0, "historyId should be a real Gmail value"
+            # scan_state is not populated here — start_watch is deferred to /api/connect
         finally:
             conn.close()

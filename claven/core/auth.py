@@ -53,8 +53,10 @@ def load_credentials(conn, user_id: str, key_hex: str) -> Credentials | None:
         scopes=row.get("scopes") or [],
     )
     expiry = row.get("token_expiry")
-    if expiry is not None and expiry.tzinfo is None:
-        expiry = expiry.replace(tzinfo=timezone.utc)
+    if expiry is not None and expiry.tzinfo is not None:
+        # google-auth's expired property compares against datetime.utcnow() (naive);
+        # strip tzinfo so the comparison doesn't raise an offset-aware/naive error.
+        expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
     creds.expiry = expiry
     return creds
 

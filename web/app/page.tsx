@@ -20,6 +20,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 function HomeContent() {
   const params = useSearchParams();
   const error = params.get("error");
+  const errorDetail = params.get("error_detail");
   const errorMessage = error ? (ERROR_MESSAGES[error] ?? "Something went wrong. Please try again.") : null;
 
   return (
@@ -30,7 +31,16 @@ function HomeContent() {
         to every new email.
       </p>
       {errorMessage && (
-        <p className="text-sm text-destructive">{errorMessage}</p>
+        <div className="flex flex-col gap-1 text-sm text-destructive">
+          <p>
+            {errorMessage}
+            {" "}
+            <span className="font-mono opacity-60">[{error}]</span>
+          </p>
+          {errorDetail && (
+            <p className="font-mono text-xs opacity-70 break-all">{errorDetail}</p>
+          )}
+        </div>
       )}
       <a
         href={`${API_URL}/oauth/start`}

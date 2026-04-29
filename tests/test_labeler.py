@@ -19,7 +19,7 @@ def test_load_config_returns_labels_and_interval():
 def test_load_config_label_names():
     config = load_config(os.path.join(FIXTURES_DIR, "config.yaml"))
     names = [l["name"] for l in config["labels"]]
-    assert "Known" in names
+    assert "Known Sender" in names
     assert "Newsletter" in names
     assert "Finance" in names
 
@@ -149,41 +149,42 @@ def test_matches_rule_known_sender_display_name_format():
 
 def test_get_matching_labels_single_match():
     headers = {"from": "newsletter@company.com"}
-    label_configs = [{"name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]}]
-    assert get_matching_labels(headers, label_configs) == ["Newsletter"]
+    label_configs = [{"id": "newsletter", "name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]}]
+    assert get_matching_labels(headers, label_configs) == ["newsletter"]
 
 
 def test_get_matching_labels_no_match():
     headers = {"from": "friend@example.com"}
-    label_configs = [{"name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]}]
+    label_configs = [{"id": "newsletter", "name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]}]
     assert get_matching_labels(headers, label_configs) == []
 
 
 def test_get_matching_labels_multiple_labels_both_match():
     headers = {"from": "newsletter@company.com", "subject": "Invoice #123"}
     label_configs = [
-        {"name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]},
-        {"name": "Invoice", "rules": [{"field": "subject", "contains": ["invoice"]}]},
+        {"id": "newsletter", "name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]},
+        {"id": "invoice", "name": "Invoice", "rules": [{"field": "subject", "contains": ["invoice"]}]},
     ]
     result = get_matching_labels(headers, label_configs)
-    assert "Newsletter" in result
-    assert "Invoice" in result
+    assert "newsletter" in result
+    assert "invoice" in result
 
 
 def test_get_matching_labels_multiple_labels_one_match():
     headers = {"from": "newsletter@company.com", "subject": "Hello"}
     label_configs = [
-        {"name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]},
-        {"name": "Invoice", "rules": [{"field": "subject", "contains": ["invoice"]}]},
+        {"id": "newsletter", "name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]},
+        {"id": "invoice", "name": "Invoice", "rules": [{"field": "subject", "contains": ["invoice"]}]},
     ]
     result = get_matching_labels(headers, label_configs)
-    assert result == ["Newsletter"]
+    assert result == ["newsletter"]
 
 
 def test_get_matching_labels_not_applied_twice_if_multiple_rules_match():
     # If two rules for the same label both match, the label is only returned once
     headers = {"from": "newsletter@company.com", "subject": "Weekly newsletter"}
     label_configs = [{
+        "id": "newsletter",
         "name": "Newsletter",
         "rules": [
             {"field": "from", "contains": ["newsletter"]},
@@ -191,20 +192,21 @@ def test_get_matching_labels_not_applied_twice_if_multiple_rules_match():
         ]
     }]
     result = get_matching_labels(headers, label_configs)
-    assert result.count("Newsletter") == 1
+    assert result.count("newsletter") == 1
 
 
 def test_get_matching_labels_second_rule_matches():
     # First rule doesn't match, second does — label is still applied
     headers = {"from": "friend@example.com", "subject": "Weekly newsletter"}
     label_configs = [{
+        "id": "newsletter",
         "name": "Newsletter",
         "rules": [
             {"field": "from", "contains": ["newsletter"]},
             {"field": "subject", "contains": ["newsletter"]},
         ]
     }]
-    assert get_matching_labels(headers, label_configs) == ["Newsletter"]
+    assert get_matching_labels(headers, label_configs) == ["newsletter"]
 
 
 def test_get_matching_labels_empty_config():
@@ -214,13 +216,13 @@ def test_get_matching_labels_empty_config():
 
 def test_get_matching_labels_known_sender():
     headers = {"from": "alice@example.com"}
-    label_configs = [{"name": "Known", "rules": [{"field": "from", "known_sender": True}]}]
+    label_configs = [{"id": "known-sender", "name": "Known Sender", "rules": [{"field": "from", "known_sender": True}]}]
     result = get_matching_labels(headers, label_configs, known_senders={"alice@example.com"})
-    assert result == ["Known"]
+    assert result == ["known-sender"]
 
 
 def test_get_matching_labels_known_sender_no_match():
     headers = {"from": "stranger@example.com"}
-    label_configs = [{"name": "Known", "rules": [{"field": "from", "known_sender": True}]}]
+    label_configs = [{"id": "known-sender", "name": "Known Sender", "rules": [{"field": "from", "known_sender": True}]}]
     result = get_matching_labels(headers, label_configs, known_senders={"alice@example.com"})
     assert result == []
