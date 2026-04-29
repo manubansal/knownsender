@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 import jwt as pyjwt
 from fastapi import FastAPI, HTTPException, Request
@@ -185,8 +185,11 @@ def _redirect_base(request: Request) -> str:
     return frontend_url
 
 
-def _error_redirect(base: str, reason: str) -> RedirectResponse:
-    response = RedirectResponse(url=f"{base}/?error={reason}", status_code=302)
+def _error_redirect(base: str, reason: str, detail: str | None = None) -> RedirectResponse:
+    url = f"{base}/?error={reason}"
+    if detail:
+        url += f"&error_detail={quote(detail)}"
+    response = RedirectResponse(url=url, status_code=302)
     response.delete_cookie("oauth_state")
     response.delete_cookie("oauth_return_to")
     return response
@@ -219,7 +222,7 @@ def oauth_callback(
         flow.fetch_token(code=code)
     except Exception as exc:
         logger.warning("Token exchange failed: %s", exc)
-        return _error_redirect(base, "token_exchange_failed")
+        return _error_redirect(base, "token_exchange_failed", str(exc))
     creds = flow.credentials
 
     try:
@@ -230,7 +233,7 @@ def oauth_callback(
         )
     except Exception as exc:
         logger.warning("ID token verification failed: %s", exc)
-        return _error_redirect(base, "token_verification_failed")
+        return _error_redirect(base, "token_verification_failed", str(exc))
     email = id_info["email"]
 
     try:
@@ -258,7 +261,7 @@ def oauth_callback(
                 auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
     except Exception as exc:
         logger.exception("Signup failed for %s: %s", email, exc)
-        return _error_redirect(base, "signup_failed")
+        return _error_redirect(base, "signup_failed", str(exc))
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
     session_token = _issue_session(user_id, email)
