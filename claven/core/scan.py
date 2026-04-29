@@ -143,44 +143,52 @@ def build_known_senders(service, conn, user_id, should_continue=None):
     return {"known_senders": count, "messages_scanned": messages_scanned}
 
 
+def _unlabeled_query(label_configs):
+    """Build a Gmail query for inbox messages missing all filter labels."""
+    exclude = []
+    for lc in label_configs:
+        exclude.append(f"-label:{lc['id']}")
+        if unknown := lc.get("unknown_label"):
+            exclude.append(f"-label:{unknown}")
+    return "in:inbox " + " ".join(exclude)
+
+
 def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None):
-    """Scan all inbox messages and apply labels using batch API calls.
+    """Label unlabeled inbox messages using batch API calls.
 
-    Fetches message headers in batches, evaluates rules locally,
-    then batch-applies labels. ~100x faster than per-message API calls.
-    If should_continue is provided and returns False, the scan stops
-    and saves progress.
+    Queries Gmail for messages that don't have any filter label, processes
+    them in batches, and repeats until none remain. Progress is based
+    entirely on mailbox state — multiple workers naturally converge.
 
-    Returns the number of messages processed.
+    Returns the total number of messages labeled in this run.
     """
-    logger.info("Inbox scan starting (label_id_cache=%s, known_senders=%d)",
-                list(label_id_cache.keys()), len(known_senders or []))
-    messages = list_messages(service, query="in:inbox", max_results=None)
-    total = len(messages)
-    logger.info("Inbox scan: %d messages to process", total)
-    if total == 0:
-        return 0
+    query = _unlabeled_query(label_configs)
+    logger.info("Inbox scan starting (query=%s, known_senders=%d)",
+                query, len(known_senders or []))
 
-    errors = 0
-    for batch_start in range(0, total, _BATCH_SIZE):
-        if batch_start > 0:
-            time.sleep(1)
+    total_labeled = 0
+    batch_num = 0
+    while True:
         if should_continue is not None and not should_continue():
-            logger.info("Inbox scan stopped by caller at %d/%d", batch_start, total)
-            db.set_processed_count(conn, user_id, batch_start)
-            conn.commit()
-            return batch_start
-        batch_ids = [m["id"] for m in messages[batch_start:batch_start + _BATCH_SIZE]]
-        batch_end = batch_start + len(batch_ids)
+            logger.info("Inbox scan stopped by caller after %d labeled", total_labeled)
+            return total_labeled
+
+        # Fetch next batch of unlabeled messages
+        unlabeled = list_messages(service, query=query, max_results=_BATCH_SIZE)
+        if not unlabeled:
+            logger.info("Inbox scan complete: %d messages labeled, 0 remaining", total_labeled)
+            break
+
+        batch_num += 1
+        batch_ids = [m["id"] for m in unlabeled]
+        logger.info("Inbox scan batch %d: %d unlabeled messages to process", batch_num, len(batch_ids))
 
         # Batch fetch headers
         try:
             headers_map = batch_get_message_headers(service, batch_ids)
         except Exception as exc:
-            errors += len(batch_ids)
-            logger.warning("Batch header fetch failed at %d-%d: %s", batch_start + 1, batch_end, exc)
-            db.set_processed_count(conn, user_id, batch_end)
-            conn.commit()
+            logger.warning("Batch header fetch failed: %s", exc)
+            time.sleep(5)
             continue
 
         # Evaluate rules and collect label applications
@@ -189,7 +197,6 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
         for msg_id in batch_ids:
             result = headers_map.get(msg_id)
             if not result:
-                errors += 1
                 continue
             headers, existing_labels, internal_date_ms = result
             if not headers:
@@ -208,28 +215,27 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
         if to_label:
             try:
                 applied = batch_apply_labels(service, to_label)
+                total_labeled += applied
                 if applied > 0:
                     db.touch_last_processed(conn, user_id)
                     if newest_date_ms:
                         db.update_newest_labeled(conn, user_id, newest_date_ms)
-                logger.info("Batch labeled %d message(s) at %d-%d", applied, batch_start + 1, batch_end)
+                    conn.commit()
+                logger.info("Inbox scan batch %d: labeled %d messages (%d total)", batch_num, applied, total_labeled)
             except Exception as exc:
-                logger.warning("Batch label apply failed at %d-%d: %s", batch_start + 1, batch_end, exc)
+                logger.warning("Batch label apply failed: %s", exc)
+                time.sleep(5)
+        else:
+            # All messages in this batch were already labeled (race with another worker)
+            logger.info("Inbox scan batch %d: all %d already labeled by another worker", batch_num, len(batch_ids))
 
-        db.set_processed_count(conn, user_id, batch_end)
-        conn.commit()
-        if batch_end % 500 == 0 or batch_end == total:
-            logger.info("Inbox scan progress: %d/%d (%.0f%%), %d errors", batch_end, total, 100 * batch_end / total, errors)
+        time.sleep(1)
 
+    # Update history_id to current point
     profile = get_profile(service)
     db.set_history_id(conn, user_id, int(profile["historyId"]))
-    if errors == 0:
-        db.set_inbox_scan_completed(conn, user_id)
-        logger.info("Inbox scan complete: %d messages processed, 0 errors", total)
-    else:
-        logger.warning("Inbox scan finished with %d errors out of %d — will retry on next load", errors, total)
     conn.commit()
-    return total
+    return total_labeled
 
 
 def _recipients_from_messages(service, messages):

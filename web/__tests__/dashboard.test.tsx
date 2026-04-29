@@ -25,8 +25,6 @@ const DEFAULT_ME: object = {
   sent_messages_total: null,
   sent_scan_status: null,
   inbox_scan_in_progress: false,
-  processed_count: 0,
-  pending_count: null,
   unread_count: null,
   read_count: null,
   inbox_count: null,
@@ -392,27 +390,6 @@ describe("Dashboard page", () => {
       await screen.findByText("250");
     });
 
-    it("shows processed count", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, processed_count: 123 } });
-      render(<DashboardPage />);
-      await screen.findByText(/processed/i);
-      await screen.findByText("123");
-    });
-
-    it("shows pending count when available", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, pending_count: 47 } });
-      render(<DashboardPage />);
-      await screen.findByText(/pending/i);
-      await screen.findByText("47");
-    });
-
-    it("shows em dash for pending when pending_count is null", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, pending_count: null } });
-      render(<DashboardPage />);
-      await screen.findByText(/pending/i);
-      await screen.findByText("—");
-    });
-
     const FILTER_CONFIG = {
       labels: [{
         id: "known-sender",
@@ -432,7 +409,7 @@ describe("Dashboard page", () => {
     it("does not show labeled as known-sender row when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/processed/i);
+      await screen.findByText(/dashboard/i);
       expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
     });
 
@@ -442,7 +419,7 @@ describe("Dashboard page", () => {
         { labels: [{ id: "newsletter", name: "Newsletter", rules: [{ field: "from", contains: ["newsletter"] }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByText(/processed/i);
+      await screen.findByText(/dashboard/i);
       expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
     });
 
@@ -456,7 +433,7 @@ describe("Dashboard page", () => {
     it("does not show labeled as unknown-sender row when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/processed/i);
+      await screen.findByText(/dashboard/i);
       expect(screen.queryByText(/labeled as unknown-sender/i)).not.toBeInTheDocument();
     });
 
@@ -470,7 +447,7 @@ describe("Dashboard page", () => {
     it("does not show unlabeled row when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, unlabeled_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/processed/i);
+      await screen.findByText(/dashboard/i);
       expect(screen.queryByText(/unlabeled/i)).not.toBeInTheDocument();
     });
 
@@ -606,7 +583,7 @@ describe("Dashboard page", () => {
       render(<DashboardPage />);
       const button = await screen.findByRole("button", { name: /refresh stats/i });
 
-      const refreshedMe = { ...DEFAULT_ME, processed_count: 5, unread_count: 10 };
+      const refreshedMe = { ...DEFAULT_ME, unread_count: 10 };
       vi.stubGlobal(
         "fetch",
         vi.fn().mockImplementation((url: string) => {
@@ -627,10 +604,11 @@ describe("Dashboard page", () => {
     });
 
     it("updates counts after refresh", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, processed_count: 0 } });
+      mockFetch({ ok: true, body: DEFAULT_ME });
       render(<DashboardPage />);
       const button = await screen.findByRole("button", { name: /refresh stats/i });
 
+      const refreshedMe = { ...DEFAULT_ME, unread_count: 77 };
       vi.stubGlobal(
         "fetch",
         vi.fn().mockImplementation((url: string) => {
@@ -640,12 +618,12 @@ describe("Dashboard page", () => {
           return Promise.resolve({
             ok: true,
             status: 200,
-            json: async () => ({ ...DEFAULT_ME, processed_count: 99 }),
+            json: async () => refreshedMe,
           });
         }),
       );
       await userEvent.click(button);
-      await screen.findByText("99");
+      await screen.findByText("77");
     });
   });
 
