@@ -336,6 +336,67 @@ describe("Dashboard page", () => {
       await screen.findByText("—");
     });
 
+    const FILTER_CONFIG = {
+      labels: [{
+        id: "known-sender",
+        name: "Known Sender",
+        unknown_label: "unknown-sender",
+        rules: [{ field: "from", known_sender: true }],
+      }],
+    };
+
+    it("shows filtered in count under the label that has unknown_label", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: 15 } }, FILTER_CONFIG);
+      render(<DashboardPage />);
+      await screen.findByText(/filtered in/i);
+      await screen.findByText("15");
+    });
+
+    it("does not show filtered in row when null", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: null } }, FILTER_CONFIG);
+      render(<DashboardPage />);
+      await screen.findByText(/processed/i);
+      expect(screen.queryByText(/filtered in/i)).not.toBeInTheDocument();
+    });
+
+    it("does not show filtered in row when label has no unknown_label", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, filtered_in_count: 15 } },
+        { labels: [{ id: "newsletter", name: "Newsletter", rules: [{ field: "from", contains: ["newsletter"] }] }] },
+      );
+      render(<DashboardPage />);
+      await screen.findByText(/processed/i);
+      expect(screen.queryByText(/filtered in/i)).not.toBeInTheDocument();
+    });
+
+    it("shows filtered out count under the label that has unknown_label", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: 8 } }, FILTER_CONFIG);
+      render(<DashboardPage />);
+      await screen.findByText(/filtered out/i);
+      await screen.findByText("8");
+    });
+
+    it("does not show filtered out row when null", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: null } }, FILTER_CONFIG);
+      render(<DashboardPage />);
+      await screen.findByText(/processed/i);
+      expect(screen.queryByText(/filtered out/i)).not.toBeInTheDocument();
+    });
+
+    it("shows unlabeled count under the label that has unknown_label", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, unlabeled_count: 3 } }, FILTER_CONFIG);
+      render(<DashboardPage />);
+      await screen.findByText(/unlabeled/i);
+      await screen.findByText("3");
+    });
+
+    it("does not show unlabeled row when null", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, unlabeled_count: null } }, FILTER_CONFIG);
+      render(<DashboardPage />);
+      await screen.findByText(/processed/i);
+      expect(screen.queryByText(/unlabeled/i)).not.toBeInTheDocument();
+    });
+
     it("shows read count from api", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, read_count: 70 } });
       render(<DashboardPage />);

@@ -110,6 +110,24 @@ def get_message_headers(service, message_id):
     return headers, msg.get("labelIds", [])
 
 
+def build_label_id_cache(service, label_names: list[str]) -> dict[str, str]:
+    """Return a {label_name: gmail_label_id} map, creating any labels that don't exist."""
+    all_labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    existing = {l["name"]: l["id"] for l in all_labels}
+    cache = {}
+    for name in label_names:
+        if name in existing:
+            cache[name] = existing[name]
+        else:
+            created = service.users().labels().create(
+                userId="me",
+                body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+            ).execute()
+            logger.info("Created Gmail label: %s (id: %s)", name, created["id"])
+            cache[name] = created["id"]
+    return cache
+
+
 def ensure_label_exists(service, label_name):
     """Create a label if it doesn't exist. Returns the label ID."""
     results = service.users().labels().list(userId="me").execute()

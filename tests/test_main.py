@@ -7,39 +7,52 @@ from unittest.mock import MagicMock, patch, call
 # process_message
 # ---------------------------------------------------------------------------
 
+_NEWSLETTER_CONFIG = {
+    "id": "newsletter",
+    "name": "Newsletter",
+    "rules": [{"field": "from", "contains": ["newsletter"]}],
+}
+_KNOWN_SENDER_CONFIG = {
+    "id": "known-sender",
+    "name": "Known Sender",
+    "unknown_label": "unknown-sender",
+    "rules": [{"field": "from", "known_sender": True}],
+}
+
+
 class TestProcessMessage:
     def test_applies_matching_label(self):
         from claven.core.process import process_message
         service = MagicMock()
         with patch("claven.core.process.get_message_headers") as mock_headers, \
-             patch("claven.core.process.get_matching_labels") as mock_labels, \
              patch("claven.core.process.apply_label") as mock_apply:
-            mock_headers.return_value = ({"from": "news@example.com"}, ["INBOX"])
-            mock_labels.return_value = ["Newsletter"]
-            process_message(service, "msg1", [], {"Newsletter": "Label_123"})
+            mock_headers.return_value = ({"from": "newsletter@example.com"}, ["INBOX"])
+            label_configs = [_NEWSLETTER_CONFIG]
+            label_id_cache = {"newsletter": "Label_123"}
+            process_message(service, "msg1", label_configs, label_id_cache)
             mock_apply.assert_called_once_with(service, "msg1", "Label_123")
 
     def test_does_not_apply_label_already_present(self):
         from claven.core.process import process_message
         service = MagicMock()
         with patch("claven.core.process.get_message_headers") as mock_headers, \
-             patch("claven.core.process.get_matching_labels") as mock_labels, \
              patch("claven.core.process.apply_label") as mock_apply:
-            # Label_123 is already on the message
-            mock_headers.return_value = ({"from": "news@example.com"}, ["INBOX", "Label_123"])
-            mock_labels.return_value = ["Newsletter"]
-            process_message(service, "msg1", [], {"Newsletter": "Label_123"})
+            # Label already on the message
+            mock_headers.return_value = ({"from": "newsletter@example.com"}, ["INBOX", "Label_123"])
+            label_configs = [_NEWSLETTER_CONFIG]
+            label_id_cache = {"newsletter": "Label_123"}
+            process_message(service, "msg1", label_configs, label_id_cache)
             mock_apply.assert_not_called()
 
     def test_no_matching_labels(self):
         from claven.core.process import process_message
         service = MagicMock()
         with patch("claven.core.process.get_message_headers") as mock_headers, \
-             patch("claven.core.process.get_matching_labels") as mock_labels, \
              patch("claven.core.process.apply_label") as mock_apply:
             mock_headers.return_value = ({"from": "friend@example.com"}, ["INBOX"])
-            mock_labels.return_value = []
-            process_message(service, "msg1", [], {})
+            # Config with no unknown_label and no match → nothing applied
+            label_configs = [{"id": "newsletter", "name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]}]
+            process_message(service, "msg1", label_configs, {})
             mock_apply.assert_not_called()
 
     def test_returns_early_if_no_headers(self):
@@ -48,18 +61,19 @@ class TestProcessMessage:
         with patch("claven.core.process.get_message_headers") as mock_headers, \
              patch("claven.core.process.apply_label") as mock_apply:
             mock_headers.return_value = (None, [])
-            process_message(service, "msg1", [], {"Newsletter": "Label_123"})
+            process_message(service, "msg1", [_NEWSLETTER_CONFIG], {"newsletter": "Label_123"})
             mock_apply.assert_not_called()
 
-    def test_applies_multiple_matching_labels(self):
+    def test_applies_multiple_matching_label_configs(self):
         from claven.core.process import process_message
         service = MagicMock()
+        finance_config = {"id": "finance", "name": "Finance", "rules": [{"field": "subject", "contains": ["invoice"]}]}
         with patch("claven.core.process.get_message_headers") as mock_headers, \
-             patch("claven.core.process.get_matching_labels") as mock_labels, \
              patch("claven.core.process.apply_label") as mock_apply:
-            mock_headers.return_value = ({"from": "billing@example.com"}, ["INBOX"])
-            mock_labels.return_value = ["Finance", "Invoice"]
-            process_message(service, "msg1", [], {"Finance": "Label_1", "Invoice": "Label_2"})
+            mock_headers.return_value = ({"from": "newsletter@example.com", "subject": "Invoice #1"}, ["INBOX"])
+            label_configs = [_NEWSLETTER_CONFIG, finance_config]
+            label_id_cache = {"newsletter": "Label_1", "finance": "Label_2"}
+            process_message(service, "msg1", label_configs, label_id_cache)
             assert mock_apply.call_count == 2
             mock_apply.assert_any_call(service, "msg1", "Label_1")
             mock_apply.assert_any_call(service, "msg1", "Label_2")
@@ -69,25 +83,44 @@ class TestProcessMessage:
         from claven.core.process import process_message
         service = MagicMock()
         with patch("claven.core.process.get_message_headers") as mock_headers, \
-             patch("claven.core.process.get_matching_labels") as mock_labels, \
              patch("claven.core.process.apply_label") as mock_apply:
-            mock_headers.return_value = ({"from": "news@example.com"}, ["INBOX"])
-            mock_labels.return_value = ["Newsletter"]
-            process_message(service, "msg1", [], {})  # empty cache
+            mock_headers.return_value = ({"from": "newsletter@example.com"}, ["INBOX"])
+            process_message(service, "msg1", [_NEWSLETTER_CONFIG], {})  # empty cache
             mock_apply.assert_not_called()
 
-    def test_passes_known_senders_to_get_matching_labels(self):
+    def test_applies_unknown_label_when_no_rule_matches(self):
+        # When no rule matches and unknown_label is set, apply the unknown label
+        from claven.core.process import process_message
+        service = MagicMock()
+        with patch("claven.core.process.get_message_headers") as mock_headers, \
+             patch("claven.core.process.apply_label") as mock_apply:
+            mock_headers.return_value = ({"from": "stranger@example.com"}, ["INBOX"])
+            label_id_cache = {"known-sender": "Label_known", "unknown-sender": "Label_unknown"}
+            process_message(service, "msg1", [_KNOWN_SENDER_CONFIG], label_id_cache, known_senders=set())
+            mock_apply.assert_called_once_with(service, "msg1", "Label_unknown")
+
+    def test_does_not_apply_unknown_label_when_not_configured(self):
+        # No unknown_label in config → nothing applied on no-match
+        from claven.core.process import process_message
+        service = MagicMock()
+        with patch("claven.core.process.get_message_headers") as mock_headers, \
+             patch("claven.core.process.apply_label") as mock_apply:
+            mock_headers.return_value = ({"from": "stranger@example.com"}, ["INBOX"])
+            label_configs = [{"id": "newsletter", "name": "Newsletter", "rules": [{"field": "from", "contains": ["newsletter"]}]}]
+            process_message(service, "msg1", label_configs, {"newsletter": "Label_123"})
+            mock_apply.assert_not_called()
+
+    def test_passes_known_senders_to_rule_matching(self):
         from claven.core.process import process_message
         service = MagicMock()
         known_senders = {"alice@example.com"}
         with patch("claven.core.process.get_message_headers") as mock_headers, \
-             patch("claven.core.process.get_matching_labels") as mock_labels, \
-             patch("claven.core.process.apply_label"):
+             patch("claven.core.process.apply_label") as mock_apply:
             mock_headers.return_value = ({"from": "alice@example.com"}, ["INBOX"])
-            mock_labels.return_value = []
-            process_message(service, "msg1", [], {}, known_senders=known_senders)
-            _, kwargs = mock_labels.call_args
-            assert kwargs.get("known_senders") == known_senders or mock_labels.call_args[0][2] == known_senders
+            label_id_cache = {"known-sender": "Label_known", "unknown-sender": "Label_unknown"}
+            process_message(service, "msg1", [_KNOWN_SENDER_CONFIG], label_id_cache, known_senders=known_senders)
+            # alice is a known sender → should get known-sender label, not unknown-sender
+            mock_apply.assert_called_once_with(service, "msg1", "Label_known")
 
 
 # ---------------------------------------------------------------------------

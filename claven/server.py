@@ -25,7 +25,7 @@ from google.oauth2 import id_token as google_id_token
 from google_auth_oauthlib.flow import Flow
 import claven.core.auth as auth
 import claven.core.db as db
-from claven.core.gmail import get_profile
+from claven.core.gmail import build_label_id_cache, get_profile
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
 from claven.core.watch import start_watch, stop_watch
@@ -269,6 +269,16 @@ def oauth_callback(
     return response
 
 
+def _label_id_cache_for_config(service, label_configs: list[dict]) -> dict[str, str]:
+    """Build a Gmail label ID cache for all labels referenced in the config."""
+    names = []
+    for lc in label_configs:
+        names.append(lc["id"])
+        if unknown := lc.get("unknown_label"):
+            names.append(unknown)
+    return build_label_id_cache(service, names)
+
+
 @app.post("/internal/poll")
 def internal_poll(request: Request):
     _require_internal_auth(request)
@@ -293,7 +303,8 @@ def internal_poll(request: Request):
                 profile = get_profile(service)
                 latest_history_id = int(profile["historyId"])
 
-                count = poll_new_messages(service, history_id, label_configs, {}, known_senders)
+                label_id_cache = _label_id_cache_for_config(service, label_configs)
+                count = poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders)
                 db.set_history_id(conn, user_id, latest_history_id)
                 if count is not None:
                     db.increment_processed_count(conn, user_id, count)
@@ -319,6 +330,9 @@ def api_me(request: Request):
         unread_count = None
         read_count = None
         inbox_count = None
+        filtered_in_count = None
+        filtered_out_count = None
+        unlabeled_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
             inbox = service.users().labels().get(userId="me", id="INBOX").execute()
@@ -328,6 +342,27 @@ def api_me(request: Request):
                 userId="me", labelIds=["INBOX"], q="is:read", maxResults=1
             ).execute()
             read_count = read_result.get("resultSizeEstimate")
+
+            label_configs = load_config().get("labels", [])
+            all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
+            label_id_by_name = {l["name"]: l["id"] for l in all_gmail_labels}
+
+            filtered_in_count = 0
+            filtered_out_count = 0
+            for lc in label_configs:
+                if lid := label_id_by_name.get(lc["id"]):
+                    r = service.users().messages().list(
+                        userId="me", labelIds=["INBOX", lid], maxResults=1
+                    ).execute()
+                    filtered_in_count += r.get("resultSizeEstimate", 0)
+                if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
+                    r = service.users().messages().list(
+                        userId="me", labelIds=["INBOX", uid], maxResults=1
+                    ).execute()
+                    filtered_out_count += r.get("resultSizeEstimate", 0)
+
+            if inbox_count is not None:
+                unlabeled_count = max(0, inbox_count - filtered_in_count - filtered_out_count)
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
@@ -342,6 +377,9 @@ def api_me(request: Request):
         "known_senders": known_senders,
         "processed_count": processed_count,
         "pending_count": pending_count,
+        "filtered_in_count": filtered_in_count,
+        "filtered_out_count": filtered_out_count,
+        "unlabeled_count": unlabeled_count,
         "unread_count": unread_count,
         "read_count": read_count,
         "inbox_count": inbox_count,
@@ -440,7 +478,8 @@ async def webhook_gmail(request: Request):
 
         service = auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
         known_senders = db.get_known_senders(conn, user["id"])
-        count = poll_new_messages(service, stored_history_id, label_configs, {}, known_senders)
+        label_id_cache = _label_id_cache_for_config(service, label_configs)
+        count = poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)
         db.set_history_id(conn, user["id"], notification_history_id)
         if count is not None:
             db.increment_processed_count(conn, user["id"], count)

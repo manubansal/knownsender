@@ -4,6 +4,7 @@ labels:
   - id: known-sender
     name: "Known Sender"
     description: "Someone you've emailed before"
+    unknown_label: "unknown-sender"
     rules:
       - field: "from"
         known_sender: true

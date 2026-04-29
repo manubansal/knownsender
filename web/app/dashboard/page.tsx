@@ -19,6 +19,9 @@ type MeResponse = {
   unread_count: number | null;
   read_count: number | null;
   inbox_count: number | null;
+  filtered_in_count: number | null;
+  filtered_out_count: number | null;
+  unlabeled_count: number | null;
 };
 
 type LabelRule = {
@@ -31,6 +34,7 @@ type LabelConfig = {
   id: string;
   name: string;
   description?: string;
+  unknown_label?: string;
   rules: LabelRule[];
 };
 
@@ -153,7 +157,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, processed_count, pending_count, unread_count, read_count, inbox_count } = state.data;
+  const { email, connected, known_senders, processed_count, pending_count, unread_count, read_count, inbox_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
   const { labels } = state;
 
   return (
@@ -198,6 +202,24 @@ export default function DashboardPage() {
                       <div className="flex justify-between mt-1.5">
                         <span className="text-xs text-muted-foreground">Known senders</span>
                         <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
+                      </div>
+                    )}
+                    {label.unknown_label !== undefined && filtered_in_count !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">Filtered in</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count}</span>
+                      </div>
+                    )}
+                    {label.unknown_label !== undefined && filtered_out_count !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">Filtered out</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
+                      </div>
+                    )}
+                    {label.unknown_label !== undefined && unlabeled_count !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">Unlabeled</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count}</span>
                       </div>
                     )}
                   </div>

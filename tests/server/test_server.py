@@ -513,16 +513,53 @@ class TestApiMe:
                     response = client.get("/api/me")
         assert response.json()["connected"] is False
 
-    def _make_gmail_service(self, messages_unread=0, messages_total=0, read_estimate=0):
-        """Return a mock Gmail service with inbox label counts and read message estimate."""
+    _KNOWN_LABEL_ID = "Label_known_sender"
+    _UNKNOWN_LABEL_ID = "Label_unknown_sender"
+
+    def _make_gmail_service(
+        self,
+        messages_unread=0,
+        messages_total=0,
+        read_estimate=0,
+        filtered_in_estimate=0,
+        filtered_out_estimate=0,
+    ):
+        """Return a mock Gmail service with inbox label counts and per-label estimates."""
         svc = MagicMock()
+
+        # labels.get → INBOX totals
         svc.users.return_value.labels.return_value.get.return_value.execute.return_value = {
             "messagesUnread": messages_unread,
             "messagesTotal": messages_total,
         }
-        svc.users.return_value.messages.return_value.list.return_value.execute.return_value = {
-            "resultSizeEstimate": read_estimate,
+
+        # labels.list → label ID map (known-sender and unknown-sender)
+        svc.users.return_value.labels.return_value.list.return_value.execute.return_value = {
+            "labels": [
+                {"name": "known-sender", "id": self._KNOWN_LABEL_ID},
+                {"name": "unknown-sender", "id": self._UNKNOWN_LABEL_ID},
+            ]
         }
+
+        # messages.list → route by labelIds / q
+        known_id = self._KNOWN_LABEL_ID
+        unknown_id = self._UNKNOWN_LABEL_ID
+
+        def _messages_list(**kwargs):
+            label_ids = kwargs.get("labelIds", [])
+            q = kwargs.get("q", "")
+            result = MagicMock()
+            if "is:read" in q:
+                result.execute.return_value = {"resultSizeEstimate": read_estimate}
+            elif known_id in label_ids:
+                result.execute.return_value = {"resultSizeEstimate": filtered_in_estimate}
+            elif unknown_id in label_ids:
+                result.execute.return_value = {"resultSizeEstimate": filtered_out_estimate}
+            else:
+                result.execute.return_value = {"resultSizeEstimate": 0}
+            return result
+
+        svc.users.return_value.messages.return_value.list.side_effect = _messages_list
         return svc
 
     def test_returns_known_senders_count(self):
@@ -676,6 +713,74 @@ class TestApiMe:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["pending_count"] == 250
+
+    def test_returns_filtered_in_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, filtered_in_estimate=30
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["filtered_in_count"] == 30
+
+    def test_returns_filtered_out_count(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, filtered_out_estimate=50
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["filtered_out_count"] == 50
+
+    def test_returns_unlabeled_count_as_inbox_minus_filtered(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, filtered_in_estimate=30, filtered_out_estimate=50
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["unlabeled_count"] == 20
+
+    def test_filtered_counts_are_null_when_gmail_api_unavailable(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.side_effect = Exception("token expired")
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["filtered_in_count"] is None
+        assert response.json()["filtered_out_count"] is None
+        assert response.json()["unlabeled_count"] is None
 
 
 class TestApiConfig:

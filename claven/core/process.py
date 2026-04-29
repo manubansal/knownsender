@@ -1,28 +1,41 @@
 import logging
 
 from claven.core.gmail import get_message_headers, apply_label, list_history
-from claven.core.rules import get_matching_labels
+from claven.core.rules import matches_rule
 
 logger = logging.getLogger(__name__)
 
 
 def process_message(service, message_id, label_configs, label_id_cache, known_senders=None):
-    """Evaluate rules against a message and apply matching labels."""
+    """Evaluate each label config against a message.
+
+    For each label config:
+    - If any rule matches, apply that label's Gmail label (keyed by id).
+    - If no rule matches and the config has an unknown_label, apply that instead.
+
+    This ensures every processed message lands in exactly one state per label
+    config: matched, unmatched, or (if no unknown_label configured) unchanged.
+    """
     headers, existing_labels = get_message_headers(service, message_id)
     if not headers:
         return
 
-    matching_labels = get_matching_labels(headers, label_configs, known_senders)
-    for label_name in matching_labels:
-        label_id = label_id_cache.get(label_name)
-        if label_id and label_id not in existing_labels:
-            apply_label(service, message_id, label_id)
-            logger.info(
-                "Labeled message %s (%s) as '%s'",
-                message_id,
-                headers.get("subject", ""),
-                label_name,
-            )
+    for label_config in label_configs:
+        matched = any(
+            matches_rule(headers, rule, known_senders)
+            for rule in label_config["rules"]
+        )
+        apply_id = label_config["id"] if matched else label_config.get("unknown_label")
+        if apply_id:
+            gmail_label_id = label_id_cache.get(apply_id)
+            if gmail_label_id and gmail_label_id not in existing_labels:
+                apply_label(service, message_id, gmail_label_id)
+                logger.info(
+                    "Labeled message %s (%s) as '%s'",
+                    message_id,
+                    headers.get("subject", ""),
+                    apply_id,
+                )
 
 
 def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):
