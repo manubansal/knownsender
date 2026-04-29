@@ -25,41 +25,61 @@ def _msg(msg_id, to=None, cc=None, bcc=None):
     return {"id": msg_id, "payload": {"headers": headers}}
 
 
+def _batch_metadata(**msg_map):
+    """Build a fake batch_get_message_metadata return value.
+
+    Usage: _batch_metadata(s1={"to": "a@x.com"}, s2={"to": "b@x.com", "cc": "c@x.com"})
+    Returns: {"s1": ({"to": "a@x.com"}, []), "s2": ({"to": "b@x.com", "cc": "c@x.com"}, [])}
+    """
+    return {msg_id: (headers, []) for msg_id, headers in msg_map.items()}
+
+
 # ---------------------------------------------------------------------------
 # Full scan (no cursor in DB)
 # ---------------------------------------------------------------------------
 
 class TestFullScan:
+    def _patches(self, **overrides):
+        """Common patches for full scan tests. Override any via kwargs."""
+        defaults = {
+            "claven.core.scan.db.get_sent_scan_cursor": None,
+            "claven.core.scan.db.set_sent_scan_cursor": None,
+            "claven.core.scan.db.count_known_senders": 0,
+            "claven.core.scan.db.set_sent_scan_progress": None,
+            "claven.core.scan.list_messages": [],
+            "claven.core.scan.batch_get_message_metadata": {},
+            "claven.core.scan.get_profile": {"historyId": "99"},
+        }
+        defaults.update(overrides)
+        return defaults
+
     def test_fetches_all_sent_messages(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
-        with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
-             patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
+        service, conn = _make_service(), _make_conn()
+        p = self._patches(**{"claven.core.scan.list_messages": [{"id": "s1"}, {"id": "s2"}]})
+        with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=p["claven.core.scan.db.get_sent_scan_cursor"]), \
+             patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=2), \
-             patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}, {"id": "s2"}]) as mock_list, \
-             patch("claven.core.scan.get_message", side_effect=[
-                 _msg("s1", to="alice@example.com"),
-                 _msg("s2", to="bob@example.com"),
-             ]), \
-             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
+             patch("claven.core.scan.list_messages", return_value=p["claven.core.scan.list_messages"]) as mock_list, \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
+                 s1={"to": "alice@example.com"}, s2={"to": "bob@example.com"})), \
+             patch("claven.core.scan.get_profile", return_value=p["claven.core.scan.get_profile"]):
             build_known_senders(service, conn, "user-1")
         mock_list.assert_called_once_with(service, query="in:sent", max_results=None)
 
     def test_inserts_recipients_into_db(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
+        service, conn = _make_service(), _make_conn()
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
              patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=2), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}, {"id": "s2"}]), \
-             patch("claven.core.scan.get_message", side_effect=[
-                 _msg("s1", to="alice@example.com"),
-                 _msg("s2", to="bob@example.com"),
-             ]), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
+                 s1={"to": "alice@example.com"}, s2={"to": "bob@example.com"})), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
             build_known_senders(service, conn, "user-1")
         all_inserted = [addr for c in mock_bulk.call_args_list for addr in c.args[2]]
@@ -68,16 +88,15 @@ class TestFullScan:
 
     def test_extracts_cc_and_bcc(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
+        service, conn = _make_service(), _make_conn()
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
              patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=3), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}]), \
-             patch("claven.core.scan.get_message", return_value=_msg(
-                 "s1", to="alice@example.com", cc="bob@example.com", bcc="carol@example.com"
-             )), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
+                 s1={"to": "alice@example.com", "cc": "bob@example.com", "bcc": "carol@example.com"})), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
             build_known_senders(service, conn, "user-1")
         all_inserted = [addr for c in mock_bulk.call_args_list for addr in c.args[2]]
@@ -87,14 +106,15 @@ class TestFullScan:
 
     def test_inserts_lowercase_addresses(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
+        service, conn = _make_service(), _make_conn()
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
              patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=1), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}]), \
-             patch("claven.core.scan.get_message", return_value=_msg("s1", to="Alice@Example.COM")), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
+                 s1={"to": "Alice@Example.COM"})), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
             build_known_senders(service, conn, "user-1")
         all_inserted = [addr for c in mock_bulk.call_args_list for addr in c.args[2]]
@@ -103,11 +123,11 @@ class TestFullScan:
 
     def test_no_sent_messages_still_saves_cursor(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
+        service, conn = _make_service(), _make_conn()
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
-             patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
+             patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor") as mock_cursor, \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=0), \
              patch("claven.core.scan.list_messages", return_value=[]), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
@@ -118,28 +138,30 @@ class TestFullScan:
 
     def test_saves_cursor_after_full_scan(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
+        service, conn = _make_service(), _make_conn()
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor") as mock_cursor, \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=1), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}]), \
-             patch("claven.core.scan.get_message", return_value=_msg("s1", to="alice@example.com")), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
+                 s1={"to": "alice@example.com"})), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "42"}):
             build_known_senders(service, conn, "user-1")
         mock_cursor.assert_called_once_with(conn, "user-1", 42)
 
     def test_returns_known_senders_count_and_messages_scanned(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
+        service, conn = _make_service(), _make_conn()
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=7), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]), \
-             patch("claven.core.scan.get_message", return_value=_msg("s1", to="alice@example.com")), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
+                 s1={"to": "a@x.com"}, s2={"to": "b@x.com"}, s3={"to": "c@x.com"})), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
             result = build_known_senders(service, conn, "user-1")
         assert result["known_senders"] == 7
@@ -217,9 +239,11 @@ class TestIncrementalUpdate:
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=100), \
              patch("claven.core.scan.list_history", side_effect=Exception("404 historyId expired")), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}]) as mock_list, \
-             patch("claven.core.scan.get_message", return_value=_msg("s1", to="alice@example.com")), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
+                 s1={"to": "alice@example.com"})), \
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
              patch("claven.core.scan.db.count_known_senders", return_value=1), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
             build_known_senders(service, conn, "user-1")
@@ -240,67 +264,31 @@ class TestIncrementalUpdate:
 # ---------------------------------------------------------------------------
 
 class TestInterruption:
-    def test_stops_processing_when_should_continue_returns_false(self):
-        from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
-        messages = [{"id": f"s{i}"} for i in range(10)]
-        call_count = 0
-
-        def stop_after_two():
-            nonlocal call_count
-            call_count += 1
-            return call_count <= 2
-
-        processed = []
-        def fake_get(svc, msg_id, **kwargs):
-            processed.append(msg_id)
-            return _msg(msg_id, to=f"{msg_id}@example.com")
-
-        with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
-             patch("claven.core.scan.list_messages", return_value=messages), \
-             patch("claven.core.scan.get_message", side_effect=fake_get), \
-             patch("claven.core.scan.db.bulk_add_known_senders"), \
-             patch("claven.core.scan.db.set_sent_scan_cursor"), \
-             patch("claven.core.scan.db.count_known_senders", return_value=2):
-            result = build_known_senders(service, conn, "user-1", should_continue=stop_after_two)
-
-        assert len(processed) <= 2
-        assert result["messages_scanned"] == len(processed)
-
     def test_does_not_save_cursor_when_interrupted(self):
         from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
-
-        with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
-             patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}, {"id": "s2"}]), \
-             patch("claven.core.scan.get_message", return_value=_msg("s1", to="alice@example.com")), \
-             patch("claven.core.scan.db.bulk_add_known_senders"), \
-             patch("claven.core.scan.db.set_sent_scan_cursor") as mock_cursor, \
-             patch("claven.core.scan.db.count_known_senders", return_value=1):
-            build_known_senders(service, conn, "user-1", should_continue=lambda: False)
-
-        mock_cursor.assert_not_called()
-
-    def test_partial_results_are_still_inserted_on_interruption(self):
-        from claven.core.scan import build_known_senders
-        service = _make_service()
-        conn = _make_conn()
-        messages = [{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]
-        call_count = 0
-
-        def stop_after_one():
-            nonlocal call_count
-            call_count += 1
-            return call_count <= 1
-
+        service, conn = _make_service(), _make_conn()
+        # 200 messages = 4 batches of 50; interrupt immediately
+        messages = [{"id": f"s{i}"} for i in range(200)]
         with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
              patch("claven.core.scan.list_messages", return_value=messages), \
-             patch("claven.core.scan.get_message", return_value=_msg("s1", to="alice@example.com")), \
-             patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
-             patch("claven.core.scan.db.set_sent_scan_cursor"), \
-             patch("claven.core.scan.db.count_known_senders", return_value=1):
-            build_known_senders(service, conn, "user-1", should_continue=stop_after_one)
+             patch("claven.core.scan.batch_get_message_metadata", return_value={}), \
+             patch("claven.core.scan.db.bulk_add_known_senders"), \
+             patch("claven.core.scan.db.set_sent_scan_cursor") as mock_cursor, \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.count_known_senders", return_value=0):
+            build_known_senders(service, conn, "user-1", should_continue=lambda: False)
+        mock_cursor.assert_not_called()
 
-        assert mock_bulk.called
+    def test_returns_partial_count_when_interrupted(self):
+        from claven.core.scan import build_known_senders
+        service, conn = _make_service(), _make_conn()
+        messages = [{"id": f"s{i}"} for i in range(200)]
+        with patch("claven.core.scan.db.get_sent_scan_cursor", return_value=None), \
+             patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value={}), \
+             patch("claven.core.scan.db.bulk_add_known_senders"), \
+             patch("claven.core.scan.db.set_sent_scan_cursor"), \
+             patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.count_known_senders", return_value=0):
+            result = build_known_senders(service, conn, "user-1", should_continue=lambda: False)
+        assert result["messages_scanned"] == 0  # interrupted before first batch

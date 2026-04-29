@@ -300,7 +300,7 @@ def apply_label(service, message_id, label_id):
     logger.debug("Applied label %s to message %s", label_id, message_id)
 
 
-_BATCH_LIMIT = 100
+_BATCH_LIMIT = 20
 
 
 def batch_get_message_metadata(service, message_ids, metadata_headers=None):
