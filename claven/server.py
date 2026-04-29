@@ -492,7 +492,7 @@ def api_me(request: Request):
         history_id = db.get_history_id(conn, session["user_id"])
         known_senders = db.count_known_senders(conn, session["user_id"])
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
-        processed_count = db.get_processed_count(conn, session["user_id"])
+        # processed_count no longer used — progress derived from live Gmail label counts
         last_processed_at = db.get_last_processed_at(conn, session["user_id"])
         newest_labeled_at = db.get_newest_labeled_at(conn, session["user_id"])
 
@@ -545,15 +545,13 @@ def api_me(request: Request):
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
-        # Auto-trigger inbox scan if sent scan is done and inbox needs scanning
+        # Auto-trigger inbox scan if sent scan is done and there are unlabeled messages
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
 
-        pending_count = (
-            max(0, inbox_count - processed_count) if inbox_count is not None else None
-        )
         if (sent_scan_progress["status"] == "complete"
                 and history_id is not None
-                and _needs_inbox_scan(conn, session["user_id"])):
+                and unlabeled_count is not None and unlabeled_count > 0
+                and inbox_scan_status != "in_progress"):
             threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
 
     return {
@@ -565,10 +563,8 @@ def api_me(request: Request):
         "sent_messages_total": sent_total_live if sent_total_live is not None else sent_scan_progress["messages_total"],
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_in_progress": inbox_scan_status == "in_progress",
-        "processed_count": processed_count,
         "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
         "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
-        "pending_count": pending_count,
         "filtered_in_count": filtered_in_count,
         "filtered_out_count": filtered_out_count,
         "unlabeled_count": unlabeled_count,
@@ -595,20 +591,6 @@ def _is_current_worker() -> bool:
     if _shutting_down:
         return False
     return os.getpid() == _worker_id
-
-
-def _needs_inbox_scan(conn, user_id: str) -> bool:
-    """Return True if the inbox scan should be (re-)triggered."""
-    status = db.get_inbox_scan_status(conn, user_id)
-    if status == "complete":
-        return not db.is_inbox_scan_completed(conn, user_id)
-    if status == "in_progress":
-        progress = db.get_sent_scan_progress(conn, user_id)
-        updated_at = progress.get("updated_at")
-        if updated_at and datetime.now(timezone.utc) - updated_at < _STALE_SCAN_THRESHOLD:
-            return False
-        return True
-    return True
 
 
 def _run_inbox_scan(user_id: str):
