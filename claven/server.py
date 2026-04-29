@@ -42,9 +42,8 @@ if _LOG_FILE:
         level=logging.DEBUG,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[logging.FileHandler(_LOG_FILE), logging.StreamHandler()],
+        force=True,
     )
-else:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 logging.getLogger("googleapiclient.discovery").setLevel(logging.WARNING)
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.WARNING)
@@ -298,7 +297,7 @@ def oauth_callback(
     return response
 
 
-_STALE_SCAN_THRESHOLD = timedelta(minutes=5)
+_STALE_SCAN_THRESHOLD = timedelta(minutes=1)
 
 
 def _needs_sent_scan(scan_progress: dict) -> bool:
