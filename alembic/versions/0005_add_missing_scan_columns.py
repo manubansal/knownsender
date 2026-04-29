@@ -18,17 +18,19 @@ def upgrade() -> None:
     # These columns were added to 0004 locally but 0004 was already applied
     # in prod with the original schema. Use IF NOT EXISTS for idempotency.
     conn = op.get_bind()
-    for col, typ, default in [
-        ("inbox_scan_completed", "BOOLEAN DEFAULT false NOT NULL", None),
-        ("last_processed_at", "TIMESTAMPTZ", None),
-        ("newest_labeled_at", "TIMESTAMPTZ", None),
+    for col_def in [
+        "inbox_scan_completed BOOLEAN DEFAULT false NOT NULL",
+        "last_processed_at TIMESTAMPTZ",
+        "newest_labeled_at TIMESTAMPTZ",
+        "inbox_scan_status TEXT",
     ]:
         conn.execute(sa.text(
-            f"ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS {col} {typ}"
+            f"ALTER TABLE scan_state ADD COLUMN IF NOT EXISTS {col_def}"
         ))
 
 
 def downgrade() -> None:
+    op.drop_column("scan_state", "inbox_scan_status")
     op.drop_column("scan_state", "newest_labeled_at")
     op.drop_column("scan_state", "last_processed_at")
     op.drop_column("scan_state", "inbox_scan_completed")
