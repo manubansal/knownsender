@@ -165,10 +165,10 @@ class TestTryLockUserScan:
         db.set_history_id(db_conn, user_id, 1)
         assert db.try_lock_user_scan(db_conn, user_id) is True
 
-    def test_lock_fails_when_no_row(self, db_conn):
+    def test_creates_row_and_locks_when_no_row(self, db_conn):
         user_id = db.upsert_user(db_conn, "norow@example.com")
-        # No scan_state row — lock should fail
-        assert db.try_lock_user_scan(db_conn, user_id) is False
+        # No scan_state row — ensure_scan_state creates it, then lock succeeds
+        assert db.try_lock_user_scan(db_conn, user_id) is True
 
     def test_second_connection_skips_locked_row(self, db_url):
         """Two connections: first acquires lock, second gets False."""

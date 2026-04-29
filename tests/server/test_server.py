@@ -45,6 +45,7 @@ def _fake_db_ctx(mock_db, conn=None):
     mock_db.get_processed_count.return_value = 0
     mock_db.get_sent_scan_progress.return_value = {"messages_scanned": 0, "messages_total": None, "status": "complete", "updated_at": None}
     mock_db.is_inbox_scan_completed.return_value = False
+    mock_db.get_inbox_scan_status.return_value = None
     return mock_conn
 
 
@@ -1027,6 +1028,7 @@ class TestApiMe:
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.is_inbox_scan_completed.return_value = True
+                mock_db.get_inbox_scan_status.return_value = "complete"
                 mock_auth.get_service.return_value = self._make_gmail_service()
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -1038,12 +1040,12 @@ class TestApiMe:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.threading") as mock_threading, \
-                 patch("claven.server._inbox_scan_running", set()):
+                 patch("claven.server.threading") as mock_threading:
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 999
                 mock_db.is_inbox_scan_completed.return_value = False
+                mock_db.get_inbox_scan_status.return_value = None
                 mock_auth.get_service.return_value = self._make_gmail_service(messages_total=50)
                 with TestClient(app) as client:
                     client.cookies.set("session", token)

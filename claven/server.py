@@ -527,16 +527,15 @@ def api_me(request: Request):
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
-        # Auto-trigger inbox scan if sent scan is done and initial inbox scan never completed
-        inbox_scan_done = db.is_inbox_scan_completed(conn, session["user_id"])
+        # Auto-trigger inbox scan if sent scan is done and inbox needs scanning
+        inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
 
         pending_count = (
             max(0, inbox_count - processed_count) if inbox_count is not None else None
         )
         if (sent_scan_progress["status"] == "complete"
                 and history_id is not None
-                and not inbox_scan_done
-                and session["user_id"] not in _inbox_scan_running):
+                and _needs_inbox_scan(conn, session["user_id"])):
             threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
 
     return {
@@ -547,7 +546,7 @@ def api_me(request: Request):
         "sent_messages_scanned": sent_scan_progress["messages_scanned"],
         "sent_messages_total": sent_total_live if sent_total_live is not None else sent_scan_progress["messages_total"],
         "sent_scan_status": sent_scan_progress["status"],
-        "inbox_scan_in_progress": session["user_id"] in _inbox_scan_running,
+        "inbox_scan_in_progress": inbox_scan_status == "in_progress",
         "processed_count": processed_count,
         "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
         "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
@@ -568,13 +567,24 @@ def api_config():
     return {"labels": config.get("labels", [])}
 
 
-_inbox_scan_running: set[str] = set()
+def _needs_inbox_scan(conn, user_id: str) -> bool:
+    """Return True if the inbox scan should be (re-)triggered."""
+    status = db.get_inbox_scan_status(conn, user_id)
+    if status == "complete":
+        return not db.is_inbox_scan_completed(conn, user_id)
+    if status == "in_progress":
+        progress = db.get_sent_scan_progress(conn, user_id)
+        updated_at = progress.get("updated_at")
+        if updated_at and datetime.now(timezone.utc) - updated_at < _STALE_SCAN_THRESHOLD:
+            return False
+        return True
+    return True
+
 
 def _run_inbox_scan(user_id: str):
     """Background task: scan all inbox messages and apply labels."""
-    if user_id in _inbox_scan_running:
-        return
-    _inbox_scan_running.add(user_id)
+    with db.get_connection() as conn:
+        db.set_inbox_scan_status(conn, user_id, "in_progress")
     label_configs = load_config().get("labels", [])
     try:
         with db.get_connection() as conn:
@@ -585,12 +595,16 @@ def _run_inbox_scan(user_id: str):
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
             count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
+            db.set_inbox_scan_status(conn, user_id, "complete")
             logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
                         extra={"event": "inbox_scan_complete", "user_id": user_id})
     except Exception as exc:
         logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
-    finally:
-        _inbox_scan_running.discard(user_id)
+        try:
+            with db.get_connection() as conn:
+                db.set_inbox_scan_status(conn, user_id, "error")
+        except Exception:
+            logger.exception("Failed to set inbox scan error status for %s", user_id)
 
 
 def _run_sent_scan(user_id: str):
@@ -627,23 +641,7 @@ def _run_sent_scan(user_id: str):
         return
 
     # Sent scan done — scan the full inbox to apply labels to all existing messages
-    _inbox_scan_running.add(user_id)
-    label_configs = load_config().get("labels", [])
-    try:
-        with db.get_connection() as conn:
-            if not db.try_lock_user_scan(conn, user_id):
-                logger.info("Post-scan inbox scan skipped for %s — locked", user_id)
-                return
-            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
-            known_senders = db.get_known_senders(conn, user_id)
-            label_id_cache = _label_id_cache_for_config(service, label_configs)
-            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
-            logger.info("Post-scan inbox scan for %s: processed %d message(s)", user_id, count,
-                        extra={"event": "post_scan_inbox_complete", "user_id": user_id})
-    except Exception as exc:
-        logger.exception("Post-scan inbox scan failed for user %s: %s", user_id, exc)
-    finally:
-        _inbox_scan_running.discard(user_id)
+    _run_inbox_scan(user_id)
 
 
 @app.post("/api/connect")
