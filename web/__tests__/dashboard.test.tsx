@@ -23,6 +23,7 @@ const DEFAULT_ME: object = {
   known_senders: 0,
   sent_messages_scanned: 0,
   sent_messages_total: null,
+  sent_scan_status: null,
   processed_count: 0,
   pending_count: null,
   unread_count: null,
@@ -152,11 +153,17 @@ describe("Dashboard page", () => {
       render(<DashboardPage />);
       const button = await screen.findByRole("button", { name: /start filtering/i });
 
+      const connectedMe = { ...DEFAULT_ME, connected: true, history_id: 99999 };
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue({
-          ok: true,
-          json: async () => ({ ok: true, history_id: 99999 }),
+        vi.fn().mockImplementation((url: string) => {
+          if (url.includes("/api/connect")) {
+            return Promise.resolve({ ok: true, json: async () => ({ ok: true, history_id: 99999 }) });
+          }
+          if (url.includes("/api/config")) {
+            return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_CONFIG });
+          }
+          return Promise.resolve({ ok: true, status: 200, json: async () => connectedMe });
         }),
       );
       await userEvent.click(button);
@@ -331,6 +338,25 @@ describe("Dashboard page", () => {
       );
       render(<DashboardPage />);
       await screen.findByText(/sent messages scanned/i);
+    });
+
+    it("shows spinner when sent scan is in progress", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "in_progress", sent_messages_scanned: 50, sent_messages_total: 200 } },
+        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
+      );
+      render(<DashboardPage />);
+      await screen.findByTestId("sent-scan-spinner");
+    });
+
+    it("does not show spinner when sent scan is complete", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "complete", sent_messages_scanned: 200, sent_messages_total: 200 } },
+        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
+      );
+      render(<DashboardPage />);
+      await screen.findByText(/sent messages scanned/i);
+      expect(screen.queryByTestId("sent-scan-spinner")).not.toBeInTheDocument();
     });
 
     it("shows unread count", async () => {

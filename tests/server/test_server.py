@@ -291,7 +291,7 @@ class TestInternalPoll:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 mock_conn = _fake_db_ctx(mock_db)
                 mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "u@example.com"}]
                 mock_db.get_history_id.return_value = 999
@@ -310,7 +310,7 @@ class TestInternalPoll:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "u@example.com"}]
                 mock_db.get_history_id.return_value = 999
@@ -500,7 +500,7 @@ class TestWebhookGmail:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_email.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 100
@@ -521,7 +521,7 @@ class TestWebhookGmail:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_email.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 100
@@ -964,7 +964,8 @@ class TestApiConnect:
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.start_watch") as mock_watch:
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_auth.get_service.return_value = MagicMock()
                 mock_watch.return_value = {"historyId": "99999"}
@@ -979,7 +980,8 @@ class TestApiConnect:
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.start_watch") as mock_watch:
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_auth.get_service.return_value = MagicMock()
                 mock_watch.return_value = {"historyId": "99999"}
@@ -993,7 +995,8 @@ class TestApiConnect:
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.start_watch") as mock_watch:
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_auth.get_service.return_value = MagicMock()
                 mock_watch.return_value = {"historyId": "99999"}
@@ -1001,6 +1004,22 @@ class TestApiConnect:
                     client.cookies.set("session", token)
                     client.post("/api/connect")
         mock_db.set_history_id.assert_called_once_with(ANY, "uid-1", 99999)
+
+    def test_triggers_sent_scan_in_background(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.build_known_senders") as mock_scan:
+                _fake_db_ctx(mock_db)
+                mock_auth.get_service.return_value = MagicMock()
+                mock_watch.return_value = {"historyId": "99999"}
+                mock_scan.return_value = {"known_senders": 5, "messages_scanned": 10}
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    client.post("/api/connect")
+        mock_scan.assert_called_once()
 
     def test_watch_failure_returns_500(self):
         token = _make_session_token()

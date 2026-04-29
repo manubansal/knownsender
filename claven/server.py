@@ -18,7 +18,7 @@ import secrets
 from urllib.parse import urlencode, quote
 
 import jwt as pyjwt
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
@@ -303,6 +303,19 @@ def internal_poll(request: Request):
                     continue
 
                 service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+
+                # Reconcile: if sent scan never completed, run it now
+                scan_progress = db.get_sent_scan_progress(conn, user_id)
+                if scan_progress["status"] not in ("in_progress", "complete"):
+                    logger.info("Reconciling sent scan for user %s (status=%s)", user_id, scan_progress["status"])
+                    db.set_sent_scan_status(conn, user_id, "in_progress")
+                    try:
+                        build_known_senders(service, conn, user_id)
+                        db.set_sent_scan_status(conn, user_id, "complete")
+                    except Exception as exc:
+                        logger.exception("Reconcile sent scan failed for %s", user_id)
+                        db.set_sent_scan_status(conn, user_id, "error")
+
                 known_senders = db.get_known_senders(conn, user_id)
 
                 profile = get_profile(service)
@@ -417,6 +430,7 @@ def api_me(request: Request):
         "known_senders": known_senders,
         "sent_messages_scanned": sent_scan_progress["messages_scanned"],
         "sent_messages_total": sent_total_live if sent_total_live is not None else sent_scan_progress["messages_total"],
+        "sent_scan_status": sent_scan_progress["status"],
         "processed_count": processed_count,
         "pending_count": pending_count,
         "filtered_in_count": filtered_in_count,
@@ -434,12 +448,31 @@ def api_config():
     return {"labels": config.get("labels", [])}
 
 
+def _run_sent_scan(user_id: str):
+    """Background task: build the known senders list from Sent mail."""
+    with db.get_connection() as conn:
+        try:
+            db.set_sent_scan_status(conn, user_id, "in_progress")
+        except Exception:
+            logger.exception("Failed to set sent scan status for %s", user_id)
+            return
+    with db.get_connection() as conn:
+        try:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            build_known_senders(service, conn, user_id)
+            db.set_sent_scan_status(conn, user_id, "complete")
+        except Exception as exc:
+            logger.exception("Sent scan failed for user %s: %s", user_id, exc)
+            db.set_sent_scan_status(conn, user_id, "error")
+
+
 @app.post("/api/connect")
-def api_connect(request: Request):
+def api_connect(request: Request, background_tasks: BackgroundTasks):
     """Start the Gmail push watch for the authenticated user.
 
     This is the explicit user-initiated step that begins inbox filtering.
     Credentials must already be stored (via the OAuth sign-in flow).
+    Also kicks off a background scan of Sent mail to build the known senders list.
     """
     session = _get_session(request)
     with db.get_connection() as conn:
@@ -451,6 +484,7 @@ def api_connect(request: Request):
         except Exception as exc:
             logger.exception("Connect failed for %s: %s", session["email"], exc)
             raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
+    background_tasks.add_task(_run_sent_scan, session["user_id"])
     return JSONResponse({"ok": True, "history_id": history_id})
 
 
@@ -519,6 +553,19 @@ async def webhook_gmail(request: Request):
             return {"status": "ok", "detail": "no history_id"}
 
         service = auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+
+        # Reconcile: if sent scan never completed, run it now
+        scan_progress = db.get_sent_scan_progress(conn, user["id"])
+        if scan_progress["status"] not in ("in_progress", "complete"):
+            logger.info("Reconciling sent scan for user %s via webhook (status=%s)", user["id"], scan_progress["status"])
+            db.set_sent_scan_status(conn, user["id"], "in_progress")
+            try:
+                build_known_senders(service, conn, user["id"])
+                db.set_sent_scan_status(conn, user["id"], "complete")
+            except Exception as exc:
+                logger.exception("Reconcile sent scan failed for %s", user["id"])
+                db.set_sent_scan_status(conn, user["id"], "error")
+
         known_senders = db.get_known_senders(conn, user["id"])
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)

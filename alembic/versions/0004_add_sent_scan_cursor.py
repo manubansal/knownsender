@@ -27,9 +27,14 @@ def upgrade() -> None:
         "scan_state",
         sa.Column("sent_messages_total", sa.Integer(), nullable=True),
     )
+    op.add_column(
+        "scan_state",
+        sa.Column("sent_scan_status", sa.Text(), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("scan_state", "sent_scan_status")
     op.drop_column("scan_state", "sent_messages_total")
     op.drop_column("scan_state", "sent_messages_scanned")
     op.drop_column("scan_state", "sent_scan_cursor")

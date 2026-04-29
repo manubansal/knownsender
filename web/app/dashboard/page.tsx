@@ -3,7 +3,7 @@
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { CheckCircle, RefreshCw, Zap } from "lucide-react";
+import { CheckCircle, Loader2, RefreshCw, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -16,6 +16,7 @@ type MeResponse = {
   known_senders: number;
   sent_messages_scanned: number;
   sent_messages_total: number | null;
+  sent_scan_status: string | null;
   processed_count: number;
   pending_count: number | null;
   unread_count: number | null;
@@ -110,12 +111,7 @@ export default function DashboardPage() {
     setConnecting(true);
     const res = await fetch(`${API_URL}/api/connect`, { method: "POST", credentials: "include" });
     if (res.ok) {
-      const data = await res.json();
-      setState((prev) =>
-        prev.status === "loaded"
-          ? { ...prev, data: { ...prev.data, connected: true, history_id: data.history_id } }
-          : prev,
-      );
+      await loadData();
     }
     setConnecting(false);
   }
@@ -159,7 +155,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, processed_count, pending_count, unread_count, read_count, inbox_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, sent_scan_status, processed_count, pending_count, unread_count, read_count, inbox_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
   const { labels } = state;
 
   return (
@@ -227,8 +223,13 @@ export default function DashboardPage() {
                     <span className="font-medium">{label.name}</span>
                     <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
-                      <div className="flex justify-between mt-1.5">
-                        <span className="text-xs text-muted-foreground">Sent messages scanned</span>
+                      <div className="flex justify-between items-center mt-1.5">
+                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          Sent messages scanned
+                          {sent_scan_status === "in_progress" && (
+                            <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
+                          )}
+                        </span>
                         <span className="text-xs tabular-nums text-muted-foreground">
                           {sent_messages_scanned}{sent_messages_total !== null ? ` / ${sent_messages_total}` : ""}
                         </span>

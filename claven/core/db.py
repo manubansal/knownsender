@@ -192,16 +192,30 @@ def set_sent_scan_cursor(conn, user_id: str, cursor: int) -> None:
 
 
 def get_sent_scan_progress(conn, user_id: str) -> dict:
-    """Return sent scan progress: messages_scanned and messages_total."""
+    """Return sent scan progress: messages_scanned, messages_total, and status."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT sent_messages_scanned, sent_messages_total FROM scan_state WHERE user_id = %s",
+            "SELECT sent_messages_scanned, sent_messages_total, sent_scan_status FROM scan_state WHERE user_id = %s",
             (user_id,),
         )
         row = cur.fetchone()
         if row:
-            return {"messages_scanned": row[0], "messages_total": row[1]}
-        return {"messages_scanned": 0, "messages_total": None}
+            return {"messages_scanned": row[0], "messages_total": row[1], "status": row[2]}
+        return {"messages_scanned": 0, "messages_total": None, "status": None}
+
+
+def set_sent_scan_status(conn, user_id: str, status: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO scan_state (user_id, history_id, sent_scan_status)
+            VALUES (%s, 0, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                sent_scan_status = EXCLUDED.sent_scan_status,
+                updated_at = NOW()
+            """,
+            (user_id, status),
+        )
 
 
 def set_sent_scan_progress(conn, user_id: str, scanned: int, total: int | None) -> None:
