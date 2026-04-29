@@ -36,14 +36,50 @@ from claven.core.rules import load_config
 from claven.core.scan import build_known_senders, scan_inbox
 from claven.core.watch import start_watch, stop_watch
 
+class _CloudJsonFormatter(logging.Formatter):
+    """Emit structured JSON for Cloud Logging. Maps Python levels to Cloud severity.
+
+    Extra fields (user_id, event) are included when passed via logger.info("msg", extra={...}).
+    """
+    _SEVERITY = {
+        logging.DEBUG: "DEBUG",
+        logging.INFO: "INFO",
+        logging.WARNING: "WARNING",
+        logging.ERROR: "ERROR",
+        logging.CRITICAL: "CRITICAL",
+    }
+
+    def format(self, record):
+        import json as _json
+        entry = {
+            "severity": self._SEVERITY.get(record.levelno, "DEFAULT"),
+            "message": record.getMessage(),
+            "logger": record.name,
+        }
+        for field in ("user_id", "event", "email"):
+            if val := getattr(record, field, None):
+                entry[field] = val
+        if record.exc_info and record.exc_info[0]:
+            entry["exception"] = self.formatException(record.exc_info)
+        return _json.dumps(entry)
+
+
 _LOG_FILE = os.environ.get("CLAVEN_LOG_FILE", "")
+_ON_CLOUD_RUN = bool(os.environ.get("K_SERVICE"))
+
 if _LOG_FILE:
+    # Local dev with file logging — human-readable + file
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[logging.FileHandler(_LOG_FILE), logging.StreamHandler()],
         force=True,
     )
+elif _ON_CLOUD_RUN:
+    # Production on Cloud Run — structured JSON to stdout for Cloud Logging
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(_CloudJsonFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[_handler], force=True)
 
 logging.getLogger("googleapiclient.discovery").setLevel(logging.WARNING)
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.WARNING)
@@ -165,7 +201,24 @@ def _make_flow() -> Flow:
 
 @app.get("/health")
 def health():
+    """Liveness probe — always returns 200 if the process is running."""
     return {"status": "ok"}
+
+
+@app.get("/healthz")
+def healthz():
+    """Readiness probe — checks DB connectivity. Returns 503 if DB is unreachable."""
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        return {"status": "ok", "db": "connected"}
+    except Exception as exc:
+        logger.error("Health check failed: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "db": "unreachable", "detail": str(exc)},
+        )
 
 
 @app.get("/oauth/start")
@@ -288,7 +341,8 @@ def oauth_callback(
         logger.exception("Signup failed for %s: %s", email, exc)
         return _error_redirect(base, "signup_failed", str(exc))
 
-    logger.info("OAuth complete for %s (user_id=%s)", email, user_id)
+    logger.info("OAuth complete for %s (user_id=%s)", email, user_id,
+                extra={"event": "oauth_complete", "user_id": user_id, "email": email})
     session_token = _issue_session(user_id, email)
     response = RedirectResponse(url=f"{base}/dashboard", status_code=302)
     response.delete_cookie("oauth_state")
@@ -531,7 +585,8 @@ def _run_inbox_scan(user_id: str):
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
             count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
-            logger.info("Inbox scan for %s: processed %d message(s)", user_id, count)
+            logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
+                        extra={"event": "inbox_scan_complete", "user_id": user_id})
     except Exception as exc:
         logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
     finally:
@@ -583,7 +638,8 @@ def _run_sent_scan(user_id: str):
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
             count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
-            logger.info("Post-scan inbox scan for %s: processed %d message(s)", user_id, count)
+            logger.info("Post-scan inbox scan for %s: processed %d message(s)", user_id, count,
+                        extra={"event": "post_scan_inbox_complete", "user_id": user_id})
     except Exception as exc:
         logger.exception("Post-scan inbox scan failed for user %s: %s", user_id, exc)
     finally:
