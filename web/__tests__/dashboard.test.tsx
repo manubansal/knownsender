@@ -359,6 +359,25 @@ describe("Dashboard page", () => {
       expect(screen.queryByTestId("sent-scan-spinner")).not.toBeInTheDocument();
     });
 
+    it("shows spinner on known senders when scan is in progress", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "in_progress", known_senders: 5 } },
+        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
+      );
+      render(<DashboardPage />);
+      await screen.findByTestId("known-senders-spinner");
+    });
+
+    it("does not show spinner on known senders when scan is complete", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "complete", known_senders: 42 } },
+        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
+      );
+      render(<DashboardPage />);
+      await screen.findByText("42");
+      expect(screen.queryByTestId("known-senders-spinner")).not.toBeInTheDocument();
+    });
+
     it("shows unread count", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, unread_count: 99 } });
       render(<DashboardPage />);
@@ -452,6 +471,36 @@ describe("Dashboard page", () => {
       render(<DashboardPage />);
       await screen.findByText(/processed/i);
       expect(screen.queryByText(/unlabeled/i)).not.toBeInTheDocument();
+    });
+
+    it("shows waiting icon on filter rows when scan is not complete", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "in_progress", unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        FILTER_CONFIG,
+      );
+      render(<DashboardPage />);
+      const icons = await screen.findAllByTestId("filter-waiting-icon");
+      expect(icons.length).toBe(3);
+    });
+
+    it("shows active icon on filter rows when connected and scan is complete", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        FILTER_CONFIG,
+      );
+      render(<DashboardPage />);
+      const icons = await screen.findAllByTestId("filter-active-icon");
+      expect(icons.length).toBe(3);
+    });
+
+    it("shows waiting icon when not connected even if scan complete", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, connected: false, sent_scan_status: "complete", unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        FILTER_CONFIG,
+      );
+      render(<DashboardPage />);
+      const icons = await screen.findAllByTestId("filter-waiting-icon");
+      expect(icons.length).toBe(3);
     });
 
     it("shows read count from api", async () => {

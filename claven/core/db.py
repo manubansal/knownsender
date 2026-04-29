@@ -192,16 +192,16 @@ def set_sent_scan_cursor(conn, user_id: str, cursor: int) -> None:
 
 
 def get_sent_scan_progress(conn, user_id: str) -> dict:
-    """Return sent scan progress: messages_scanned, messages_total, and status."""
+    """Return sent scan progress: messages_scanned, messages_total, status, updated_at."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT sent_messages_scanned, sent_messages_total, sent_scan_status FROM scan_state WHERE user_id = %s",
+            "SELECT sent_messages_scanned, sent_messages_total, sent_scan_status, updated_at FROM scan_state WHERE user_id = %s",
             (user_id,),
         )
         row = cur.fetchone()
         if row:
-            return {"messages_scanned": row[0], "messages_total": row[1], "status": row[2]}
-        return {"messages_scanned": 0, "messages_total": None, "status": None}
+            return {"messages_scanned": row[0], "messages_total": row[1], "status": row[2], "updated_at": row[3]}
+        return {"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}
 
 
 def set_sent_scan_status(conn, user_id: str, status: str) -> None:

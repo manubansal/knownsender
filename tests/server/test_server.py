@@ -880,32 +880,32 @@ class TestApiMe:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.build_known_senders") as mock_scan:
+                 patch("claven.server.threading") as mock_threading:
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_sent_scan_progress.return_value = {"messages_scanned": 0, "messages_total": None, "status": None}
                 mock_db.load_tokens.return_value = {"access_token_enc": b"x", "refresh_token_enc": b"y"}
                 mock_auth.get_service.return_value = self._make_gmail_service()
-                mock_scan.return_value = {"known_senders": 5, "messages_scanned": 100}
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["sent_scan_status"] == "in_progress"
-        mock_scan.assert_called_once()
+        mock_threading.Thread.assert_called_once()
+        mock_threading.Thread.return_value.start.assert_called_once()
 
     def test_does_not_trigger_sent_scan_when_already_complete(self):
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.build_known_senders") as mock_scan:
+                 patch("claven.server.threading") as mock_threading:
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_auth.get_service.return_value = self._make_gmail_service()
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     client.get("/api/me")
-        mock_scan.assert_not_called()
+        mock_threading.Thread.assert_not_called()
 
 
 class TestApiConfig:
@@ -1045,15 +1045,15 @@ class TestApiConnect:
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
                  patch("claven.server.start_watch") as mock_watch, \
-                 patch("claven.server.build_known_senders") as mock_scan:
+                 patch("claven.server.threading") as mock_threading:
                 _fake_db_ctx(mock_db)
                 mock_auth.get_service.return_value = MagicMock()
                 mock_watch.return_value = {"historyId": "99999"}
-                mock_scan.return_value = {"known_senders": 5, "messages_scanned": 10}
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     client.post("/api/connect")
-        mock_scan.assert_called_once()
+        mock_threading.Thread.assert_called_once()
+        mock_threading.Thread.return_value.start.assert_called_once()
 
     def test_watch_failure_returns_500(self):
         token = _make_session_token()

@@ -68,6 +68,7 @@ def build_known_senders(service, conn, user_id, should_continue=None):
             logger.info("Found %d new sent message(s)", len(new_ids))
             recipients = _recipients_from_messages(service, [{"id": mid} for mid in new_ids])
             db.bulk_add_known_senders(conn, user_id, list(recipients))
+            conn.commit()
             messages_scanned = len(new_ids)
             cumulative_scanned += messages_scanned
             if messages_total is not None:
@@ -88,6 +89,7 @@ def build_known_senders(service, conn, user_id, should_continue=None):
                     db.bulk_add_known_senders(conn, user_id, batch)
                 scanned = i - 1
                 db.set_sent_scan_progress(conn, user_id, scanned, messages_total)
+                conn.commit()
                 return {
                     "known_senders": db.count_known_senders(conn, user_id),
                     "messages_scanned": scanned,
@@ -101,10 +103,14 @@ def build_known_senders(service, conn, user_id, should_continue=None):
             if len(batch) >= _BATCH_SIZE:
                 db.bulk_add_known_senders(conn, user_id, batch)
                 batch = []
+                db.set_sent_scan_progress(conn, user_id, i, messages_total)
+                conn.commit()
             if i % 100 == 0 or i == total:
                 logger.info("Sent scan progress: %d/%d (%.0f%%)", i, total, 100 * i / total)
         if batch:
             db.bulk_add_known_senders(conn, user_id, batch)
+        db.set_sent_scan_progress(conn, user_id, total, messages_total)
+        conn.commit()
         messages_scanned = total
         cumulative_scanned = total
 

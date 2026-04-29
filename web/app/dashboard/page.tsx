@@ -3,7 +3,7 @@
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { CheckCircle, Loader2, RefreshCw, Zap } from "lucide-react";
+import { CheckCircle, Clock, Loader2, Play, RefreshCw, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -62,10 +62,12 @@ export default function DashboardPage() {
   }, []);
 
   async function loadData() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
       const [meRes, configRes] = await Promise.all([
-        fetch(`${API_URL}/api/me`, { credentials: "include" }),
-        fetch(`${API_URL}/api/config`),
+        fetch(`${API_URL}/api/me`, { credentials: "include", signal: controller.signal }),
+        fetch(`${API_URL}/api/config`, { signal: controller.signal }),
       ]);
       if (!meRes.ok) {
         setState({ status: "unauthenticated" });
@@ -76,6 +78,8 @@ export default function DashboardPage() {
       setLastUpdated(new Date());
     } catch {
       setState({ status: "unauthenticated" });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -92,8 +96,11 @@ export default function DashboardPage() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
+    try {
+      await loadData();
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   async function handleLogout() {
@@ -225,10 +232,12 @@ export default function DashboardPage() {
                     {isKnownSender && (
                       <div className="flex justify-between items-center mt-1.5">
                         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          Sent messages scanned
-                          {sent_scan_status === "in_progress" && (
+                          {sent_scan_status === "in_progress" ? (
                             <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
-                          )}
+                          ) : sent_scan_status === "complete" ? (
+                            <CheckCircle className="h-3 w-3 text-green-500" data-testid="sent-scan-complete" />
+                          ) : null}
+                          Sent messages scanned
                         </span>
                         <span className="text-xs tabular-nums text-muted-foreground">
                           {sent_messages_scanned}{sent_messages_total !== null ? ` / ${sent_messages_total}` : ""}
@@ -236,29 +245,55 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {isKnownSender && (
-                      <div className="flex justify-between">
-                        <span className="text-xs text-muted-foreground">Known senders</span>
+                      <div className="flex justify-between items-center">
+                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          {sent_scan_status === "in_progress" ? (
+                            <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
+                          ) : sent_scan_status === "complete" ? (
+                            <CheckCircle className="h-3 w-3 text-green-500" data-testid="known-senders-complete" />
+                          ) : null}
+                          Known senders
+                        </span>
                         <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
                       </div>
                     )}
-                    {label.unknown_label !== undefined && filtered_in_count !== null && (
-                      <div className="flex justify-between">
-                        <span className="text-xs text-muted-foreground">Filtered in</span>
-                        <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count}</span>
-                      </div>
-                    )}
-                    {label.unknown_label !== undefined && filtered_out_count !== null && (
-                      <div className="flex justify-between">
-                        <span className="text-xs text-muted-foreground">Filtered out</span>
-                        <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
-                      </div>
-                    )}
-                    {label.unknown_label !== undefined && unlabeled_count !== null && (
-                      <div className="flex justify-between">
-                        <span className="text-xs text-muted-foreground">Unlabeled</span>
-                        <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count}</span>
-                      </div>
-                    )}
+                    {label.unknown_label !== undefined && (() => {
+                      const filterActive = connected && sent_scan_status === "complete";
+                      const FilterIcon = filterActive ? Play : Clock;
+                      const iconColor = filterActive ? "text-green-500" : "";
+                      const iconTestId = filterActive ? "filter-active-icon" : "filter-waiting-icon";
+                      return (
+                        <>
+                          {unlabeled_count !== null && (
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor}`} data-testid={iconTestId} />
+                                Unlabeled
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count}</span>
+                            </div>
+                          )}
+                          {filtered_in_count !== null && (
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor}`} data-testid={iconTestId} />
+                                Filtered in
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count}</span>
+                            </div>
+                          )}
+                          {filtered_out_count !== null && (
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor}`} data-testid={iconTestId} />
+                                Filtered out
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 );
               })}

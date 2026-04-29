@@ -15,10 +15,13 @@ import json
 import logging
 import os
 import secrets
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, quote
 
 import jwt as pyjwt
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+import threading
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
@@ -274,6 +277,24 @@ def oauth_callback(
     return response
 
 
+_STALE_SCAN_THRESHOLD = timedelta(minutes=5)
+
+
+def _needs_sent_scan(scan_progress: dict) -> bool:
+    """Return True if the sent scan should be (re-)triggered."""
+    status = scan_progress["status"]
+    if status == "complete":
+        return False
+    if status == "in_progress":
+        updated_at = scan_progress.get("updated_at")
+        if updated_at and datetime.now(timezone.utc) - updated_at < _STALE_SCAN_THRESHOLD:
+            return False
+        # Stale in_progress — treat as failed
+        return True
+    # None, "error", or anything else
+    return True
+
+
 def _label_id_cache_for_config(service, label_configs: list[dict]) -> dict[str, str]:
     """Build a Gmail label ID cache for all labels referenced in the config."""
     names = []
@@ -306,7 +327,7 @@ def internal_poll(request: Request):
 
                 # Reconcile: if sent scan never completed, run it now
                 scan_progress = db.get_sent_scan_progress(conn, user_id)
-                if scan_progress["status"] not in ("in_progress", "complete"):
+                if _needs_sent_scan(scan_progress):
                     logger.info("Reconciling sent scan for user %s (status=%s)", user_id, scan_progress["status"])
                     db.set_sent_scan_status(conn, user_id, "in_progress")
                     try:
@@ -365,7 +386,7 @@ def internal_build_known_senders(request: Request):
 
 
 @app.get("/api/me")
-def api_me(request: Request, background_tasks: BackgroundTasks):
+def api_me(request: Request):
     session = _get_session(request)
     with db.get_connection() as conn:
         user = db.get_user_by_id(conn, session["user_id"])
@@ -377,12 +398,12 @@ def api_me(request: Request, background_tasks: BackgroundTasks):
         processed_count = db.get_processed_count(conn, session["user_id"])
 
         # Auto-trigger sent scan if it has never run for this user
-        if sent_scan_progress["status"] not in ("in_progress", "complete"):
+        if _needs_sent_scan(sent_scan_progress):
             has_tokens = db.load_tokens(conn, session["user_id"]) is not None
             if has_tokens:
                 db.set_sent_scan_status(conn, session["user_id"], "in_progress")
                 sent_scan_progress["status"] = "in_progress"
-                background_tasks.add_task(_run_sent_scan, session["user_id"])
+                threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
 
         unread_count = None
         read_count = None
@@ -464,18 +485,23 @@ def _run_sent_scan(user_id: str):
         except Exception:
             logger.exception("Failed to set sent scan status for %s", user_id)
             return
-    with db.get_connection() as conn:
-        try:
+    try:
+        with db.get_connection() as conn:
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             build_known_senders(service, conn, user_id)
+        with db.get_connection() as conn:
             db.set_sent_scan_status(conn, user_id, "complete")
-        except Exception as exc:
-            logger.exception("Sent scan failed for user %s: %s", user_id, exc)
-            db.set_sent_scan_status(conn, user_id, "error")
+    except Exception as exc:
+        logger.exception("Sent scan failed for user %s: %s", user_id, exc)
+        try:
+            with db.get_connection() as conn:
+                db.set_sent_scan_status(conn, user_id, "error")
+        except Exception:
+            logger.exception("Failed to set error status for %s", user_id)
 
 
 @app.post("/api/connect")
-def api_connect(request: Request, background_tasks: BackgroundTasks):
+def api_connect(request: Request):
     """Start the Gmail push watch for the authenticated user.
 
     This is the explicit user-initiated step that begins inbox filtering.
@@ -492,7 +518,7 @@ def api_connect(request: Request, background_tasks: BackgroundTasks):
         except Exception as exc:
             logger.exception("Connect failed for %s: %s", session["email"], exc)
             raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
-    background_tasks.add_task(_run_sent_scan, session["user_id"])
+    threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
     return JSONResponse({"ok": True, "history_id": history_id})
 
 
