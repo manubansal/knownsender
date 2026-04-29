@@ -89,13 +89,15 @@ export default function DashboardPage() {
 
   useEffect(() => { loadData(); }, []);
 
-  function formatRelativeTime(date: Date): string {
+  function formatRelativeTime(date: Date, suffix = "ago"): string {
     const seconds = Math.floor((now - date.getTime()) / 1000);
-    if (seconds < 60) return seconds <= 5 ? "just now" : `${seconds} seconds ago`;
+    if (seconds < 60) return seconds <= 5 ? "just now" : `${seconds} seconds ${suffix}`;
     const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
+    if (minutes < 60) return minutes === 1 ? `1 minute ${suffix}` : `${minutes} minutes ${suffix}`;
     const hours = Math.floor(minutes / 60);
-    return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+    if (hours < 24) return hours === 1 ? `1 hour ${suffix}` : `${hours} hours ${suffix}`;
+    const days = Math.floor(hours / 24);
+    return days === 1 ? `1 day ${suffix}` : `${days} days ${suffix}`;
   }
 
   async function handleRefresh() {
@@ -360,7 +362,7 @@ export default function DashboardPage() {
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
                                 {state.data.newest_labeled_at
-                                  ? formatRelativeTime(new Date(state.data.newest_labeled_at))
+                                  ? formatRelativeTime(new Date(state.data.newest_labeled_at), "old")
                                   : "—"}
                               </span>
                             </div>
