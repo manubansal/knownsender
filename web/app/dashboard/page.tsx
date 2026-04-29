@@ -17,11 +17,13 @@ type MeResponse = {
   sent_messages_scanned: number;
   sent_messages_total: number | null;
   sent_scan_status: string | null;
+  inbox_scan_in_progress: boolean;
   processed_count: number;
   pending_count: number | null;
   unread_count: number | null;
   read_count: number | null;
   inbox_count: number | null;
+  all_mail_count: number | null;
   filtered_in_count: number | null;
   filtered_out_count: number | null;
   unlabeled_count: number | null;
@@ -162,7 +164,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, sent_scan_status, processed_count, pending_count, unread_count, read_count, inbox_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, sent_scan_status, inbox_scan_in_progress, processed_count, pending_count, unread_count, read_count, inbox_count, all_mail_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
   const { labels } = state;
 
   return (
@@ -191,31 +193,37 @@ export default function DashboardPage() {
           <div className="w-full flex flex-col gap-1">
             <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
               {inbox_count !== null && (
-                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">In inbox</span>
+                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">Inbox</span>
                   <span className="tabular-nums">{inbox_count}</span>
                 </div>
               )}
               {read_count !== null && (
-                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
                   <span className="text-muted-foreground">Read</span>
                   <span className="tabular-nums">{read_count}</span>
                 </div>
               )}
               {unread_count !== null && (
-                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
                   <span className="text-muted-foreground">Unread</span>
                   <span className="tabular-nums">{unread_count}</span>
                 </div>
               )}
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
                 <span className="text-muted-foreground">Processed</span>
                 <span className="tabular-nums">{processed_count}</span>
               </div>
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
                 <span className="text-muted-foreground">Pending</span>
                 <span className="tabular-nums">{pending_count ?? "—"}</span>
               </div>
+              {all_mail_count !== null && (
+                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">All mail</span>
+                  <span className="tabular-nums">{all_mail_count}</span>
+                </div>
+              )}
               {labels.map((label) => {
                 const isKnownSender = label.rules.some((r) => r.known_sender);
                 const desc = label.description ?? label.rules
@@ -230,7 +238,7 @@ export default function DashboardPage() {
                     <span className="font-medium">{label.name}</span>
                     <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
-                      <div className="flex justify-between items-center mt-1.5">
+                      <div className="flex justify-between gap-4 items-center mt-1.5">
                         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           {sent_scan_status === "in_progress" ? (
                             <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
@@ -245,7 +253,7 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {isKnownSender && (
-                      <div className="flex justify-between items-center">
+                      <div className="flex justify-between gap-4 items-center">
                         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           {sent_scan_status === "in_progress" ? (
                             <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
@@ -258,35 +266,48 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {label.unknown_label !== undefined && (() => {
-                      const filterActive = connected && sent_scan_status === "complete";
-                      const FilterIcon = filterActive ? Play : Clock;
+                      const scanDone = connected && sent_scan_status === "complete";
+                      const filterActive = scanDone && !inbox_scan_in_progress;
+                      const FilterIcon = inbox_scan_in_progress ? Loader2 : filterActive ? Play : Clock;
                       const iconColor = filterActive ? "text-green-500" : "";
-                      const iconTestId = filterActive ? "filter-active-icon" : "filter-waiting-icon";
+                      const iconExtra = inbox_scan_in_progress ? "animate-spin" : "";
+                      const iconTestId = inbox_scan_in_progress ? "filter-labeling-icon" : filterActive ? "filter-active-icon" : "filter-waiting-icon";
                       return (
                         <>
-                          {unlabeled_count !== null && (
-                            <div className="flex justify-between items-center">
+                          {inbox_count !== null && (
+                            <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor}`} data-testid={iconTestId} />
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Received messages labeled
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {(filtered_in_count ?? 0) + (filtered_out_count ?? 0)} / {inbox_count}
+                              </span>
+                            </div>
+                          )}
+                          {unlabeled_count !== null && (
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
                                 Unlabeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count}</span>
                             </div>
                           )}
                           {filtered_in_count !== null && (
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor}`} data-testid={iconTestId} />
-                                Filtered in
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Labeled as known-sender
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count}</span>
                             </div>
                           )}
                           {filtered_out_count !== null && (
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor}`} data-testid={iconTestId} />
-                                Filtered out
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Labeled as unknown-sender
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
                             </div>

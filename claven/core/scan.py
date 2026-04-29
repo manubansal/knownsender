@@ -122,6 +122,45 @@ def build_known_senders(service, conn, user_id, should_continue=None):
     return {"known_senders": count, "messages_scanned": messages_scanned}
 
 
+def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None):
+    """Scan all inbox messages and apply labels. DB-backed, commits per batch.
+
+    Processes every message in the inbox via list_messages (not list_history).
+    Updates processed_count and history_id in the DB as it goes.
+
+    Returns the number of messages processed.
+    """
+    logger.info("Inbox scan starting (label_id_cache=%s, known_senders=%d)",
+                list(label_id_cache.keys()), len(known_senders or []))
+    messages = list_messages(service, query="in:inbox", max_results=None)
+    total = len(messages)
+    logger.info("Inbox scan: %d messages to process", total)
+    if total == 0:
+        return 0
+
+    batch_count = 0
+    errors = 0
+    for i, msg_meta in enumerate(messages, 1):
+        try:
+            process_message(service, msg_meta["id"], label_configs, label_id_cache, known_senders)
+        except Exception as exc:
+            errors += 1
+            logger.warning("Failed to process message %s (%d/%d): %s", msg_meta["id"], i, total, exc)
+        batch_count += 1
+        if batch_count >= _BATCH_SIZE or i == total:
+            db.set_processed_count(conn, user_id, i)
+            conn.commit()
+            batch_count = 0
+        if i % 100 == 0 or i == total:
+            logger.info("Inbox scan progress: %d/%d (%.0f%%), %d errors", i, total, 100 * i / total, errors)
+
+    profile = get_profile(service)
+    db.set_history_id(conn, user_id, int(profile["historyId"]))
+    conn.commit()
+    logger.info("Inbox scan complete: %d messages processed", total)
+    return total
+
+
 def _recipients_from_messages(service, messages):
     """Extract all To/Cc/Bcc addresses from a list of message metadata stubs."""
     recipients = set()

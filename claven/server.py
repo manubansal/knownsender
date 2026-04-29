@@ -32,8 +32,18 @@ import claven.core.db as db
 from claven.core.gmail import build_label_id_cache, get_profile
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
-from claven.core.scan import build_known_senders
+from claven.core.scan import build_known_senders, scan_inbox
 from claven.core.watch import start_watch, stop_watch
+
+_LOG_FILE = os.environ.get("CLAVEN_LOG_FILE", "")
+if _LOG_FILE:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.FileHandler(_LOG_FILE), logging.StreamHandler()],
+    )
+else:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +418,7 @@ def api_me(request: Request):
         unread_count = None
         read_count = None
         inbox_count = None
+        all_mail_count = None
         sent_total_live = None
         filtered_in_count = None
         filtered_out_count = None
@@ -422,6 +433,9 @@ def api_me(request: Request):
             ).execute()
             read_count = read_result.get("resultSizeEstimate")
 
+            profile_data = service.users().getProfile(userId="me").execute()
+            all_mail_count = profile_data.get("messagesTotal")
+
             sent_label = service.users().labels().get(userId="me", id="SENT").execute()
             sent_total_live = sent_label.get("messagesTotal")
 
@@ -433,15 +447,11 @@ def api_me(request: Request):
             filtered_out_count = 0
             for lc in label_configs:
                 if lid := label_id_by_name.get(lc["id"]):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", lid], maxResults=1
-                    ).execute()
-                    filtered_in_count += r.get("resultSizeEstimate", 0)
+                    label_info = service.users().labels().get(userId="me", id=lid).execute()
+                    filtered_in_count += label_info.get("messagesTotal", 0)
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", uid], maxResults=1
-                    ).execute()
-                    filtered_out_count += r.get("resultSizeEstimate", 0)
+                    label_info = service.users().labels().get(userId="me", id=uid).execute()
+                    filtered_out_count += label_info.get("messagesTotal", 0)
 
             if inbox_count is not None:
                 unlabeled_count = max(0, inbox_count - filtered_in_count - filtered_out_count)
@@ -452,6 +462,13 @@ def api_me(request: Request):
             max(0, inbox_count - processed_count) if inbox_count is not None else None
         )
 
+        # Auto-trigger inbox scan if sent scan is done and inbox hasn't been scanned yet
+        if (sent_scan_progress["status"] == "complete"
+                and history_id is not None
+                and session["user_id"] not in _inbox_scan_done
+                and session["user_id"] not in _inbox_scan_running):
+            threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
+
     return {
         "email": user["email"],
         "connected": history_id is not None,
@@ -460,6 +477,7 @@ def api_me(request: Request):
         "sent_messages_scanned": sent_scan_progress["messages_scanned"],
         "sent_messages_total": sent_total_live if sent_total_live is not None else sent_scan_progress["messages_total"],
         "sent_scan_status": sent_scan_progress["status"],
+        "inbox_scan_in_progress": session["user_id"] in _inbox_scan_running,
         "processed_count": processed_count,
         "pending_count": pending_count,
         "filtered_in_count": filtered_in_count,
@@ -468,6 +486,7 @@ def api_me(request: Request):
         "unread_count": unread_count,
         "read_count": read_count,
         "inbox_count": inbox_count,
+        "all_mail_count": all_mail_count,
     }
 
 
@@ -477,8 +496,38 @@ def api_config():
     return {"labels": config.get("labels", [])}
 
 
+_inbox_scan_running: set[str] = set()
+_inbox_scan_done: set[str] = set()
+
+
+def _run_inbox_scan(user_id: str):
+    """Background task: scan all inbox messages and apply labels."""
+    if user_id in _inbox_scan_running:
+        return
+    _inbox_scan_running.add(user_id)
+    label_configs = load_config().get("labels", [])
+    try:
+        with db.get_connection() as conn:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            known_senders = db.get_known_senders(conn, user_id)
+            label_id_cache = _label_id_cache_for_config(service, label_configs)
+            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
+            logger.info("Inbox scan for %s: processed %d message(s)", user_id, count)
+            _inbox_scan_done.add(user_id)
+    except Exception as exc:
+        logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
+    finally:
+        _inbox_scan_running.discard(user_id)
+
+
 def _run_sent_scan(user_id: str):
-    """Background task: build the known senders list from Sent mail."""
+    """Background task: build the known senders list, then poll inbox.
+
+    After the sent scan completes, immediately processes any inbox messages
+    that arrived since the history_id was set at connect time. This ensures
+    labeling starts without waiting for an external trigger (Pub/Sub or
+    Cloud Scheduler).
+    """
     with db.get_connection() as conn:
         try:
             db.set_sent_scan_status(conn, user_id, "in_progress")
@@ -498,6 +547,23 @@ def _run_sent_scan(user_id: str):
                 db.set_sent_scan_status(conn, user_id, "error")
         except Exception:
             logger.exception("Failed to set error status for %s", user_id)
+        return
+
+    # Sent scan done — scan the full inbox to apply labels to all existing messages
+    _inbox_scan_running.add(user_id)
+    label_configs = load_config().get("labels", [])
+    try:
+        with db.get_connection() as conn:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            known_senders = db.get_known_senders(conn, user_id)
+            label_id_cache = _label_id_cache_for_config(service, label_configs)
+            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
+            logger.info("Post-scan inbox scan for %s: processed %d message(s)", user_id, count)
+            _inbox_scan_done.add(user_id)
+    except Exception as exc:
+        logger.exception("Post-scan inbox scan failed for user %s: %s", user_id, exc)
+    finally:
+        _inbox_scan_running.discard(user_id)
 
 
 @app.post("/api/connect")
@@ -537,6 +603,7 @@ def api_disconnect(request: Request):
         except Exception as exc:
             logger.warning("stop_watch failed during disconnect for %s: %s", session["email"], exc)
         db.clear_watch_state(conn, session["user_id"])
+    _inbox_scan_done.discard(session["user_id"])
     return JSONResponse({"ok": True})
 
 
@@ -588,17 +655,18 @@ async def webhook_gmail(request: Request):
 
         service = auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
 
-        # Reconcile: if sent scan never completed, run it now
+        # Incremental known senders update — cheap with cursor (one list_history call).
+        # Also serves as reconciliation: if the initial scan never completed,
+        # build_known_senders falls through to a full scan.
         scan_progress = db.get_sent_scan_progress(conn, user["id"])
-        if scan_progress["status"] not in ("in_progress", "complete"):
-            logger.info("Reconciling sent scan for user %s via webhook (status=%s)", user["id"], scan_progress["status"])
+        if _needs_sent_scan(scan_progress):
             db.set_sent_scan_status(conn, user["id"], "in_progress")
-            try:
-                build_known_senders(service, conn, user["id"])
+        try:
+            build_known_senders(service, conn, user["id"])
+            if scan_progress["status"] != "complete":
                 db.set_sent_scan_status(conn, user["id"], "complete")
-            except Exception as exc:
-                logger.exception("Reconcile sent scan failed for %s", user["id"])
-                db.set_sent_scan_status(conn, user["id"], "error")
+        except Exception as exc:
+            logger.warning("Known senders update failed for %s: %s", user["id"], exc)
 
         known_senders = db.get_known_senders(conn, user["id"])
         label_id_cache = _label_id_cache_for_config(service, label_configs)

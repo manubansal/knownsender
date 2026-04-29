@@ -24,6 +24,7 @@ const DEFAULT_ME: object = {
   sent_messages_scanned: 0,
   sent_messages_total: null,
   sent_scan_status: null,
+  inbox_scan_in_progress: false,
   processed_count: 0,
   pending_count: null,
   unread_count: null,
@@ -387,7 +388,7 @@ describe("Dashboard page", () => {
     it("shows inbox count", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, inbox_count: 250 } });
       render(<DashboardPage />);
-      await screen.findByText(/in inbox/i);
+      await screen.findByText(/inbox/i);
       await screen.findByText("250");
     });
 
@@ -421,42 +422,42 @@ describe("Dashboard page", () => {
       }],
     };
 
-    it("shows filtered in count under the label that has unknown_label", async () => {
+    it("shows labeled as known-sender count under the label that has unknown_label", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: 15 } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/filtered in/i);
+      await screen.findByText(/labeled as known-sender/i);
       await screen.findByText("15");
     });
 
-    it("does not show filtered in row when null", async () => {
+    it("does not show labeled as known-sender row when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
       await screen.findByText(/processed/i);
-      expect(screen.queryByText(/filtered in/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
     });
 
-    it("does not show filtered in row when label has no unknown_label", async () => {
+    it("does not show labeled as known-sender row when label has no unknown_label", async () => {
       mockFetch(
         { ok: true, body: { ...DEFAULT_ME, filtered_in_count: 15 } },
         { labels: [{ id: "newsletter", name: "Newsletter", rules: [{ field: "from", contains: ["newsletter"] }] }] },
       );
       render(<DashboardPage />);
       await screen.findByText(/processed/i);
-      expect(screen.queryByText(/filtered in/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
     });
 
-    it("shows filtered out count under the label that has unknown_label", async () => {
+    it("shows labeled as unknown-sender count under the label that has unknown_label", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: 8 } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/filtered out/i);
+      await screen.findByText(/labeled as unknown-sender/i);
       await screen.findByText("8");
     });
 
-    it("does not show filtered out row when null", async () => {
+    it("does not show labeled as unknown-sender row when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
       await screen.findByText(/processed/i);
-      expect(screen.queryByText(/filtered out/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/labeled as unknown-sender/i)).not.toBeInTheDocument();
     });
 
     it("shows unlabeled count under the label that has unknown_label", async () => {
@@ -475,32 +476,52 @@ describe("Dashboard page", () => {
 
     it("shows waiting icon on filter rows when scan is not complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "in_progress", unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "in_progress", inbox_count: 50, unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-waiting-icon");
-      expect(icons.length).toBe(3);
+      expect(icons.length).toBe(4);
     });
 
     it("shows active icon on filter rows when connected and scan is complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_count: 50, unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-active-icon");
-      expect(icons.length).toBe(3);
+      expect(icons.length).toBe(4);
     });
 
     it("shows waiting icon when not connected even if scan complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: false, sent_scan_status: "complete", unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: false, sent_scan_status: "complete", inbox_count: 50, unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-waiting-icon");
-      expect(icons.length).toBe(3);
+      expect(icons.length).toBe(4);
+    });
+
+    it("shows spinner on filter rows during initial labeling", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: true, inbox_count: 50, unlabeled_count: 50, filtered_in_count: 0, filtered_out_count: 0 } },
+        FILTER_CONFIG,
+      );
+      render(<DashboardPage />);
+      const icons = await screen.findAllByTestId("filter-labeling-icon");
+      expect(icons.length).toBe(4);
+    });
+
+    it("shows active icon after initial labeling completes", async () => {
+      mockFetch(
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: false, inbox_count: 50, unlabeled_count: 10, filtered_in_count: 30, filtered_out_count: 20 } },
+        FILTER_CONFIG,
+      );
+      render(<DashboardPage />);
+      const icons = await screen.findAllByTestId("filter-active-icon");
+      expect(icons.length).toBe(4);
     });
 
     it("shows read count from api", async () => {

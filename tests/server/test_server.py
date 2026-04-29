@@ -613,40 +613,46 @@ class TestApiMe:
         messages_unread=0,
         messages_total=0,
         read_estimate=0,
-        filtered_in_estimate=0,
-        filtered_out_estimate=0,
+        filtered_in_total=0,
+        filtered_out_total=0,
     ):
-        """Return a mock Gmail service with inbox label counts and per-label estimates."""
+        """Return a mock Gmail service with label counts."""
         svc = MagicMock()
-
-        # labels.get → INBOX totals
-        svc.users.return_value.labels.return_value.get.return_value.execute.return_value = {
-            "messagesUnread": messages_unread,
-            "messagesTotal": messages_total,
-        }
-
-        # labels.list → label ID map (known-sender and unknown-sender)
-        svc.users.return_value.labels.return_value.list.return_value.execute.return_value = {
-            "labels": [
-                {"name": "known-sender", "id": self._KNOWN_LABEL_ID},
-                {"name": "unknown-sender", "id": self._UNKNOWN_LABEL_ID},
-            ]
-        }
-
-        # messages.list → route by labelIds / q
         known_id = self._KNOWN_LABEL_ID
         unknown_id = self._UNKNOWN_LABEL_ID
 
+        # labels.get → route by label ID
+        def _labels_get(**kwargs):
+            lid = kwargs.get("id", "")
+            result = MagicMock()
+            if lid == "INBOX":
+                result.execute.return_value = {"messagesUnread": messages_unread, "messagesTotal": messages_total}
+            elif lid == "SENT":
+                result.execute.return_value = {"messagesTotal": 0}
+            elif lid == known_id:
+                result.execute.return_value = {"messagesTotal": filtered_in_total}
+            elif lid == unknown_id:
+                result.execute.return_value = {"messagesTotal": filtered_out_total}
+            else:
+                result.execute.return_value = {"messagesTotal": 0}
+            return result
+
+        svc.users.return_value.labels.return_value.get.side_effect = _labels_get
+
+        # labels.list → label ID map
+        svc.users.return_value.labels.return_value.list.return_value.execute.return_value = {
+            "labels": [
+                {"name": "known-sender", "id": known_id},
+                {"name": "unknown-sender", "id": unknown_id},
+            ]
+        }
+
+        # messages.list → route by q
         def _messages_list(**kwargs):
-            label_ids = kwargs.get("labelIds", [])
             q = kwargs.get("q", "")
             result = MagicMock()
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
-            elif known_id in label_ids:
-                result.execute.return_value = {"resultSizeEstimate": filtered_in_estimate}
-            elif unknown_id in label_ids:
-                result.execute.return_value = {"resultSizeEstimate": filtered_out_estimate}
             else:
                 result.execute.return_value = {"resultSizeEstimate": 0}
             return result
@@ -816,7 +822,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_estimate=30
+                    messages_total=100, filtered_in_total=30
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -833,7 +839,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_out_estimate=50
+                    messages_total=100, filtered_out_total=50
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -850,7 +856,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_estimate=30, filtered_out_estimate=50
+                    messages_total=100, filtered_in_total=30, filtered_out_total=50
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -901,11 +907,31 @@ class TestApiMe:
                  patch("claven.server.threading") as mock_threading:
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_processed_count.return_value = 10  # inbox already scanned
                 mock_auth.get_service.return_value = self._make_gmail_service()
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     client.get("/api/me")
         mock_threading.Thread.assert_not_called()
+
+    def test_auto_triggers_inbox_scan_when_not_yet_done(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading, \
+                 patch("claven.server._inbox_scan_running", set()), \
+                 patch("claven.server._inbox_scan_done", set()):
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 999
+                mock_auth.get_service.return_value = self._make_gmail_service(messages_total=50)
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    client.get("/api/me")
+        mock_threading.Thread.assert_called_once()
+        call_kwargs = mock_threading.Thread.call_args[1]
+        assert call_kwargs["target"].__name__ == "_run_inbox_scan"
 
 
 class TestApiConfig:

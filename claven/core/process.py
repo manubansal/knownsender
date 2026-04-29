@@ -15,11 +15,14 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
 
     This ensures every processed message lands in exactly one state per label
     config: matched, unmatched, or (if no unknown_label configured) unchanged.
+
+    Returns True if at least one label was newly applied, False otherwise.
     """
     headers, existing_labels = get_message_headers(service, message_id)
     if not headers:
-        return
+        return False
 
+    applied = False
     for label_config in label_configs:
         matched = any(
             matches_rule(headers, rule, known_senders)
@@ -28,7 +31,11 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
         apply_id = label_config["id"] if matched else label_config.get("unknown_label")
         if apply_id:
             gmail_label_id = label_id_cache.get(apply_id)
-            if gmail_label_id and gmail_label_id not in existing_labels:
+            if not gmail_label_id:
+                logger.debug("Label '%s' not in cache (cache keys: %s)", apply_id, list(label_id_cache.keys()))
+            elif gmail_label_id in existing_labels:
+                logger.debug("Label '%s' already on message %s", apply_id, message_id)
+            else:
                 apply_label(service, message_id, gmail_label_id)
                 logger.info(
                     "Labeled message %s (%s) as '%s'",
@@ -36,6 +43,8 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
                     headers.get("subject", ""),
                     apply_id,
                 )
+                applied = True
+    return applied
 
 
 def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):

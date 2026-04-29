@@ -168,6 +168,14 @@ def increment_processed_count(conn, user_id: str, n: int) -> None:
         )
 
 
+def set_processed_count(conn, user_id: str, n: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET processed_count = %s WHERE user_id = %s",
+            (n, user_id),
+        )
+
+
 def get_sent_scan_cursor(conn, user_id: str) -> int | None:
     with conn.cursor() as cur:
         cur.execute(
