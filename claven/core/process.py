@@ -31,11 +31,7 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
         apply_id = label_config["id"] if matched else label_config.get("unknown_label")
         if apply_id:
             gmail_label_id = label_id_cache.get(apply_id)
-            if not gmail_label_id:
-                logger.debug("Label '%s' not in cache (cache keys: %s)", apply_id, list(label_id_cache.keys()))
-            elif gmail_label_id in existing_labels:
-                logger.debug("Label '%s' already on message %s", apply_id, message_id)
-            else:
+            if gmail_label_id and gmail_label_id not in existing_labels:
                 apply_label(service, message_id, gmail_label_id)
                 logger.info(
                     "Labeled message %s (%s) as '%s'",

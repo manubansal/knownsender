@@ -2,6 +2,8 @@ import logging
 
 import claven.core.db as db
 from claven.core.gmail import (
+    batch_apply_labels,
+    batch_get_message_headers,
     get_message,
     get_profile,
     list_history,
@@ -11,6 +13,7 @@ from claven.core.gmail import (
     _parse_addresses,
 )
 from claven.core.process import process_message
+from claven.core.rules import matches_rule
 
 logger = logging.getLogger(__name__)
 
@@ -123,10 +126,10 @@ def build_known_senders(service, conn, user_id, should_continue=None):
 
 
 def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None):
-    """Scan all inbox messages and apply labels. DB-backed, commits per batch.
+    """Scan all inbox messages and apply labels using batch API calls.
 
-    Processes every message in the inbox via list_messages (not list_history).
-    Updates processed_count and history_id in the DB as it goes.
+    Fetches message headers in batches of 100, evaluates rules locally,
+    then batch-applies labels. ~100x faster than per-message API calls.
 
     Returns the number of messages processed.
     """
@@ -138,26 +141,57 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
     if total == 0:
         return 0
 
-    batch_count = 0
     errors = 0
-    for i, msg_meta in enumerate(messages, 1):
+    for batch_start in range(0, total, _BATCH_SIZE):
+        batch_ids = [m["id"] for m in messages[batch_start:batch_start + _BATCH_SIZE]]
+        batch_end = batch_start + len(batch_ids)
+
+        # Batch fetch headers
         try:
-            process_message(service, msg_meta["id"], label_configs, label_id_cache, known_senders)
+            headers_map = batch_get_message_headers(service, batch_ids)
         except Exception as exc:
-            errors += 1
-            logger.warning("Failed to process message %s (%d/%d): %s", msg_meta["id"], i, total, exc)
-        batch_count += 1
-        if batch_count >= _BATCH_SIZE or i == total:
-            db.set_processed_count(conn, user_id, i)
+            errors += len(batch_ids)
+            logger.warning("Batch header fetch failed at %d-%d: %s", batch_start + 1, batch_end, exc)
+            db.set_processed_count(conn, user_id, batch_end)
             conn.commit()
-            batch_count = 0
-        if i % 100 == 0 or i == total:
-            logger.info("Inbox scan progress: %d/%d (%.0f%%), %d errors", i, total, 100 * i / total, errors)
+            continue
+
+        # Evaluate rules and collect label applications
+        to_label = []
+        for msg_id in batch_ids:
+            result = headers_map.get(msg_id)
+            if not result:
+                errors += 1
+                continue
+            headers, existing_labels = result
+            if not headers:
+                continue
+            for lc in label_configs:
+                matched = any(matches_rule(headers, rule, known_senders) for rule in lc["rules"])
+                apply_id = lc["id"] if matched else lc.get("unknown_label")
+                if apply_id:
+                    gmail_label_id = label_id_cache.get(apply_id)
+                    if gmail_label_id and gmail_label_id not in existing_labels:
+                        to_label.append((msg_id, gmail_label_id))
+
+        # Batch apply labels
+        if to_label:
+            try:
+                applied = batch_apply_labels(service, to_label)
+                logger.info("Batch labeled %d message(s) at %d-%d", applied, batch_start + 1, batch_end)
+            except Exception as exc:
+                logger.warning("Batch label apply failed at %d-%d: %s", batch_start + 1, batch_end, exc)
+
+        db.set_processed_count(conn, user_id, batch_end)
+        conn.commit()
+        if batch_end % 500 == 0 or batch_end == total:
+            logger.info("Inbox scan progress: %d/%d (%.0f%%), %d errors", batch_end, total, 100 * batch_end / total, errors)
 
     profile = get_profile(service)
     db.set_history_id(conn, user_id, int(profile["historyId"]))
+    db.set_inbox_scan_completed(conn, user_id)
     conn.commit()
-    logger.info("Inbox scan complete: %d messages processed", total)
+    logger.info("Inbox scan complete: %d messages processed, %d errors", total, errors)
     return total
 
 

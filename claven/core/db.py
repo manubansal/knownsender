@@ -153,6 +153,23 @@ def set_history_id(conn, user_id: str, history_id: int) -> None:
         )
 
 
+def is_inbox_scan_completed(conn, user_id: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT inbox_scan_completed FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return bool(row[0]) if row else False
+
+
+def set_inbox_scan_completed(conn, user_id: str, completed: bool = True) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET inbox_scan_completed = %s, updated_at = NOW() WHERE user_id = %s",
+            (completed, user_id),
+        )
+
+
 def get_processed_count(conn, user_id: str) -> int:
     with conn.cursor() as cur:
         cur.execute(

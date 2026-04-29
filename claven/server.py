@@ -45,6 +45,9 @@ if _LOG_FILE:
 else:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+logging.getLogger("googleapiclient.discovery").setLevel(logging.WARNING)
+logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Claven")
@@ -458,15 +461,15 @@ def api_me(request: Request):
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
+        # Auto-trigger inbox scan if sent scan is done and initial inbox scan never completed
+        inbox_scan_done = db.is_inbox_scan_completed(conn, session["user_id"])
+
         pending_count = (
             max(0, inbox_count - processed_count) if inbox_count is not None else None
         )
-
-        # Auto-trigger inbox scan if sent scan is done and inbox hasn't been fully scanned
         if (sent_scan_progress["status"] == "complete"
                 and history_id is not None
-                and inbox_count is not None
-                and processed_count < inbox_count
+                and not inbox_scan_done
                 and session["user_id"] not in _inbox_scan_running):
             threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
 

@@ -344,6 +344,14 @@ export default function DashboardPage() {
                         </div>
                       );
                     })()}
+                    <div className="flex justify-between gap-4 items-center mt-3 pt-2 border-t border-border/50">
+                      <span className="text-xs font-semibold">Noise reduced</span>
+                      <span className="text-xs font-semibold tabular-nums">
+                        {filtered_in_count !== null && filtered_out_count !== null && (filtered_in_count + filtered_out_count) > 0
+                          ? `${Math.round((filtered_out_count / (filtered_in_count + filtered_out_count)) * 100)}%`
+                          : "—"}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
