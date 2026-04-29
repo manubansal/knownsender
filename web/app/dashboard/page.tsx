@@ -19,6 +19,8 @@ type MeResponse = {
   sent_scan_status: string | null;
   inbox_scan_in_progress: boolean;
   processed_count: number;
+  last_processed_at: string | null;
+  newest_labeled_at: string | null;
   pending_count: number | null;
   unread_count: number | null;
   read_count: number | null;
@@ -340,6 +342,28 @@ export default function DashboardPage() {
                                 <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
                               </div>
                             )}
+                            <div className="flex justify-between gap-4 items-center mt-1 pt-1 border-t border-border/30">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                                Last labeled
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {state.data.last_processed_at
+                                  ? formatRelativeTime(new Date(state.data.last_processed_at))
+                                  : "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                                Newest labeled
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {state.data.newest_labeled_at
+                                  ? formatRelativeTime(new Date(state.data.newest_labeled_at))
+                                  : "—"}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       );

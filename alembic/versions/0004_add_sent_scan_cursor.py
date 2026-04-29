@@ -35,9 +35,19 @@ def upgrade() -> None:
         "scan_state",
         sa.Column("inbox_scan_completed", sa.Boolean(), server_default="false", nullable=False),
     )
+    op.add_column(
+        "scan_state",
+        sa.Column("last_processed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "scan_state",
+        sa.Column("newest_labeled_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("scan_state", "newest_labeled_at")
+    op.drop_column("scan_state", "last_processed_at")
     op.drop_column("scan_state", "inbox_scan_completed")
     op.drop_column("scan_state", "sent_scan_status")
     op.drop_column("scan_state", "sent_messages_total")
