@@ -300,43 +300,58 @@ def apply_label(service, message_id, label_id):
     logger.debug("Applied label %s to message %s", label_id, message_id)
 
 
-_BATCH_LIMIT = 20
+_BATCH_LIMIT = 5
 
 
-def batch_get_message_metadata(service, message_ids, metadata_headers=None):
-    """Fetch metadata for up to 100 messages in a single batch request.
+def batch_get_message_metadata(service, message_ids, metadata_headers=None, max_retries=3):
+    """Fetch metadata for up to _BATCH_LIMIT messages in a single batch request.
 
+    Retries failed messages (429/503) with exponential backoff up to max_retries.
     Returns {message_id: (headers_dict, label_ids_list, internal_date_ms)}
-    for successful fetches.  internal_date_ms is milliseconds since epoch
-    (from Gmail's internalDate field), or None if absent.
-    Failed fetches are omitted from the result.
+    for successful fetches.  Failed fetches are omitted from the result.
     """
+    import time as _time
     fetch_headers = metadata_headers or ["From", "Subject", "To"]
     header_names = {h.lower() for h in fetch_headers}
     results = {}
+    pending = list(message_ids[:_BATCH_LIMIT])
 
-    def _callback(request_id, response, exception):
-        if exception:
-            logger.warning("Batch get failed for %s: %s", request_id, exception)
-            return
-        headers = {}
-        for header in response.get("payload", {}).get("headers", []):
-            name = header["name"].lower()
-            if name in header_names:
-                headers[name] = header["value"]
-        internal_date = response.get("internalDate")
-        results[request_id] = (headers, response.get("labelIds", []), int(internal_date) if internal_date else None)
+    for attempt in range(max_retries + 1):
+        if not pending:
+            break
+        if attempt > 0:
+            delay = min(5 * (2 ** (attempt - 1)), 30)
+            logger.info("Retrying %d failed messages (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
+            _time.sleep(delay)
 
-    batch = service.new_batch_http_request(callback=_callback)
-    for msg_id in message_ids[:_BATCH_LIMIT]:
-        batch.add(
-            service.users().messages().get(
-                userId="me", id=msg_id, format="metadata",
-                metadataHeaders=fetch_headers,
-            ),
-            request_id=msg_id,
-        )
-    batch.execute()
+        failed = []
+
+        def _callback(request_id, response, exception):
+            if exception:
+                failed.append(request_id)
+                return
+            headers = {}
+            for header in response.get("payload", {}).get("headers", []):
+                name = header["name"].lower()
+                if name in header_names:
+                    headers[name] = header["value"]
+            internal_date = response.get("internalDate")
+            results[request_id] = (headers, response.get("labelIds", []), int(internal_date) if internal_date else None)
+
+        batch = service.new_batch_http_request(callback=_callback)
+        for msg_id in pending:
+            batch.add(
+                service.users().messages().get(
+                    userId="me", id=msg_id, format="metadata",
+                    metadataHeaders=fetch_headers,
+                ),
+                request_id=msg_id,
+            )
+        batch.execute()
+        pending = failed
+
+    if pending:
+        logger.warning("Batch get gave up on %d messages after %d retries", len(pending), max_retries)
     return results
 
 
@@ -345,28 +360,45 @@ def batch_get_message_headers(service, message_ids):
     return batch_get_message_metadata(service, message_ids, ["From", "Subject", "To"])
 
 
-def batch_apply_labels(service, message_label_pairs):
-    """Apply labels to up to 100 messages in a single batch request.
+def batch_apply_labels(service, message_label_pairs, max_retries=3):
+    """Apply labels to up to _BATCH_LIMIT messages in a single batch request.
 
-    message_label_pairs: list of (message_id, label_id) tuples.
+    Retries failed messages (429/503) with exponential backoff.
     Returns the number of successful applications.
     """
+    import time as _time
     applied = 0
+    pairs_by_id = {msg_id: label_id for msg_id, label_id in message_label_pairs[:_BATCH_LIMIT]}
+    pending = list(pairs_by_id.keys())
 
-    def _callback(request_id, response, exception):
-        nonlocal applied
-        if exception:
-            logger.warning("Batch label failed for %s: %s", request_id, exception)
-            return
-        applied += 1
+    for attempt in range(max_retries + 1):
+        if not pending:
+            break
+        if attempt > 0:
+            delay = min(5 * (2 ** (attempt - 1)), 30)
+            logger.info("Retrying %d failed label applies (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
+            _time.sleep(delay)
 
-    batch = service.new_batch_http_request(callback=_callback)
-    for msg_id, label_id in message_label_pairs[:_BATCH_LIMIT]:
-        batch.add(
-            service.users().messages().modify(
-                userId="me", id=msg_id, body={"addLabelIds": [label_id]},
-            ),
-            request_id=msg_id,
-        )
-    batch.execute()
+        failed = []
+
+        def _callback(request_id, response, exception):
+            nonlocal applied
+            if exception:
+                failed.append(request_id)
+                return
+            applied += 1
+
+        batch = service.new_batch_http_request(callback=_callback)
+        for msg_id in pending:
+            batch.add(
+                service.users().messages().modify(
+                    userId="me", id=msg_id, body={"addLabelIds": [pairs_by_id[msg_id]]},
+                ),
+                request_id=msg_id,
+            )
+        batch.execute()
+        pending = failed
+
+    if pending:
+        logger.warning("Batch apply gave up on %d messages after %d retries", len(pending), max_retries)
     return applied

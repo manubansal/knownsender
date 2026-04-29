@@ -468,7 +468,7 @@ class TestBatchGetMessageMetadata:
         batch_mock.execute.side_effect = fake_execute
         service.new_batch_http_request.return_value = batch_mock
 
-        result = batch_get_message_metadata(service, ["m1", "m2"], ["From"])
+        result = batch_get_message_metadata(service, ["m1", "m2"], ["From"], max_retries=0)
         assert "m1" in result
         assert "m2" not in result
 
@@ -510,7 +510,7 @@ class TestBatchApplyLabels:
         batch_mock.execute.side_effect = fake_execute
         service.new_batch_http_request.return_value = batch_mock
 
-        result = batch_apply_labels(service, [("m1", "L1"), ("m2", "L1"), ("m3", "L1")])
+        result = batch_apply_labels(service, [("m1", "L1"), ("m2", "L1"), ("m3", "L1")], max_retries=0)
         assert result == 2  # m3 failed
 
     def test_returns_zero_when_all_fail(self):
@@ -525,5 +525,5 @@ class TestBatchApplyLabels:
         batch_mock.execute.side_effect = fake_execute
         service.new_batch_http_request.return_value = batch_mock
 
-        result = batch_apply_labels(service, [("m1", "L1")])
+        result = batch_apply_labels(service, [("m1", "L1")], max_retries=0)
         assert result == 0
