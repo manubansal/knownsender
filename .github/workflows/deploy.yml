@@ -102,12 +102,12 @@ jobs:
           sleep 10
 
           # Health check — verifies the server is up and DB is reachable
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.claven.app/healthz)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.claven.app/health)
           if [ "$STATUS" != "200" ]; then
-            echo "FAIL: /healthz returned $STATUS"
+            echo "FAIL: /health returned $STATUS"
             exit 1
           fi
-          echo "OK: /healthz returned 200"
+          echo "OK: /health returned 200"
 
           # Sign-in smoke test — exercises the full /api/me code path
           # Look up test user ID, create a session JWT, and verify /api/me returns 200
