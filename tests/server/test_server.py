@@ -199,6 +199,7 @@ class TestOAuthCallback:
                 mock_creds = MagicMock()
                 mock_creds.id_token = "fake-id-token"
                 mock_creds.refresh_token = None  # Google didn't return one
+                mock_creds.scopes = {"https://www.googleapis.com/auth/gmail.modify", "openid"}
 
                 mock_flow = MagicMock()
                 mock_flow.credentials = mock_creds
@@ -223,6 +224,30 @@ class TestOAuthCallback:
         assert "force_consent=true" in response.headers["location"]
         assert "/oauth/start" in response.headers["location"]
 
+    def test_callback_rejects_missing_gmail_scope(self):
+        """If user unchecks Gmail permission (granular consent), redirect with clear error."""
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+
+                mock_creds = MagicMock()
+                mock_creds.id_token = "fake-id-token"
+                mock_creds.scopes = {"openid", "https://www.googleapis.com/auth/userinfo.email"}
+
+                mock_flow = MagicMock()
+                mock_flow.credentials = mock_creds
+
+                with patch("claven.server.Flow") as mock_flow_cls:
+                    mock_flow_cls.from_client_config.return_value = mock_flow
+                    response = client.get(
+                        f"/oauth/callback?code=abc&state={state}",
+                        follow_redirects=False,
+                    )
+        assert response.status_code == 302
+        assert "error=gmail_scope_missing" in response.headers["location"]
+
     def test_callback_does_not_start_watch(self):
         """oauth_callback stores credentials but never starts the Gmail watch.
         Starting the watch is an explicit user action via POST /api/connect."""
@@ -235,6 +260,7 @@ class TestOAuthCallback:
                 mock_creds = MagicMock()
                 mock_creds.id_token = "fake-id-token"
                 mock_creds.refresh_token = "fake-refresh-token"
+                mock_creds.scopes = {"https://www.googleapis.com/auth/gmail.modify", "openid"}
 
                 mock_flow = MagicMock()
                 mock_flow.credentials = mock_creds
@@ -1148,7 +1174,7 @@ class TestOAuthCallbackSession:
         mock_creds.token = "fake-access-token"
         mock_creds.refresh_token = "fake-refresh-token"
         mock_creds.expiry = None
-        mock_creds.scopes = []
+        mock_creds.scopes = {"https://www.googleapis.com/auth/gmail.modify", "openid", "https://www.googleapis.com/auth/userinfo.email"}
 
         mock_flow = MagicMock()
         mock_flow.credentials = mock_creds
@@ -1211,6 +1237,7 @@ class TestOAuthCallbackSession:
         env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}
         mock_creds = MagicMock()
         mock_creds.id_token = "fake-id-token"
+        mock_creds.scopes = {"https://www.googleapis.com/auth/gmail.modify", "openid"}
         mock_flow = MagicMock()
         mock_flow.credentials = mock_creds
         mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
@@ -1241,6 +1268,7 @@ class TestOAuthCallbackSession:
         mock_creds = MagicMock()
         mock_creds.id_token = "fake-id-token"
         mock_creds.refresh_token = "fake-refresh-token"
+        mock_creds.scopes = {"https://www.googleapis.com/auth/gmail.modify", "openid"}
         mock_flow = MagicMock()
         mock_flow.credentials = mock_creds
         mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")

@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import os
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 import secrets
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, quote
@@ -242,6 +243,13 @@ def oauth_callback(
         logger.warning("Token exchange failed: %s", exc)
         return _error_redirect(base, "token_exchange_failed", str(exc))
     creds = flow.credentials
+
+    # Google's granular permissions lets users uncheck individual scopes.
+    # Verify the required gmail.modify scope was granted.
+    granted = set(creds.scopes or [])
+    if "https://www.googleapis.com/auth/gmail.modify" not in granted:
+        logger.warning("Gmail scope not granted (got: %s)", granted)
+        return _error_redirect(base, "gmail_scope_missing")
 
     try:
         id_info = google_id_token.verify_oauth2_token(

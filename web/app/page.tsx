@@ -10,6 +10,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api.claven.app";
 
 const ERROR_MESSAGES: Record<string, string> = {
   oauth_denied: "You declined the Gmail permission. Grant access to continue.",
+  gmail_scope_missing: "Gmail access was not granted. Please sign in again and check the Gmail checkbox.",
   invalid_state: "The sign-in session expired. Please try again.",
   token_exchange_failed: "Could not complete sign-in. Please try again.",
   token_verification_failed: "Could not verify your account. Please try again.",

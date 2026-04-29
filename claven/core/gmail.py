@@ -303,12 +303,14 @@ def apply_label(service, message_id, label_id):
 _BATCH_LIMIT = 100
 
 
-def batch_get_message_headers(service, message_ids):
-    """Fetch headers and labels for up to 100 messages in a single batch request.
+def batch_get_message_metadata(service, message_ids, metadata_headers=None):
+    """Fetch metadata for up to 100 messages in a single batch request.
 
     Returns {message_id: (headers_dict, label_ids_list)} for successful fetches.
     Failed fetches are omitted from the result.
     """
+    fetch_headers = metadata_headers or ["From", "Subject", "To"]
+    header_names = {h.lower() for h in fetch_headers}
     results = {}
 
     def _callback(request_id, response, exception):
@@ -318,7 +320,7 @@ def batch_get_message_headers(service, message_ids):
         headers = {}
         for header in response.get("payload", {}).get("headers", []):
             name = header["name"].lower()
-            if name in ("from", "subject", "to"):
+            if name in header_names:
                 headers[name] = header["value"]
         results[request_id] = (headers, response.get("labelIds", []))
 
@@ -327,12 +329,17 @@ def batch_get_message_headers(service, message_ids):
         batch.add(
             service.users().messages().get(
                 userId="me", id=msg_id, format="metadata",
-                metadataHeaders=["From", "Subject", "To"],
+                metadataHeaders=fetch_headers,
             ),
             request_id=msg_id,
         )
     batch.execute()
     return results
+
+
+def batch_get_message_headers(service, message_ids):
+    """Fetch From/Subject/To headers for up to 100 messages. Convenience wrapper."""
+    return batch_get_message_metadata(service, message_ids, ["From", "Subject", "To"])
 
 
 def batch_apply_labels(service, message_label_pairs):
