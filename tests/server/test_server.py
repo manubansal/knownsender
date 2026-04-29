@@ -325,6 +325,97 @@ class TestInternalPoll:
         mock_db.increment_processed_count.assert_called_once_with(ANY, "uid-1", 5)
 
 
+class TestInternalBuildKnownSenders:
+    def test_no_auth_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.post("/internal/build-known-senders")
+        assert response.status_code == 401
+
+    def test_wrong_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/internal/build-known-senders",
+                    headers={"Authorization": "Bearer wrong-token"},
+                )
+        assert response.status_code == 401
+
+    def test_no_users_returns_ok(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = []
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        assert response.status_code == 200
+        assert response.json()["processed"] == 0
+
+    def test_calls_build_known_senders_for_each_user(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.build_known_senders") as mock_build:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [
+                    {"id": "uid-1", "email": "a@example.com"},
+                    {"id": "uid-2", "email": "b@example.com"},
+                ]
+                mock_auth.get_service.return_value = MagicMock()
+                mock_build.return_value = {"known_senders": 5, "messages_scanned": 10}
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        assert response.status_code == 200
+        assert response.json()["processed"] == 2
+        assert mock_build.call_count == 2
+
+    def test_returns_known_senders_count_per_user(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.build_known_senders") as mock_build:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "a@example.com"}]
+                mock_auth.get_service.return_value = MagicMock()
+                mock_build.return_value = {"known_senders": 42, "messages_scanned": 100}
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        result = response.json()["results"][0]
+        assert result["known_senders"] == 42
+        assert result["messages_scanned"] == 100
+        assert result["status"] == "ok"
+
+    def test_user_error_recorded_without_aborting_others(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.build_known_senders") as mock_build:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [
+                    {"id": "uid-1", "email": "a@example.com"},
+                    {"id": "uid-2", "email": "b@example.com"},
+                ]
+                mock_auth.get_service.return_value = MagicMock()
+                mock_build.side_effect = [Exception("Gmail API error"), {"known_senders": 3, "messages_scanned": 5}]
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        results = response.json()["results"]
+        assert results[0]["status"] == "error"
+        assert results[1]["status"] == "ok"
+
+
 class TestWebhookGmail:
     # ── Auth ──────────────────────────────────────────────────────────────────
 

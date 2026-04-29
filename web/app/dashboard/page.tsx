@@ -14,6 +14,8 @@ type MeResponse = {
   connected: boolean;
   history_id: number | null;
   known_senders: number;
+  sent_messages_scanned: number;
+  sent_messages_total: number | null;
   processed_count: number;
   pending_count: number | null;
   unread_count: number | null;
@@ -157,7 +159,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, processed_count, pending_count, unread_count, read_count, inbox_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, processed_count, pending_count, unread_count, read_count, inbox_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
   const { labels } = state;
 
   return (
@@ -226,6 +228,14 @@ export default function DashboardPage() {
                     <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
                       <div className="flex justify-between mt-1.5">
+                        <span className="text-xs text-muted-foreground">Sent messages scanned</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {sent_messages_scanned}{sent_messages_total !== null ? ` / ${sent_messages_total}` : ""}
+                        </span>
+                      </div>
+                    )}
+                    {isKnownSender && (
+                      <div className="flex justify-between">
                         <span className="text-xs text-muted-foreground">Known senders</span>
                         <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
                       </div>

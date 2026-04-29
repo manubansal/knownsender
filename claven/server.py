@@ -6,6 +6,7 @@ Endpoints:
   GET  /oauth/start             — begin OAuth flow, redirect to Google consent
   GET  /oauth/callback          — exchange OAuth code for tokens, store in DB
   POST /internal/poll           — Cloud Scheduler trigger: poll Gmail history for all users
+  POST /internal/build-known-senders — build/update known senders list for all users
   POST /webhook/gmail           — Pub/Sub push handler: incoming Gmail notifications
 """
 
@@ -28,6 +29,7 @@ import claven.core.db as db
 from claven.core.gmail import build_label_id_cache, get_profile
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
+from claven.core.scan import build_known_senders
 from claven.core.watch import start_watch, stop_watch
 
 logger = logging.getLogger(__name__)
@@ -319,6 +321,36 @@ def internal_poll(request: Request):
     return {"processed": len(results), "results": results}
 
 
+@app.post("/internal/build-known-senders")
+def internal_build_known_senders(request: Request):
+    """Build or update the known senders list for all connected users.
+
+    Scans each user's Sent mail and populates their sent_recipients rows.
+    Uses a per-user cursor (sent_scan_cursor) for incremental updates —
+    only new sent messages are processed on subsequent runs.
+
+    Intended to be triggered by a Cloud Scheduler job or by /api/connect.
+    """
+    _require_internal_auth(request)
+    results = []
+
+    with db.get_connection() as conn:
+        users = db.get_all_users(conn)
+
+    for user in users:
+        user_id = user["id"]
+        with db.get_connection() as conn:
+            try:
+                service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+                result = build_known_senders(service, conn, user_id)
+                results.append({"user_id": user_id, "status": "ok", **result})
+            except Exception as exc:
+                logger.exception("Known senders scan failed for user %s", user_id, exc_info=exc)
+                results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
+
+    return {"processed": len(results), "results": results}
+
+
 @app.get("/api/me")
 def api_me(request: Request):
     session = _get_session(request)
@@ -328,11 +360,13 @@ def api_me(request: Request):
             raise HTTPException(status_code=404, detail="User not found")
         history_id = db.get_history_id(conn, session["user_id"])
         known_senders = db.count_known_senders(conn, session["user_id"])
+        sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         processed_count = db.get_processed_count(conn, session["user_id"])
 
         unread_count = None
         read_count = None
         inbox_count = None
+        sent_total_live = None
         filtered_in_count = None
         filtered_out_count = None
         unlabeled_count = None
@@ -345,6 +379,9 @@ def api_me(request: Request):
                 userId="me", labelIds=["INBOX"], q="is:read", maxResults=1
             ).execute()
             read_count = read_result.get("resultSizeEstimate")
+
+            sent_label = service.users().labels().get(userId="me", id="SENT").execute()
+            sent_total_live = sent_label.get("messagesTotal")
 
             label_configs = load_config().get("labels", [])
             all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
@@ -378,6 +415,8 @@ def api_me(request: Request):
         "connected": history_id is not None,
         "history_id": history_id,
         "known_senders": known_senders,
+        "sent_messages_scanned": sent_scan_progress["messages_scanned"],
+        "sent_messages_total": sent_total_live if sent_total_live is not None else sent_scan_progress["messages_total"],
         "processed_count": processed_count,
         "pending_count": pending_count,
         "filtered_in_count": filtered_in_count,
