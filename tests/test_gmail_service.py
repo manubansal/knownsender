@@ -428,3 +428,102 @@ def test_extract_recipients_extracts_cc_and_bcc():
     }
     recipients, _ = _extract_recipients_from_messages(service, [{"id": "m1"}])
     assert recipients == {"alice@example.com", "bob@example.com", "charlie@example.com"}
+
+
+# ---------------------------------------------------------------------------
+# Batch functions
+# ---------------------------------------------------------------------------
+
+class TestBatchGetMessageMetadata:
+    def test_returns_headers_for_successful_messages(self):
+        from claven.core.gmail import batch_get_message_metadata
+        service = MagicMock()
+
+        def fake_execute():
+            # Simulate the batch callback being called for each request
+            callback = service.new_batch_http_request.call_args[1]["callback"]
+            callback("m1", {"payload": {"headers": [{"name": "From", "value": "a@x.com"}]}, "labelIds": ["INBOX"]}, None)
+            callback("m2", {"payload": {"headers": [{"name": "From", "value": "b@x.com"}]}, "labelIds": []}, None)
+
+        batch_mock = MagicMock()
+        batch_mock.execute.side_effect = fake_execute
+        service.new_batch_http_request.return_value = batch_mock
+
+        result = batch_get_message_metadata(service, ["m1", "m2"], ["From"])
+        assert "m1" in result
+        assert "m2" in result
+        assert result["m1"][0] == {"from": "a@x.com"}
+        assert result["m2"][0] == {"from": "b@x.com"}
+
+    def test_omits_failed_messages(self):
+        from claven.core.gmail import batch_get_message_metadata
+        service = MagicMock()
+
+        def fake_execute():
+            callback = service.new_batch_http_request.call_args[1]["callback"]
+            callback("m1", {"payload": {"headers": [{"name": "From", "value": "a@x.com"}]}, "labelIds": []}, None)
+            callback("m2", None, Exception("429 rate limit"))
+
+        batch_mock = MagicMock()
+        batch_mock.execute.side_effect = fake_execute
+        service.new_batch_http_request.return_value = batch_mock
+
+        result = batch_get_message_metadata(service, ["m1", "m2"], ["From"])
+        assert "m1" in result
+        assert "m2" not in result
+
+    def test_respects_custom_headers(self):
+        from claven.core.gmail import batch_get_message_metadata
+        service = MagicMock()
+
+        def fake_execute():
+            callback = service.new_batch_http_request.call_args[1]["callback"]
+            callback("m1", {"payload": {"headers": [
+                {"name": "To", "value": "a@x.com"},
+                {"name": "Cc", "value": "b@x.com"},
+                {"name": "From", "value": "sender@x.com"},  # not requested
+            ]}, "labelIds": []}, None)
+
+        batch_mock = MagicMock()
+        batch_mock.execute.side_effect = fake_execute
+        service.new_batch_http_request.return_value = batch_mock
+
+        result = batch_get_message_metadata(service, ["m1"], ["To", "Cc"])
+        headers = result["m1"][0]
+        assert "to" in headers
+        assert "cc" in headers
+        assert "from" not in headers  # not in requested headers
+
+
+class TestBatchApplyLabels:
+    def test_returns_count_of_successful_applications(self):
+        from claven.core.gmail import batch_apply_labels
+        service = MagicMock()
+
+        def fake_execute():
+            callback = service.new_batch_http_request.call_args[1]["callback"]
+            callback("m1", {}, None)
+            callback("m2", {}, None)
+            callback("m3", None, Exception("error"))
+
+        batch_mock = MagicMock()
+        batch_mock.execute.side_effect = fake_execute
+        service.new_batch_http_request.return_value = batch_mock
+
+        result = batch_apply_labels(service, [("m1", "L1"), ("m2", "L1"), ("m3", "L1")])
+        assert result == 2  # m3 failed
+
+    def test_returns_zero_when_all_fail(self):
+        from claven.core.gmail import batch_apply_labels
+        service = MagicMock()
+
+        def fake_execute():
+            callback = service.new_batch_http_request.call_args[1]["callback"]
+            callback("m1", None, Exception("error"))
+
+        batch_mock = MagicMock()
+        batch_mock.execute.side_effect = fake_execute
+        service.new_batch_http_request.return_value = batch_mock
+
+        result = batch_apply_labels(service, [("m1", "L1")])
+        assert result == 0

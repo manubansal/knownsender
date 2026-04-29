@@ -339,6 +339,10 @@ def internal_poll(request: Request):
         user_id = user["id"]
         with db.get_connection() as conn:
             try:
+                if not db.try_lock_user_scan(conn, user_id):
+                    results.append({"user_id": user_id, "status": "skipped", "detail": "locked"})
+                    continue
+
                 history_id = db.get_history_id(conn, user_id)
                 if not history_id:
                     continue
@@ -365,8 +369,9 @@ def internal_poll(request: Request):
                 label_id_cache = _label_id_cache_for_config(service, label_configs)
                 count = poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders)
                 db.set_history_id(conn, user_id, latest_history_id)
-                if count is not None:
+                if count is not None and count > 0:
                     db.increment_processed_count(conn, user_id, count)
+                    db.touch_last_processed(conn, user_id)
                 results.append({"user_id": user_id, "status": "ok"})
             except Exception as exc:
                 logger.exception("Error processing user %s", user_id, exc_info=exc)
@@ -416,13 +421,13 @@ def api_me(request: Request):
         known_senders = db.count_known_senders(conn, session["user_id"])
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         processed_count = db.get_processed_count(conn, session["user_id"])
+        last_processed_at = db.get_last_processed_at(conn, session["user_id"])
+        newest_labeled_at = db.get_newest_labeled_at(conn, session["user_id"])
 
         # Auto-trigger sent scan if it has never run for this user
         if _needs_sent_scan(sent_scan_progress):
             has_tokens = db.load_tokens(conn, session["user_id"]) is not None
             if has_tokens:
-                db.set_sent_scan_status(conn, session["user_id"], "in_progress")
-                sent_scan_progress["status"] = "in_progress"
                 threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
 
         unread_count = None
@@ -490,6 +495,8 @@ def api_me(request: Request):
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_in_progress": session["user_id"] in _inbox_scan_running,
         "processed_count": processed_count,
+        "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
+        "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
         "pending_count": pending_count,
         "filtered_in_count": filtered_in_count,
         "filtered_out_count": filtered_out_count,
@@ -517,6 +524,9 @@ def _run_inbox_scan(user_id: str):
     label_configs = load_config().get("labels", [])
     try:
         with db.get_connection() as conn:
+            if not db.try_lock_user_scan(conn, user_id):
+                logger.info("Inbox scan skipped for %s — locked by another instance", user_id)
+                return
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
@@ -529,14 +539,16 @@ def _run_inbox_scan(user_id: str):
 
 
 def _run_sent_scan(user_id: str):
-    """Background task: build the known senders list, then poll inbox.
+    """Background task: build the known senders list, then scan inbox.
 
-    After the sent scan completes, immediately processes any inbox messages
-    that arrived since the history_id was set at connect time. This ensures
-    labeling starts without waiting for an external trigger (Pub/Sub or
-    Cloud Scheduler).
+    Acquires a row-level lock on scan_state so only one instance processes
+    a user at a time. After the sent scan completes, immediately labels
+    all inbox messages.
     """
     with db.get_connection() as conn:
+        if not db.try_lock_user_scan(conn, user_id):
+            logger.info("Sent scan skipped for %s — locked by another instance", user_id)
+            return
         try:
             db.set_sent_scan_status(conn, user_id, "in_progress")
         except Exception:
@@ -544,9 +556,11 @@ def _run_sent_scan(user_id: str):
             return
     try:
         with db.get_connection() as conn:
+            if not db.try_lock_user_scan(conn, user_id):
+                logger.info("Sent scan skipped for %s — locked by another instance", user_id)
+                return
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             build_known_senders(service, conn, user_id)
-        with db.get_connection() as conn:
             db.set_sent_scan_status(conn, user_id, "complete")
     except Exception as exc:
         logger.exception("Sent scan failed for user %s: %s", user_id, exc)
@@ -562,6 +576,9 @@ def _run_sent_scan(user_id: str):
     label_configs = load_config().get("labels", [])
     try:
         with db.get_connection() as conn:
+            if not db.try_lock_user_scan(conn, user_id):
+                logger.info("Post-scan inbox scan skipped for %s — locked", user_id)
+                return
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
@@ -654,6 +671,10 @@ async def webhook_gmail(request: Request):
             logger.info("Webhook for unknown user %s — acknowledging", email)
             return {"status": "ok", "detail": "unknown user"}
 
+        if not db.try_lock_user_scan(conn, user["id"]):
+            logger.info("Webhook for %s skipped — locked by another instance", email)
+            return {"status": "ok", "detail": "locked"}
+
         stored_history_id = db.get_history_id(conn, user["id"])
         if not stored_history_id:
             logger.info("No history_id for %s — skipping", email)
@@ -678,7 +699,8 @@ async def webhook_gmail(request: Request):
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)
         db.set_history_id(conn, user["id"], notification_history_id)
-        if count is not None:
+        if count is not None and count > 0:
             db.increment_processed_count(conn, user["id"], count)
+            db.touch_last_processed(conn, user["id"])
 
     return {"status": "ok"}

@@ -509,6 +509,20 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
   - `/internal/renew-watches` — renew all active `watch()` subscriptions
 - [ ] Implement session management (JWT or server-side sessions)
 
+## Dashboard
+
+- [x] Sign-up/sign-in shows connected and ready to start filtering (not filtering yet)
+- [x] Show count of total unread messages in inbox
+- [x] Update status to full scan in progress when running the initial scan (spinners)
+- [x] Update status to live scan when initial scan finishes (green play icon)
+- [x] Display current rule configuration in info box
+- [x] Show number of known senders
+- [x] Display number of emails processed, filtered-in, filtered-out
+- [x] Show last email processed at (system timestamp + newest email date)
+- [x] Show total filter-out percentage (noise reduced metric)
+- [x] Add switch account button
+- [x] Add Pub/Sub notifications for new sent messages (low-latency known senders updates)
+
 ## Google's App Verification
 
 - [ ] Add a privacy policy and terms of service page (required before submitting for verification)

@@ -306,7 +306,9 @@ _BATCH_LIMIT = 20
 def batch_get_message_metadata(service, message_ids, metadata_headers=None):
     """Fetch metadata for up to 100 messages in a single batch request.
 
-    Returns {message_id: (headers_dict, label_ids_list)} for successful fetches.
+    Returns {message_id: (headers_dict, label_ids_list, internal_date_ms)}
+    for successful fetches.  internal_date_ms is milliseconds since epoch
+    (from Gmail's internalDate field), or None if absent.
     Failed fetches are omitted from the result.
     """
     fetch_headers = metadata_headers or ["From", "Subject", "To"]
@@ -322,7 +324,8 @@ def batch_get_message_metadata(service, message_ids, metadata_headers=None):
             name = header["name"].lower()
             if name in header_names:
                 headers[name] = header["value"]
-        results[request_id] = (headers, response.get("labelIds", []))
+        internal_date = response.get("internalDate")
+        results[request_id] = (headers, response.get("labelIds", []), int(internal_date) if internal_date else None)
 
     batch = service.new_batch_http_request(callback=_callback)
     for msg_id in message_ids[:_BATCH_LIMIT]:

@@ -1,4 +1,4 @@
-"""Tests for build_known_senders — DB-backed known senders scan from Sent mail."""
+"""Tests for scan functions — build_known_senders and scan_inbox."""
 import pytest
 from unittest.mock import MagicMock, patch, call
 
@@ -31,7 +31,7 @@ def _batch_metadata(**msg_map):
     Usage: _batch_metadata(s1={"to": "a@x.com"}, s2={"to": "b@x.com", "cc": "c@x.com"})
     Returns: {"s1": ({"to": "a@x.com"}, []), "s2": ({"to": "b@x.com", "cc": "c@x.com"}, [])}
     """
-    return {msg_id: (headers, []) for msg_id, headers in msg_map.items()}
+    return {msg_id: (headers, [], None) for msg_id, headers in msg_map.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +61,7 @@ class TestFullScan:
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=2), \
              patch("claven.core.scan.list_messages", return_value=p["claven.core.scan.list_messages"]) as mock_list, \
              patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
@@ -76,6 +77,7 @@ class TestFullScan:
              patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=2), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}, {"id": "s2"}]), \
              patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
@@ -93,6 +95,7 @@ class TestFullScan:
              patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=3), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}]), \
              patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
@@ -111,6 +114,7 @@ class TestFullScan:
              patch("claven.core.scan.db.bulk_add_known_senders") as mock_bulk, \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=1), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}]), \
              patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
@@ -128,6 +132,7 @@ class TestFullScan:
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor") as mock_cursor, \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=0), \
              patch("claven.core.scan.list_messages", return_value=[]), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
@@ -143,6 +148,7 @@ class TestFullScan:
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor") as mock_cursor, \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=1), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}]), \
              patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
@@ -158,6 +164,7 @@ class TestFullScan:
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=7), \
              patch("claven.core.scan.list_messages", return_value=[{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]), \
              patch("claven.core.scan.batch_get_message_metadata", return_value=_batch_metadata(
@@ -244,6 +251,7 @@ class TestIncrementalUpdate:
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=1), \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}):
             build_known_senders(service, conn, "user-1")
@@ -275,6 +283,7 @@ class TestInterruption:
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor") as mock_cursor, \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=0):
             build_known_senders(service, conn, "user-1", should_continue=lambda: False)
         mock_cursor.assert_not_called()
@@ -289,6 +298,144 @@ class TestInterruption:
              patch("claven.core.scan.db.bulk_add_known_senders"), \
              patch("claven.core.scan.db.set_sent_scan_cursor"), \
              patch("claven.core.scan.db.set_sent_scan_progress"), \
+             patch("claven.core.scan.db.get_sent_scan_progress", return_value={"messages_scanned": 0, "messages_total": None, "status": None, "updated_at": None}), \
              patch("claven.core.scan.db.count_known_senders", return_value=0):
             result = build_known_senders(service, conn, "user-1", should_continue=lambda: False)
         assert result["messages_scanned"] == 0  # interrupted before first batch
+
+
+# ---------------------------------------------------------------------------
+# scan_inbox
+# ---------------------------------------------------------------------------
+
+_LABEL_CONFIGS = [{
+    "id": "known-sender",
+    "name": "Known Sender",
+    "unknown_label": "unknown-sender",
+    "rules": [{"field": "from", "known_sender": True}],
+}]
+_LABEL_ID_CACHE = {"known-sender": "Label_K", "unknown-sender": "Label_U"}
+
+
+class TestScanInbox:
+    def _common_patches(self):
+        """Return dict of common patches for scan_inbox tests."""
+        return {
+            "claven.core.scan.time.sleep": None,  # skip throttle
+        }
+
+    def test_returns_zero_for_empty_inbox(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        with patch("claven.core.scan.list_messages", return_value=[]), \
+             patch("claven.core.scan.time.sleep"):
+            result = scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE)
+        assert result == 0
+
+    def test_processes_all_messages_and_returns_count(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": f"m{i}"} for i in range(3)]
+        headers_map = {
+            "m0": ({"from": "alice@x.com"}, [], None),
+            "m1": ({"from": "bob@x.com"}, [], None),
+            "m2": ({"from": "carol@x.com"}, [], None),
+        }
+        with patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=3), \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db") as mock_db, \
+             patch("claven.core.scan.time.sleep"):
+            result = scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
+        assert result == 3
+
+    def test_applies_known_sender_label(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}]
+        headers_map = {"m1": ({"from": "alice@x.com"}, [], None)}
+        with patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1) as mock_apply, \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders={"alice@x.com"})
+        # Should apply known-sender label
+        pairs = mock_apply.call_args[0][1]
+        assert ("m1", "Label_K") in pairs
+
+    def test_applies_unknown_sender_label(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}]
+        headers_map = {"m1": ({"from": "stranger@x.com"}, [], None)}
+        with patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1) as mock_apply, \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
+        pairs = mock_apply.call_args[0][1]
+        assert ("m1", "Label_U") in pairs
+
+    def test_skips_already_labeled_messages(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}]
+        # Message already has the unknown-sender label
+        headers_map = {"m1": ({"from": "stranger@x.com"}, ["Label_U"], None)}
+        with patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels") as mock_apply, \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
+        mock_apply.assert_not_called()
+
+    def test_sets_processed_count_per_batch(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": f"m{i}"} for i in range(3)]
+        headers_map = {f"m{i}": ({"from": f"u{i}@x.com"}, [], None) for i in range(3)}
+        with patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=3), \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db") as mock_db, \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
+        mock_db.set_processed_count.assert_called()
+
+    def test_sets_inbox_scan_completed(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}]
+        headers_map = {"m1": ({"from": "a@x.com"}, [], None)}
+        with patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1), \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "42"}), \
+             patch("claven.core.scan.db") as mock_db, \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
+        mock_db.set_inbox_scan_completed.assert_called_once_with(conn, "u1")
+        mock_db.set_history_id.assert_called_once_with(conn, "u1", 42)
+
+    def test_continues_on_batch_header_fetch_failure(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}, {"id": "m2"}]
+        with patch("claven.core.scan.list_messages", return_value=messages), \
+             patch("claven.core.scan.batch_get_message_headers", side_effect=Exception("API error")), \
+             patch("claven.core.scan.batch_apply_labels") as mock_apply, \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan.time.sleep"):
+            result = scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE)
+        # Should still complete (not crash), no labels applied
+        assert result == 2
+        mock_apply.assert_not_called()
