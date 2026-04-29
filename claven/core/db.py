@@ -132,6 +132,15 @@ def clear_watch_state(conn, user_id: str) -> None:
 
 # ── Scan state ────────────────────────────────────────────────────────────────
 
+def ensure_scan_state(conn, user_id: str) -> None:
+    """Create a scan_state row if one doesn't exist yet."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO scan_state (user_id, history_id) VALUES (%s, 0) ON CONFLICT DO NOTHING",
+            (user_id,),
+        )
+
+
 def try_lock_user_scan(conn, user_id: str) -> bool:
     """Attempt to acquire a row-level lock on the user's scan_state row.
 
@@ -139,9 +148,11 @@ def try_lock_user_scan(conn, user_id: str) -> bool:
     already holds the lock gets False immediately (no blocking).  The lock
     is released when the transaction commits or rolls back.
 
+    Creates the scan_state row if it doesn't exist yet.
+
     Returns True if the lock was acquired, False if another process holds it.
-    Returns False if no scan_state row exists for this user.
     """
+    ensure_scan_state(conn, user_id)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM scan_state WHERE user_id = %s FOR UPDATE SKIP LOCKED",
@@ -188,6 +199,23 @@ def get_last_processed_at(conn, user_id: str):
         )
         row = cur.fetchone()
         return row[0] if row else None
+
+
+def get_inbox_scan_status(conn, user_id: str) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT inbox_scan_status FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def set_inbox_scan_status(conn, user_id: str, status: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET inbox_scan_status = %s, updated_at = NOW() WHERE user_id = %s",
+            (status, user_id),
+        )
 
 
 def update_newest_labeled(conn, user_id: str, message_date_ms: int) -> None:
