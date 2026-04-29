@@ -86,9 +86,14 @@ def build_known_senders(service, conn, user_id, should_continue=None):
         messages = list_messages(service, query="in:sent", max_results=None)
         total = len(messages)
         messages_total = total
-        logger.info("Full sent scan: %d messages to process", total)
+        resume_from = prior["messages_scanned"] if prior["messages_scanned"] > 0 else 0
+        if resume_from > 0 and resume_from < total:
+            logger.info("Full sent scan: resuming from %d/%d", resume_from, total)
+        else:
+            resume_from = 0
+        logger.info("Full sent scan: %d messages to process (%d already done)", total, resume_from)
 
-        for batch_start in range(0, total, _BATCH_SIZE):
+        for batch_start in range(resume_from, total, _BATCH_SIZE):
             if batch_start > 0:
                 time.sleep(1)
             if should_continue is not None and not should_continue():
@@ -114,7 +119,7 @@ def build_known_senders(service, conn, user_id, should_continue=None):
                 result = metadata.get(msg_id)
                 if not result:
                     continue
-                headers, _ = result
+                headers = result[0]
                 for field in ("to", "cc", "bcc"):
                     if value := headers.get(field):
                         for addr in _parse_addresses(value):
@@ -173,12 +178,13 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
 
         # Evaluate rules and collect label applications
         to_label = []
+        newest_date_ms = None
         for msg_id in batch_ids:
             result = headers_map.get(msg_id)
             if not result:
                 errors += 1
                 continue
-            headers, existing_labels = result
+            headers, existing_labels, internal_date_ms = result
             if not headers:
                 continue
             for lc in label_configs:
@@ -188,11 +194,17 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                     gmail_label_id = label_id_cache.get(apply_id)
                     if gmail_label_id and gmail_label_id not in existing_labels:
                         to_label.append((msg_id, gmail_label_id))
+                        if internal_date_ms and (newest_date_ms is None or internal_date_ms > newest_date_ms):
+                            newest_date_ms = internal_date_ms
 
         # Batch apply labels
         if to_label:
             try:
                 applied = batch_apply_labels(service, to_label)
+                if applied > 0:
+                    db.touch_last_processed(conn, user_id)
+                    if newest_date_ms:
+                        db.update_newest_labeled(conn, user_id, newest_date_ms)
                 logger.info("Batch labeled %d message(s) at %d-%d", applied, batch_start + 1, batch_end)
             except Exception as exc:
                 logger.warning("Batch label apply failed at %d-%d: %s", batch_start + 1, batch_end, exc)

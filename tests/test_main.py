@@ -122,6 +122,42 @@ class TestProcessMessage:
             # alice is a known sender → should get known-sender label, not unknown-sender
             mock_apply.assert_called_once_with(service, "msg1", "Label_known")
 
+    def test_returns_true_when_label_applied(self):
+        from claven.core.process import process_message
+        service = MagicMock()
+        with patch("claven.core.process.get_message_headers") as mock_headers, \
+             patch("claven.core.process.apply_label"):
+            mock_headers.return_value = ({"from": "newsletter@example.com"}, ["INBOX"])
+            result = process_message(service, "msg1", [_NEWSLETTER_CONFIG], {"newsletter": "Label_123"})
+        assert result is True
+
+    def test_returns_false_when_label_already_present(self):
+        from claven.core.process import process_message
+        service = MagicMock()
+        with patch("claven.core.process.get_message_headers") as mock_headers, \
+             patch("claven.core.process.apply_label"):
+            mock_headers.return_value = ({"from": "newsletter@example.com"}, ["INBOX", "Label_123"])
+            result = process_message(service, "msg1", [_NEWSLETTER_CONFIG], {"newsletter": "Label_123"})
+        assert result is False
+
+    def test_returns_false_when_no_headers(self):
+        from claven.core.process import process_message
+        service = MagicMock()
+        with patch("claven.core.process.get_message_headers") as mock_headers:
+            mock_headers.return_value = (None, [])
+            result = process_message(service, "msg1", [_NEWSLETTER_CONFIG], {"newsletter": "Label_123"})
+        assert result is False
+
+    def test_returns_false_when_no_match_and_no_unknown_label(self):
+        from claven.core.process import process_message
+        service = MagicMock()
+        with patch("claven.core.process.get_message_headers") as mock_headers, \
+             patch("claven.core.process.apply_label") as mock_apply:
+            mock_headers.return_value = ({"from": "friend@example.com"}, ["INBOX"])
+            result = process_message(service, "msg1", [_NEWSLETTER_CONFIG], {"newsletter": "Label_123"})
+        assert result is False
+        mock_apply.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # poll_new_messages

@@ -88,6 +88,128 @@ class TestScanState:
         assert db.get_history_id(db_conn, user_id) == 200
 
 
+class TestProcessedCount:
+    def test_set_and_get_processed_count(self, db_conn):
+        user_id = db.upsert_user(db_conn, "proc@example.com")
+        db.set_history_id(db_conn, user_id, 1)  # create scan_state row
+        db.set_processed_count(db_conn, user_id, 42)
+        assert db.get_processed_count(db_conn, user_id) == 42
+
+    def test_set_overwrites_not_increments(self, db_conn):
+        user_id = db.upsert_user(db_conn, "procoverwrite@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        db.set_processed_count(db_conn, user_id, 100)
+        db.set_processed_count(db_conn, user_id, 50)
+        assert db.get_processed_count(db_conn, user_id) == 50
+
+    def test_increment_processed_count(self, db_conn):
+        user_id = db.upsert_user(db_conn, "procinc@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        db.increment_processed_count(db_conn, user_id, 10)
+        db.increment_processed_count(db_conn, user_id, 5)
+        assert db.get_processed_count(db_conn, user_id) == 15
+
+
+class TestInboxScanCompleted:
+    def test_default_is_false(self, db_conn):
+        user_id = db.upsert_user(db_conn, "inboxdefault@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        assert db.is_inbox_scan_completed(db_conn, user_id) is False
+
+    def test_set_and_check(self, db_conn):
+        user_id = db.upsert_user(db_conn, "inboxcomplete@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        db.set_inbox_scan_completed(db_conn, user_id)
+        assert db.is_inbox_scan_completed(db_conn, user_id) is True
+
+    def test_no_row_returns_false(self, db_conn):
+        user_id = db.upsert_user(db_conn, "inboxnorow@example.com")
+        assert db.is_inbox_scan_completed(db_conn, user_id) is False
+
+
+class TestSentScanProgress:
+    def test_default_progress(self, db_conn):
+        user_id = db.upsert_user(db_conn, "sentdefault@example.com")
+        progress = db.get_sent_scan_progress(db_conn, user_id)
+        assert progress["messages_scanned"] == 0
+        assert progress["messages_total"] is None
+        assert progress["status"] is None
+
+    def test_set_and_get_progress(self, db_conn):
+        user_id = db.upsert_user(db_conn, "sentprog@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        db.set_sent_scan_progress(db_conn, user_id, 500, 1000)
+        progress = db.get_sent_scan_progress(db_conn, user_id)
+        assert progress["messages_scanned"] == 500
+        assert progress["messages_total"] == 1000
+
+    def test_set_status(self, db_conn):
+        user_id = db.upsert_user(db_conn, "sentstatus@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        db.set_sent_scan_status(db_conn, user_id, "in_progress")
+        assert db.get_sent_scan_progress(db_conn, user_id)["status"] == "in_progress"
+        db.set_sent_scan_status(db_conn, user_id, "complete")
+        assert db.get_sent_scan_progress(db_conn, user_id)["status"] == "complete"
+
+    def test_updated_at_is_set(self, db_conn):
+        user_id = db.upsert_user(db_conn, "sentupdated@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        db.set_sent_scan_status(db_conn, user_id, "in_progress")
+        progress = db.get_sent_scan_progress(db_conn, user_id)
+        assert progress["updated_at"] is not None
+
+
+class TestTryLockUserScan:
+    def test_lock_succeeds_when_row_exists(self, db_conn):
+        user_id = db.upsert_user(db_conn, "lockable@example.com")
+        db.set_history_id(db_conn, user_id, 1)
+        assert db.try_lock_user_scan(db_conn, user_id) is True
+
+    def test_lock_fails_when_no_row(self, db_conn):
+        user_id = db.upsert_user(db_conn, "norow@example.com")
+        # No scan_state row — lock should fail
+        assert db.try_lock_user_scan(db_conn, user_id) is False
+
+    def test_second_connection_skips_locked_row(self, db_url):
+        """Two connections: first acquires lock, second gets False."""
+        import psycopg2
+        conn1 = psycopg2.connect(db_url)
+        conn2 = psycopg2.connect(db_url)
+        conn1.autocommit = False
+        conn2.autocommit = False
+        try:
+            # Create user and scan_state on conn1
+            with conn1.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO users (email) VALUES ('lockrace@example.com') RETURNING id::text"
+                )
+                user_id = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO scan_state (user_id, history_id) VALUES (%s, 1)",
+                    (user_id,),
+                )
+            conn1.commit()
+
+            # conn1 acquires lock (inside a transaction)
+            assert db.try_lock_user_scan(conn1, user_id) is True
+
+            # conn2 should be skipped (SKIP LOCKED)
+            assert db.try_lock_user_scan(conn2, user_id) is False
+
+            # After conn1 commits, conn2 can acquire
+            conn1.commit()
+            assert db.try_lock_user_scan(conn2, user_id) is True
+        finally:
+            conn1.rollback()
+            conn2.rollback()
+            # Clean up
+            conn1.autocommit = True
+            with conn1.cursor() as cur:
+                cur.execute("DELETE FROM users WHERE email = 'lockrace@example.com'")
+            conn1.close()
+            conn2.close()
+
+
 class TestGetUserById:
     def test_found(self, db_conn):
         user_id = db.upsert_user(db_conn, "byid@example.com")

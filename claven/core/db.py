@@ -132,6 +132,24 @@ def clear_watch_state(conn, user_id: str) -> None:
 
 # ── Scan state ────────────────────────────────────────────────────────────────
 
+def try_lock_user_scan(conn, user_id: str) -> bool:
+    """Attempt to acquire a row-level lock on the user's scan_state row.
+
+    Uses SELECT ... FOR UPDATE SKIP LOCKED so a concurrent instance that
+    already holds the lock gets False immediately (no blocking).  The lock
+    is released when the transaction commits or rolls back.
+
+    Returns True if the lock was acquired, False if another process holds it.
+    Returns False if no scan_state row exists for this user.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM scan_state WHERE user_id = %s FOR UPDATE SKIP LOCKED",
+            (user_id,),
+        )
+        return cur.fetchone() is not None
+
+
 def get_history_id(conn, user_id: str) -> int | None:
     with conn.cursor() as cur:
         cur.execute("SELECT history_id FROM scan_state WHERE user_id = %s", (user_id,))
@@ -151,6 +169,50 @@ def set_history_id(conn, user_id: str, history_id: int) -> None:
             """,
             (user_id, history_id),
         )
+
+
+def touch_last_processed(conn, user_id: str) -> None:
+    """Set last_processed_at to NOW()."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET last_processed_at = NOW() WHERE user_id = %s",
+            (user_id,),
+        )
+
+
+def get_last_processed_at(conn, user_id: str):
+    """Return last_processed_at timestamp or None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT last_processed_at FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def update_newest_labeled(conn, user_id: str, message_date_ms: int) -> None:
+    """Update newest_labeled_at if the given message date is newer than what's stored."""
+    from datetime import datetime, timezone
+    dt = datetime.fromtimestamp(message_date_ms / 1000, tz=timezone.utc)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE scan_state
+            SET newest_labeled_at = GREATEST(COALESCE(newest_labeled_at, '1970-01-01'::timestamptz), %s)
+            WHERE user_id = %s
+            """,
+            (dt, user_id),
+        )
+
+
+def get_newest_labeled_at(conn, user_id: str):
+    """Return newest_labeled_at timestamp or None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT newest_labeled_at FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
 
 
 def is_inbox_scan_completed(conn, user_id: str) -> bool:

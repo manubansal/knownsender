@@ -57,6 +57,40 @@ _ENV = {
 }
 
 
+class TestNeedsSentScan:
+    def test_complete_returns_false(self):
+        from claven.server import _needs_sent_scan
+        assert _needs_sent_scan({"status": "complete", "updated_at": None}) is False
+
+    def test_none_status_returns_true(self):
+        from claven.server import _needs_sent_scan
+        assert _needs_sent_scan({"status": None, "updated_at": None}) is True
+
+    def test_error_status_returns_true(self):
+        from claven.server import _needs_sent_scan
+        assert _needs_sent_scan({"status": "error", "updated_at": None}) is True
+
+    def test_in_progress_recent_returns_false(self):
+        from claven.server import _needs_sent_scan
+        from datetime import datetime, timezone
+        assert _needs_sent_scan({
+            "status": "in_progress",
+            "updated_at": datetime.now(timezone.utc),
+        }) is False
+
+    def test_in_progress_stale_returns_true(self):
+        from claven.server import _needs_sent_scan
+        from datetime import datetime, timezone, timedelta
+        assert _needs_sent_scan({
+            "status": "in_progress",
+            "updated_at": datetime.now(timezone.utc) - timedelta(minutes=2),
+        }) is True
+
+    def test_in_progress_no_updated_at_returns_true(self):
+        from claven.server import _needs_sent_scan
+        assert _needs_sent_scan({"status": "in_progress", "updated_at": None}) is True
+
+
 class TestHealth:
     def test_returns_ok(self):
         with TestClient(app) as client:
@@ -353,6 +387,23 @@ class TestInternalPoll:
         mock_db.increment_processed_count.assert_called_once_with(ANY, "uid-1", 5)
 
 
+    def test_poll_skips_locked_user(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, patch("claven.server.auth"), patch(
+                "claven.server.poll_new_messages"
+            ) as mock_poll, patch("claven.server.build_known_senders"):
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "u@example.com"}]
+                mock_db.try_lock_user_scan.return_value = False
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/poll",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        assert response.json()["results"][0]["status"] == "skipped"
+        mock_poll.assert_not_called()
+
+
 class TestInternalBuildKnownSenders:
     def test_no_auth_returns_401(self):
         with patch.dict("os.environ", _ENV):
@@ -564,6 +615,25 @@ class TestWebhookGmail:
                             headers=_PUBSUB_HEADERS,
                         )
         mock_db.increment_processed_count.assert_called_once_with(ANY, "uid-1", 3)
+
+    def test_webhook_skips_locked_user(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, patch("claven.server.auth"), patch(
+                "claven.server.poll_new_messages"
+            ) as mock_poll, patch("claven.server.build_known_senders"):
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_email.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.try_lock_user_scan.return_value = False
+                with _mock_pubsub_token():
+                    with TestClient(app) as client:
+                        response = client.post(
+                            "/webhook/gmail",
+                            json=_pubsub_payload(history_id="200"),
+                            headers=_PUBSUB_HEADERS,
+                        )
+        assert response.status_code == 200
+        assert response.json()["detail"] == "locked"
+        mock_poll.assert_not_called()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -923,7 +993,8 @@ class TestApiMe:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["sent_scan_status"] == "in_progress"
+        # Status is still None in the response — the thread sets it after acquiring the lock
+        assert response.json()["sent_scan_status"] is None
         mock_threading.Thread.assert_called_once()
         mock_threading.Thread.return_value.start.assert_called_once()
 
