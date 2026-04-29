@@ -185,6 +185,32 @@ export default function DashboardPage() {
 
           <div className="w-full flex flex-col gap-1">
             <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
+              {inbox_count !== null && (
+                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">In inbox</span>
+                  <span className="tabular-nums">{inbox_count}</span>
+                </div>
+              )}
+              {read_count !== null && (
+                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">Read</span>
+                  <span className="tabular-nums">{read_count}</span>
+                </div>
+              )}
+              {unread_count !== null && (
+                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                  <span className="text-muted-foreground">Unread</span>
+                  <span className="tabular-nums">{unread_count}</span>
+                </div>
+              )}
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Processed</span>
+                <span className="tabular-nums">{processed_count}</span>
+              </div>
+              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Pending</span>
+                <span className="tabular-nums">{pending_count ?? "—"}</span>
+              </div>
               {labels.map((label) => {
                 const isKnownSender = label.rules.some((r) => r.known_sender);
                 const desc = label.description ?? label.rules
@@ -225,32 +251,6 @@ export default function DashboardPage() {
                   </div>
                 );
               })}
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Processed</span>
-                <span className="tabular-nums">{processed_count}</span>
-              </div>
-              <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                <span className="text-muted-foreground">Pending</span>
-                <span className="tabular-nums">{pending_count ?? "—"}</span>
-              </div>
-              {inbox_count !== null && (
-                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">In inbox</span>
-                  <span className="tabular-nums">{inbox_count}</span>
-                </div>
-              )}
-              {read_count !== null && (
-                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">Read</span>
-                  <span className="tabular-nums">{read_count}</span>
-                </div>
-              )}
-              {unread_count !== null && (
-                <div className="flex justify-between py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">Unread</span>
-                  <span className="tabular-nums">{unread_count}</span>
-                </div>
-              )}
             </div>
             <div className="flex items-center justify-between">
               {lastUpdated !== null ? (
