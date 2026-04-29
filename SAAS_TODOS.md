@@ -158,13 +158,13 @@ tests/
 ### Setup tasks
 
 - [ ] Add `pytest`, `pytest-asyncio`, `pytest-postgresql`, `httpx`, `respx`, `freezegun` to `requirements-dev.txt`
-- [ ] Set up `pytest.ini` / `pyproject.toml` with test paths, async mode, and markers (`unit`, `integration`, `server`, `e2e`)
+- [x] Set up `pytest.ini` / `pyproject.toml` with test paths, async mode, and markers (`unit`, `integration`, `server`, `e2e`)
 - [ ] Write `tests/conftest.py` with shared DB session fixture (per-test rollback) and `FakeGmailService` fixture
 - [ ] Write `tests/fixtures/db.py` — test user factory, token factory, scan state factory
 - [ ] Write `tests/fixtures/gmail.py` — `FakeGmailService` with seedable messages, history, sent recipients, and call tracking
-- [ ] Run Alembic migrations against test DB at session start
+- [x] Run Alembic migrations against test DB at session start
 - [ ] Write `tests/README.md` documenting the test plan before any implementation begins
-- [ ] Add unit + integration + server tests to GitHub Actions CI; E2E tests gated to merge-to-main only
+- [x] Add unit + integration + server tests to GitHub Actions CI; E2E tests gated to merge-to-main only
 
 ### Live test concurrency
 
@@ -193,49 +193,49 @@ With a Google Workspace org (e.g. `test.claven.app`) each test run creates and d
 
 ### Unit test cases — `core/rules.py`
 
-- [ ] Rule matches on `From` header
-- [ ] Rule matches on `Subject` header
-- [ ] `known_senders` condition — known sender labelled differently from unknown
-- [ ] Multiple rules — all matching rules applied
-- [ ] No rules match — no label applied, no error
-- [ ] Empty rules list — no error
+- [x] Rule matches on `From` header
+- [x] Rule matches on `Subject` header
+- [x] `known_senders` condition — known sender labelled differently from unknown
+- [x] Multiple rules — all matching rules applied
+- [x] No rules match — no label applied, no error
+- [x] Empty rules list — no error
 - [ ] Regex pattern in rule — matches and non-matches
 
 ### Integration test cases — `core/process.py`
 
-- [ ] New message arrives, matching rule → label applied
-- [ ] New message, no matching rule → nothing applied, no error
-- [ ] Message already has the label → `apply_label` not called again (idempotent)
-- [ ] No new messages since `historyId` → no-op, `historyId` unchanged
-- [ ] `historyId` expired (fake Gmail returns 404) → falls back to full scan
-- [ ] Two concurrent processes on same user → second skips via `SKIP LOCKED`, no duplicate processing
+- [x] New message arrives, matching rule → label applied
+- [x] New message, no matching rule → nothing applied, no error
+- [x] Message already has the label → `apply_label` not called again (idempotent)
+- [x] No new messages since `historyId` → no-op, `historyId` unchanged
+- [x] `historyId` expired (fake Gmail returns 404) → falls back to full scan
+- [x] Two concurrent processes on same user → second skips via `SKIP LOCKED`, no duplicate processing
 
 ### Integration test cases — `core/scan.py`
 
-- [ ] Full scan processes all messages, writes `historyId` to DB on completion
-- [ ] Scan interrupted mid-way → checkpoint saved; resume picks up where it left off, no duplicates
-- [ ] `known_senders` cache built correctly from Sent mail
+- [x] Full scan processes all messages, writes `historyId` to DB on completion
+- [x] Scan interrupted mid-way → checkpoint saved; resume picks up where it left off, no duplicates
+- [x] `known_senders` cache built correctly from Sent mail
 - [ ] `--max-messages` limit respected
 - [ ] Re-run after `known_senders` grew → reprocesses messages to apply new labels
 
 ### Integration test cases — `core/db.py`
 
-- [ ] CRUD for all tables (`users`, `gmail_tokens`, `sent_recipients`, `scan_state`)
+- [x] CRUD for all tables (`users`, `gmail_tokens`, `sent_recipients`, `scan_state`)
 - [ ] Optimistic locking: two processes read same `historyId`, first write wins, second detects conflict
-- [ ] `SKIP LOCKED`: locked user row is skipped, not blocked indefinitely
+- [x] `SKIP LOCKED`: locked user row is skipped, not blocked indefinitely
 
 ### Server test cases — `server.py`
 
-- [ ] `/webhook/gmail` — valid Pub/Sub notification → processing triggered
-- [ ] `/webhook/gmail` — missing or invalid `Authorization` header → 401, no processing
-- [ ] `/webhook/gmail` — malformed payload → 400, no processing
-- [ ] `/internal/poll` — unauthenticated → 401; authenticated → iterates all active users
+- [x] `/webhook/gmail` — valid Pub/Sub notification → processing triggered
+- [x] `/webhook/gmail` — missing or invalid `Authorization` header → 401, no processing
+- [x] `/webhook/gmail` — malformed payload → 400, no processing
+- [x] `/internal/poll` — unauthenticated → 401; authenticated → iterates all active users
 - [ ] `/internal/pull` — pulls from fake Pub/Sub subscription, processes pending notifications
 - [ ] `/internal/scan` — triggers Cloud Run Job for the specified user
 - [ ] `/internal/renew-watches` — renews all expiring watch subscriptions
 - [ ] `/healthz` — returns 200 with DB up; returns 503 with DB unreachable
-- [ ] OAuth `/oauth/start` → redirect contains `state` parameter
-- [ ] OAuth `/oauth/callback` — valid code → tokens stored; missing `state` → 400
+- [x] OAuth `/oauth/start` → redirect contains `state` parameter
+- [x] OAuth `/oauth/callback` — valid code → tokens stored; missing `state` → 400
 
 ### E2E test cases — `cli.py`
 
@@ -249,34 +249,34 @@ With a Google Workspace org (e.g. `test.claven.app`) each test run creates and d
 
 Everything else depends on this shape. Current `main.py`, `gmail_service.py`, and `labeler.py` are flat scripts — restructure into a `claven/` package before adding any new functionality.
 
-- [ ] Create `claven/` package with `core/` subpackage
-- [ ] Move `labeler.py` → `claven/core/rules.py` (no logic changes)
-- [ ] Move Gmail API calls from `gmail_service.py` → `claven/core/gmail.py` (no logic changes)
-- [ ] Extract `initial_scan` and sent recipients logic from `main.py` → `claven/core/scan.py`
-- [ ] Extract `process_message`, `poll_new_messages` from `main.py` → `claven/core/process.py`
-- [ ] Create `claven/core/db.py` as a stub (file-based for now, swapped for Neon later)
-- [ ] Create `claven/core/auth.py` as a stub (wraps current `get_service` for now)
-- [ ] Create `claven/cli.py` as the new entry point — thin `click` wrapper over core functions, replacing `main.py`
+- [x] Create `claven/` package with `core/` subpackage
+- [x] Move `labeler.py` → `claven/core/rules.py` (no logic changes)
+- [x] Move Gmail API calls from `gmail_service.py` → `claven/core/gmail.py` (no logic changes)
+- [x] Extract `initial_scan` and sent recipients logic from `main.py` → `claven/core/scan.py`
+- [x] Extract `process_message`, `poll_new_messages` from `main.py` → `claven/core/process.py`
+- [x] Create `claven/core/db.py` as a stub (file-based for now, swapped for Neon later)
+- [x] Create `claven/core/auth.py` as a stub (wraps current `get_service` for now)
+- [x] Create `claven/cli.py` as the new entry point — thin `click` wrapper over core functions, replacing `main.py`
 - [ ] Create `claven/server.py` and `claven/job.py` as empty stubs so the shape is established
-- [ ] Verify the restructured code runs identically to the current `main.py` before proceeding
+- [x] Verify the restructured code runs identically to the current `main.py` before proceeding
 
 ## Auth & OAuth
 
-- [ ] Create a new **Web application** OAuth client in GCloud (separate from the Desktop app one); add your server's callback URL as an authorized redirect URI
-- [ ] Replace `InstalledAppFlow.run_local_server()` with a proper web OAuth flow: `/oauth/start` redirects to Google, `/oauth/callback` exchanges the code for tokens
-- [ ] Add `state` parameter to the OAuth redirect and verify it on callback (CSRF protection)
-- [ ] Decide on user identity: "Sign in with Google" is simplest (email from the token's `id_token` or `userinfo` endpoint becomes the user ID), or support email/password separately
-- [ ] Store and refresh tokens server-side (see Database section); the current `token.json` approach doesn't work when the server holds tokens on behalf of users
+- [x] Create a new **Web application** OAuth client in GCloud (separate from the Desktop app one); add your server's callback URL as an authorized redirect URI
+- [x] Replace `InstalledAppFlow.run_local_server()` with a proper web OAuth flow: `/oauth/start` redirects to Google, `/oauth/callback` exchanges the code for tokens
+- [x] Add `state` parameter to the OAuth redirect and verify it on callback (CSRF protection)
+- [x] Decide on user identity: "Sign in with Google" is simplest (email from the token's `id_token` or `userinfo` endpoint becomes the user ID), or support email/password separately
+- [x] Store and refresh tokens server-side (see Database section); the current `token.json` approach doesn't work when the server holds tokens on behalf of users
 
 ## Database
 
-- [ ] Replace all file-based state with a database — every `accounts/<name>/*.json` file maps to a DB table:
+- [x] Replace all file-based state with a database — every `accounts/<name>/*.json` file maps to a DB table:
   - `users` — id, email, created_at
   - `gmail_tokens` — user_id, access_token (encrypted), refresh_token (encrypted), expiry
   - `sent_recipients` — user_id, email_address (replaces `sent_recipients_cache.json`)
   - `scan_state` — user_id, history_id, resume_index, processed_message_ids, known_senders_count (replaces `scan_checkpoint.json`)
-- [ ] Encrypt tokens at rest — never store raw access/refresh tokens in the DB
-- [ ] Replace the file-based `load_scan_checkpoint` / `save_scan_checkpoint` and `_load_recipients_cache` / `_save_recipients_cache` functions with DB-backed equivalents
+- [x] Encrypt tokens at rest — never store raw access/refresh tokens in the DB
+- [x] Replace the file-based `load_scan_checkpoint` / `save_scan_checkpoint` and `_load_recipients_cache` / `_save_recipients_cache` functions with DB-backed equivalents
 
 ## Per-User Configuration
 
@@ -291,8 +291,8 @@ Runs **once on signup** using a different code path from all three notification 
 This is **not** the same as poll mode — poll uses `list_history` and only touches new mail. The initial scan uses `list_messages` and touches everything.
 
 - [ ] Trigger a **Cloud Run Job** on signup to run the initial inbox scan and sent recipients scan — must not block the OAuth callback or webhook handler
-- [ ] Initial scan writes `historyId` to Neon on completion; this is the starting point for all subsequent incremental processing
-- [ ] Scan is resumable via checkpoint in Neon (already implemented with `scan_checkpoint.json` — migrate to DB)
+- [x] Initial scan writes `historyId` to Neon on completion; this is the starting point for all subsequent incremental processing
+- [x] Scan is resumable via checkpoint in Neon (already implemented with `scan_checkpoint.json` — migrate to DB)
 - [ ] Support running via CLI for local use — see CLI spec: `claven scan --user <email>`
 
 ## Notification Modes
@@ -301,10 +301,10 @@ These all share the same incremental processing logic: `list_history` since stor
 
 ### Push (primary — Pub/Sub push subscription → Cloud Run webhook)
 
-- [ ] On user signup (after initial scan completes), call `gmail.users.watch()` to activate push notifications; `historyId` is already in DB from the scan
-- [ ] Create a Pub/Sub **push subscription** pointing to `/webhook/gmail` on the Cloud Run service
-- [ ] Implement `/webhook/gmail`: decode Pub/Sub notification, look up user by email, fetch Gmail history since stored `historyId`, process new messages, update `historyId` in DB
-- [ ] Return 2xx within Pub/Sub's delivery deadline (acknowledge before processing completes if needed, or process synchronously for small batches)
+- [x] On user signup (after initial scan completes), call `gmail.users.watch()` to activate push notifications; `historyId` is already in DB from the scan
+- [x] Create a Pub/Sub **push subscription** pointing to `/webhook/gmail` on the Cloud Run service
+- [x] Implement `/webhook/gmail`: decode Pub/Sub notification, look up user by email, fetch Gmail history since stored `historyId`, process new messages, update `historyId` in DB
+- [x] Return 2xx within Pub/Sub's delivery deadline (acknowledge before processing completes if needed, or process synchronously for small batches)
 - [ ] `watch()` subscriptions expire after 7 days — Cloud Scheduler hits `/internal/renew-watches` every 6 days
 
 ### Pull (fallback — Pub/Sub pull subscription → scheduled Cloud Run)
@@ -316,10 +316,10 @@ These all share the same incremental processing logic: `list_history` since stor
 
 ### Poll (direct fallback — scheduled Cloud Run polls Gmail history API)
 
-- [ ] Implement `/internal/poll`: iterate all active users, call `list_history()` since stored `historyId` for each, run incremental processing, update Neon
+- [x] Implement `/internal/poll`: iterate all active users, call `list_history()` since stored `historyId` for each, run incremental processing, update Neon
 - [ ] Create a Cloud Scheduler job to hit `/internal/poll` on a configurable interval as a fallback when Pub/Sub is unavailable
 - [ ] Poll mode must work fully locally with no GCP infrastructure — see CLI spec: `claven poll --once` or `claven poll --interval 60`
-- [ ] Remove the old `while running:` polling loop from `main.py` once poll mode is implemented via the new path
+- [x] Remove the old `while running:` polling loop from `main.py` once poll mode is implemented via the new path
 
 ## CLI
 
@@ -492,14 +492,14 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 
 ## Database migrations
 
-- [ ] Set up Alembic for schema migrations — all schema changes go through migration files, never applied manually
-- [ ] Version the schema from the start; first migration creates the initial tables
+- [x] Set up Alembic for schema migrations — all schema changes go through migration files, never applied manually
+- [x] Version the schema from the start; first migration creates the initial tables
 - [ ] Document the migration workflow: run migrations on deploy before the new container starts serving traffic
-- [ ] Ensure migrations are safe to run against a live DB (additive changes, no destructive migrations without a plan)
+- [x] Ensure migrations are safe to run against a live DB (additive changes, no destructive migrations without a plan)
 
 ## Web Server
 
-- [ ] Add a web framework (FastAPI, Flask, Django — pick one) to serve:
+- [x] Add a web framework (FastAPI, Flask, Django — pick one) to serve:
   - OAuth start/callback endpoints
   - User dashboard (connected accounts, label rules, status)
   - `/webhook/gmail` — Pub/Sub push handler
@@ -507,7 +507,7 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
   - `/internal/pull` — pull pending Pub/Sub messages (triggered by Cloud Scheduler)
   - `/internal/poll` — poll Gmail history directly (triggered by Cloud Scheduler)
   - `/internal/renew-watches` — renew all active `watch()` subscriptions
-- [ ] Implement session management (JWT or server-side sessions)
+- [x] Implement session management (JWT or server-side sessions)
 
 ## Dashboard
 
