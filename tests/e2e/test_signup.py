@@ -88,9 +88,11 @@ class TestSignupFlow:
 
         Mocked: Flow.fetch_token (we hold a refresh token, not an auth code),
                 google_id_token.verify_oauth2_token (ID token only issued on
-                initial code exchange, not on refresh), start_watch (no Pub/Sub
-                topic in CI).
+                initial code exchange, not on refresh).
         Real:   DB writes via claven/core/db.py.
+
+        Note: start_watch is NOT called during OAuth — the Gmail watch is started
+        explicitly by the user via POST /api/connect (deferred connect).
         """
         mock_creds = MagicMock()
         mock_creds.token = "fake-access-token"
@@ -113,11 +115,9 @@ class TestSignupFlow:
             with (
                 patch("claven.server.Flow") as mock_flow_cls,
                 patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify,
-                patch("claven.server.start_watch") as mock_watch,
             ):
                 mock_flow_cls.from_client_config.return_value = mock_flow
                 mock_verify.return_value = {"email": _EMAIL}
-                mock_watch.return_value = {"historyId": "99999"}
 
                 with TestClient(app) as client:
                     # Step 1: start flow — sets oauth_state cookie
@@ -165,4 +165,4 @@ class TestSignupFlow:
         finally:
             conn.close()
 
-        mock_watch.assert_called_once()
+        # start_watch is not called during OAuth — deferred to /api/connect

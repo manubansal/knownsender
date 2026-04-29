@@ -35,6 +35,6 @@ def get_matching_labels(headers, label_configs, known_senders=None):
     for label_config in label_configs:
         for rule in label_config["rules"]:
             if matches_rule(headers, rule, known_senders):
-                matching.append(label_config["name"])
+                matching.append(label_config["id"])
                 break
     return matching

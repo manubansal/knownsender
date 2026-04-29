@@ -4,7 +4,7 @@ import pytest
 from cryptography.fernet import InvalidToken
 from unittest.mock import MagicMock, patch
 
-from claven.core.auth import decrypt_token, encrypt_token, load_credentials, store_credentials
+from claven.core.auth import decrypt_token, encrypt_token, get_service, load_credentials, store_credentials
 
 # 32 bytes of 0xaa — valid Fernet key material
 VALID_KEY_HEX = "aa" * 32
@@ -119,9 +119,9 @@ class TestLoadCredentials:
 
         assert list(result.scopes) == scopes
 
-    def test_naive_expiry_gets_utc_timezone(self):
-        """Postgres returns naive datetimes; expiry must be tz-aware for google-auth."""
-        from datetime import datetime, timezone
+    def test_naive_expiry_passes_through_unchanged(self):
+        """Naive expiry (already UTC) is left as-is — google-auth expects naive UTC."""
+        from datetime import datetime
 
         access_enc = encrypt_token("tok", VALID_KEY_HEX)
         refresh_enc = encrypt_token("ref", VALID_KEY_HEX)
@@ -140,11 +140,15 @@ class TestLoadCredentials:
             }
             result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
 
-        assert result.expiry.tzinfo == timezone.utc
-        assert result.expiry == datetime(2030, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        assert result.expiry.tzinfo is None
+        assert result.expiry == naive_expiry
 
-    def test_aware_expiry_is_unchanged(self):
-        """Already-aware expiry should pass through unmodified."""
+    def test_aware_expiry_is_stripped_to_naive_utc(self):
+        """Aware expiry (psycopg2 returns TIMESTAMPTZ as aware) is converted to naive UTC.
+
+        google-auth's expired property uses datetime.utcnow() (naive) for comparison;
+        leaving expiry as aware raises 'can't compare offset-naive and offset-aware datetimes'.
+        """
         from datetime import datetime, timezone
 
         access_enc = encrypt_token("tok", VALID_KEY_HEX)
@@ -164,4 +168,73 @@ class TestLoadCredentials:
             }
             result = load_credentials(conn, "user-uuid", VALID_KEY_HEX)
 
-        assert result.expiry == aware_expiry
+        assert result.expiry.tzinfo is None
+        assert result.expiry == datetime(2030, 6, 1, 12, 0, 0)
+
+
+class TestGetService:
+    """Tests for get_service — the function that crashed in production."""
+
+    def _make_token_row(self, expiry):
+        access_enc = encrypt_token("access-tok", VALID_KEY_HEX)
+        refresh_enc = encrypt_token("refresh-tok", VALID_KEY_HEX)
+        return {
+            "access_token_enc": access_enc,
+            "refresh_token_enc": refresh_enc,
+            "token_expiry": expiry,
+            "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+        }
+
+    def test_does_not_raise_when_expiry_is_offset_aware(self):
+        """Regression: psycopg2 returns TIMESTAMPTZ as aware; get_service must not crash.
+
+        Root cause: google-auth's creds.expired compares against datetime.utcnow()
+        (naive). If creds.expiry is aware the comparison raises TypeError.
+        """
+        from datetime import datetime, timezone
+
+        future_aware = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, \
+             patch("claven.core.auth.build") as mock_build, \
+             patch.dict("os.environ", {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"}):
+            mock_db.load_tokens.return_value = self._make_token_row(future_aware)
+            get_service(conn, "user-uuid", VALID_KEY_HEX)  # must not raise
+
+    def test_refreshes_token_when_expired(self):
+        """An expired token triggers a refresh and the new credentials are stored."""
+        from datetime import datetime
+
+        past_naive = datetime(2000, 1, 1)  # expired
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, \
+             patch("claven.core.auth.build"), \
+             patch("claven.core.auth.Request"), \
+             patch.dict("os.environ", {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"}):
+            mock_db.load_tokens.return_value = self._make_token_row(past_naive)
+            with patch("claven.core.auth.store_credentials") as mock_store, \
+                 patch("google.oauth2.credentials.Credentials.refresh") as mock_refresh:
+                mock_refresh.return_value = None
+                get_service(conn, "user-uuid", VALID_KEY_HEX)
+            mock_store.assert_called_once()
+
+    def test_does_not_refresh_when_token_is_valid(self):
+        """A non-expired token must not trigger a refresh call."""
+        from datetime import datetime
+
+        future_naive = datetime(2099, 1, 1)  # far future, not expired
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db, \
+             patch("claven.core.auth.build"), \
+             patch.dict("os.environ", {"OAUTH_CLIENT_ID": "cid", "OAUTH_CLIENT_SECRET": "csec"}):
+            mock_db.load_tokens.return_value = self._make_token_row(future_naive)
+            with patch("google.oauth2.credentials.Credentials.refresh") as mock_refresh:
+                get_service(conn, "user-uuid", VALID_KEY_HEX)
+            mock_refresh.assert_not_called()
+
+    def test_raises_when_no_credentials(self):
+        conn = MagicMock()
+        with patch("claven.core.auth.db") as mock_db:
+            mock_db.load_tokens.return_value = None
+            with pytest.raises(ValueError, match="No credentials"):
+                get_service(conn, "user-uuid", VALID_KEY_HEX)

@@ -75,5 +75,23 @@ describe("Home page", () => {
       render(<Home />);
       expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
     });
+
+    it("shows the raw error code in the error message", () => {
+      mockParams({ error: "token_exchange_failed" });
+      render(<Home />);
+      expect(screen.getByText(/token_exchange_failed/)).toBeInTheDocument();
+    });
+
+    it("shows error_detail when provided", () => {
+      mockParams({ error: "token_exchange_failed", error_detail: "invalid_grant: Token has been expired" });
+      render(<Home />);
+      expect(screen.getByText(/invalid_grant: Token has been expired/)).toBeInTheDocument();
+    });
+
+    it("does not show error_detail line when absent", () => {
+      mockParams({ error: "token_exchange_failed" });
+      render(<Home />);
+      expect(screen.queryByText(/invalid_grant/)).not.toBeInTheDocument();
+    });
   });
 });
