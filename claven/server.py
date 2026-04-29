@@ -86,6 +86,24 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+# Worker generation ID — unique per process. Background scan threads check this
+# per batch and exit if it changes (means --reload spawned a new worker).
+_worker_id = os.getpid()
+_shutting_down = False
+
+
+def _shutdown_handler(signum, frame):
+    global _shutting_down
+    _shutting_down = True
+    logger.info("Shutdown signal received (pid=%d, signal=%d)", os.getpid(), signum)
+
+
+import signal
+signal.signal(signal.SIGINT, _shutdown_handler)
+signal.signal(signal.SIGTERM, _shutdown_handler)
+
+logger.info("Worker started (pid=%d)", _worker_id)
+
 app = FastAPI(title="Claven")
 
 def _allowed_origins() -> list[str]:
@@ -567,6 +585,18 @@ def api_config():
     return {"labels": config.get("labels", [])}
 
 
+def _is_current_worker() -> bool:
+    """Check if this thread should keep running.
+
+    Returns False if:
+    - --reload spawned a new worker (PID changed)
+    - Ctrl+C / SIGTERM received (shutdown flag set)
+    """
+    if _shutting_down:
+        return False
+    return os.getpid() == _worker_id
+
+
 def _needs_inbox_scan(conn, user_id: str) -> bool:
     """Return True if the inbox scan should be (re-)triggered."""
     status = db.get_inbox_scan_status(conn, user_id)
@@ -583,6 +613,8 @@ def _needs_inbox_scan(conn, user_id: str) -> bool:
 
 def _run_inbox_scan(user_id: str):
     """Background task: scan all inbox messages and apply labels."""
+    my_pid = os.getpid()
+    logger.info("Inbox scan thread started for %s (worker pid=%d)", user_id, my_pid)
     with db.get_connection() as conn:
         db.set_inbox_scan_status(conn, user_id, "in_progress")
     label_configs = load_config().get("labels", [])
@@ -594,7 +626,7 @@ def _run_inbox_scan(user_id: str):
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
-            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
+            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders, should_continue=_is_current_worker)
             db.set_inbox_scan_status(conn, user_id, "complete")
             logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
                         extra={"event": "inbox_scan_complete", "user_id": user_id})
@@ -614,6 +646,7 @@ def _run_sent_scan(user_id: str):
     a user at a time. After the sent scan completes, immediately labels
     all inbox messages.
     """
+    logger.info("Sent scan thread started for %s (worker pid=%d)", user_id, os.getpid())
     with db.get_connection() as conn:
         if not db.try_lock_user_scan(conn, user_id):
             logger.info("Sent scan skipped for %s — locked by another instance", user_id)
@@ -629,7 +662,10 @@ def _run_sent_scan(user_id: str):
                 logger.info("Sent scan skipped for %s — locked by another instance", user_id)
                 return
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
-            build_known_senders(service, conn, user_id)
+            build_known_senders(service, conn, user_id, should_continue=_is_current_worker)
+            if not _is_current_worker():
+                logger.info("Sent scan stopped — worker replaced (pid=%d, current=%d)", _worker_id, os.getpid())
+                return
             db.set_sent_scan_status(conn, user_id, "complete")
     except Exception as exc:
         logger.exception("Sent scan failed for user %s: %s", user_id, exc)
