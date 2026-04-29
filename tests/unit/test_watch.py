@@ -20,7 +20,7 @@ class TestStartWatch:
         service.users().watch.assert_called_with(
             userId="me",
             body={
-                "labelIds": ["INBOX"],
+                "labelIds": ["INBOX", "SENT"],
                 "topicName": "projects/proj/topics/gmail-push",
             },
         )

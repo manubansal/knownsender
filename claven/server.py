@@ -6,6 +6,7 @@ Endpoints:
   GET  /oauth/start             — begin OAuth flow, redirect to Google consent
   GET  /oauth/callback          — exchange OAuth code for tokens, store in DB
   POST /internal/poll           — Cloud Scheduler trigger: poll Gmail history for all users
+  POST /internal/build-known-senders — build/update known senders list for all users
   POST /webhook/gmail           — Pub/Sub push handler: incoming Gmail notifications
 """
 
@@ -14,9 +15,12 @@ import json
 import logging
 import os
 import secrets
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, quote
 
 import jwt as pyjwt
+import threading
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -28,7 +32,21 @@ import claven.core.db as db
 from claven.core.gmail import build_label_id_cache, get_profile
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
+from claven.core.scan import build_known_senders, scan_inbox
 from claven.core.watch import start_watch, stop_watch
+
+_LOG_FILE = os.environ.get("CLAVEN_LOG_FILE", "")
+if _LOG_FILE:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.FileHandler(_LOG_FILE), logging.StreamHandler()],
+    )
+else:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+logging.getLogger("googleapiclient.discovery").setLevel(logging.WARNING)
+logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +290,24 @@ def oauth_callback(
     return response
 
 
+_STALE_SCAN_THRESHOLD = timedelta(minutes=5)
+
+
+def _needs_sent_scan(scan_progress: dict) -> bool:
+    """Return True if the sent scan should be (re-)triggered."""
+    status = scan_progress["status"]
+    if status == "complete":
+        return False
+    if status == "in_progress":
+        updated_at = scan_progress.get("updated_at")
+        if updated_at and datetime.now(timezone.utc) - updated_at < _STALE_SCAN_THRESHOLD:
+            return False
+        # Stale in_progress — treat as failed
+        return True
+    # None, "error", or anything else
+    return True
+
+
 def _label_id_cache_for_config(service, label_configs: list[dict]) -> dict[str, str]:
     """Build a Gmail label ID cache for all labels referenced in the config."""
     names = []
@@ -301,6 +337,19 @@ def internal_poll(request: Request):
                     continue
 
                 service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+
+                # Reconcile: if sent scan never completed, run it now
+                scan_progress = db.get_sent_scan_progress(conn, user_id)
+                if _needs_sent_scan(scan_progress):
+                    logger.info("Reconciling sent scan for user %s (status=%s)", user_id, scan_progress["status"])
+                    db.set_sent_scan_status(conn, user_id, "in_progress")
+                    try:
+                        build_known_senders(service, conn, user_id)
+                        db.set_sent_scan_status(conn, user_id, "complete")
+                    except Exception as exc:
+                        logger.exception("Reconcile sent scan failed for %s", user_id)
+                        db.set_sent_scan_status(conn, user_id, "error")
+
                 known_senders = db.get_known_senders(conn, user_id)
 
                 profile = get_profile(service)
@@ -319,6 +368,36 @@ def internal_poll(request: Request):
     return {"processed": len(results), "results": results}
 
 
+@app.post("/internal/build-known-senders")
+def internal_build_known_senders(request: Request):
+    """Build or update the known senders list for all connected users.
+
+    Scans each user's Sent mail and populates their sent_recipients rows.
+    Uses a per-user cursor (sent_scan_cursor) for incremental updates —
+    only new sent messages are processed on subsequent runs.
+
+    Intended to be triggered by a Cloud Scheduler job or by /api/connect.
+    """
+    _require_internal_auth(request)
+    results = []
+
+    with db.get_connection() as conn:
+        users = db.get_all_users(conn)
+
+    for user in users:
+        user_id = user["id"]
+        with db.get_connection() as conn:
+            try:
+                service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+                result = build_known_senders(service, conn, user_id)
+                results.append({"user_id": user_id, "status": "ok", **result})
+            except Exception as exc:
+                logger.exception("Known senders scan failed for user %s", user_id, exc_info=exc)
+                results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
+
+    return {"processed": len(results), "results": results}
+
+
 @app.get("/api/me")
 def api_me(request: Request):
     session = _get_session(request)
@@ -328,11 +407,22 @@ def api_me(request: Request):
             raise HTTPException(status_code=404, detail="User not found")
         history_id = db.get_history_id(conn, session["user_id"])
         known_senders = db.count_known_senders(conn, session["user_id"])
+        sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         processed_count = db.get_processed_count(conn, session["user_id"])
+
+        # Auto-trigger sent scan if it has never run for this user
+        if _needs_sent_scan(sent_scan_progress):
+            has_tokens = db.load_tokens(conn, session["user_id"]) is not None
+            if has_tokens:
+                db.set_sent_scan_status(conn, session["user_id"], "in_progress")
+                sent_scan_progress["status"] = "in_progress"
+                threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
 
         unread_count = None
         read_count = None
         inbox_count = None
+        all_mail_count = None
+        sent_total_live = None
         filtered_in_count = None
         filtered_out_count = None
         unlabeled_count = None
@@ -346,6 +436,12 @@ def api_me(request: Request):
             ).execute()
             read_count = read_result.get("resultSizeEstimate")
 
+            profile_data = service.users().getProfile(userId="me").execute()
+            all_mail_count = profile_data.get("messagesTotal")
+
+            sent_label = service.users().labels().get(userId="me", id="SENT").execute()
+            sent_total_live = sent_label.get("messagesTotal")
+
             label_configs = load_config().get("labels", [])
             all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
             label_id_by_name = {l["name"]: l["id"] for l in all_gmail_labels}
@@ -354,30 +450,38 @@ def api_me(request: Request):
             filtered_out_count = 0
             for lc in label_configs:
                 if lid := label_id_by_name.get(lc["id"]):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", lid], maxResults=1
-                    ).execute()
-                    filtered_in_count += r.get("resultSizeEstimate", 0)
+                    label_info = service.users().labels().get(userId="me", id=lid).execute()
+                    filtered_in_count += label_info.get("messagesTotal", 0)
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", uid], maxResults=1
-                    ).execute()
-                    filtered_out_count += r.get("resultSizeEstimate", 0)
+                    label_info = service.users().labels().get(userId="me", id=uid).execute()
+                    filtered_out_count += label_info.get("messagesTotal", 0)
 
             if inbox_count is not None:
                 unlabeled_count = max(0, inbox_count - filtered_in_count - filtered_out_count)
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
+        # Auto-trigger inbox scan if sent scan is done and initial inbox scan never completed
+        inbox_scan_done = db.is_inbox_scan_completed(conn, session["user_id"])
+
         pending_count = (
             max(0, inbox_count - processed_count) if inbox_count is not None else None
         )
+        if (sent_scan_progress["status"] == "complete"
+                and history_id is not None
+                and not inbox_scan_done
+                and session["user_id"] not in _inbox_scan_running):
+            threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
 
     return {
         "email": user["email"],
         "connected": history_id is not None,
         "history_id": history_id,
         "known_senders": known_senders,
+        "sent_messages_scanned": sent_scan_progress["messages_scanned"],
+        "sent_messages_total": sent_total_live if sent_total_live is not None else sent_scan_progress["messages_total"],
+        "sent_scan_status": sent_scan_progress["status"],
+        "inbox_scan_in_progress": session["user_id"] in _inbox_scan_running,
         "processed_count": processed_count,
         "pending_count": pending_count,
         "filtered_in_count": filtered_in_count,
@@ -386,6 +490,7 @@ def api_me(request: Request):
         "unread_count": unread_count,
         "read_count": read_count,
         "inbox_count": inbox_count,
+        "all_mail_count": all_mail_count,
     }
 
 
@@ -395,12 +500,79 @@ def api_config():
     return {"labels": config.get("labels", [])}
 
 
+_inbox_scan_running: set[str] = set()
+
+def _run_inbox_scan(user_id: str):
+    """Background task: scan all inbox messages and apply labels."""
+    if user_id in _inbox_scan_running:
+        return
+    _inbox_scan_running.add(user_id)
+    label_configs = load_config().get("labels", [])
+    try:
+        with db.get_connection() as conn:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            known_senders = db.get_known_senders(conn, user_id)
+            label_id_cache = _label_id_cache_for_config(service, label_configs)
+            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
+            logger.info("Inbox scan for %s: processed %d message(s)", user_id, count)
+    except Exception as exc:
+        logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
+    finally:
+        _inbox_scan_running.discard(user_id)
+
+
+def _run_sent_scan(user_id: str):
+    """Background task: build the known senders list, then poll inbox.
+
+    After the sent scan completes, immediately processes any inbox messages
+    that arrived since the history_id was set at connect time. This ensures
+    labeling starts without waiting for an external trigger (Pub/Sub or
+    Cloud Scheduler).
+    """
+    with db.get_connection() as conn:
+        try:
+            db.set_sent_scan_status(conn, user_id, "in_progress")
+        except Exception:
+            logger.exception("Failed to set sent scan status for %s", user_id)
+            return
+    try:
+        with db.get_connection() as conn:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            build_known_senders(service, conn, user_id)
+        with db.get_connection() as conn:
+            db.set_sent_scan_status(conn, user_id, "complete")
+    except Exception as exc:
+        logger.exception("Sent scan failed for user %s: %s", user_id, exc)
+        try:
+            with db.get_connection() as conn:
+                db.set_sent_scan_status(conn, user_id, "error")
+        except Exception:
+            logger.exception("Failed to set error status for %s", user_id)
+        return
+
+    # Sent scan done — scan the full inbox to apply labels to all existing messages
+    _inbox_scan_running.add(user_id)
+    label_configs = load_config().get("labels", [])
+    try:
+        with db.get_connection() as conn:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            known_senders = db.get_known_senders(conn, user_id)
+            label_id_cache = _label_id_cache_for_config(service, label_configs)
+            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders)
+            logger.info("Post-scan inbox scan for %s: processed %d message(s)", user_id, count)
+    except Exception as exc:
+        logger.exception("Post-scan inbox scan failed for user %s: %s", user_id, exc)
+    finally:
+        _inbox_scan_running.discard(user_id)
+
+
 @app.post("/api/connect")
 def api_connect(request: Request):
     """Start the Gmail push watch for the authenticated user.
 
     This is the explicit user-initiated step that begins inbox filtering.
     Credentials must already be stored (via the OAuth sign-in flow).
+    Also kicks off a background scan of Sent mail to build the known senders list.
     """
     session = _get_session(request)
     with db.get_connection() as conn:
@@ -412,6 +584,7 @@ def api_connect(request: Request):
         except Exception as exc:
             logger.exception("Connect failed for %s: %s", session["email"], exc)
             raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
+    threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
     return JSONResponse({"ok": True, "history_id": history_id})
 
 
@@ -480,6 +653,20 @@ async def webhook_gmail(request: Request):
             return {"status": "ok", "detail": "no history_id"}
 
         service = auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+
+        # Incremental known senders update — cheap with cursor (one list_history call).
+        # Also serves as reconciliation: if the initial scan never completed,
+        # build_known_senders falls through to a full scan.
+        scan_progress = db.get_sent_scan_progress(conn, user["id"])
+        if _needs_sent_scan(scan_progress):
+            db.set_sent_scan_status(conn, user["id"], "in_progress")
+        try:
+            build_known_senders(service, conn, user["id"])
+            if scan_progress["status"] != "complete":
+                db.set_sent_scan_status(conn, user["id"], "complete")
+        except Exception as exc:
+            logger.warning("Known senders update failed for %s: %s", user["id"], exc)
+
         known_senders = db.get_known_senders(conn, user["id"])
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)

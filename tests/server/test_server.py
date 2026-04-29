@@ -42,6 +42,8 @@ def _fake_db_ctx(mock_db, conn=None):
 
     mock_db.get_connection.side_effect = _ctx
     mock_db.get_processed_count.return_value = 0
+    mock_db.get_sent_scan_progress.return_value = {"messages_scanned": 0, "messages_total": None, "status": "complete", "updated_at": None}
+    mock_db.is_inbox_scan_completed.return_value = False
     return mock_conn
 
 
@@ -291,7 +293,7 @@ class TestInternalPoll:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 mock_conn = _fake_db_ctx(mock_db)
                 mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "u@example.com"}]
                 mock_db.get_history_id.return_value = 999
@@ -310,7 +312,7 @@ class TestInternalPoll:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "u@example.com"}]
                 mock_db.get_history_id.return_value = 999
@@ -323,6 +325,97 @@ class TestInternalPoll:
                         headers={"Authorization": "Bearer test-internal-secret"},
                     )
         mock_db.increment_processed_count.assert_called_once_with(ANY, "uid-1", 5)
+
+
+class TestInternalBuildKnownSenders:
+    def test_no_auth_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.post("/internal/build-known-senders")
+        assert response.status_code == 401
+
+    def test_wrong_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/internal/build-known-senders",
+                    headers={"Authorization": "Bearer wrong-token"},
+                )
+        assert response.status_code == 401
+
+    def test_no_users_returns_ok(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = []
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        assert response.status_code == 200
+        assert response.json()["processed"] == 0
+
+    def test_calls_build_known_senders_for_each_user(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.build_known_senders") as mock_build:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [
+                    {"id": "uid-1", "email": "a@example.com"},
+                    {"id": "uid-2", "email": "b@example.com"},
+                ]
+                mock_auth.get_service.return_value = MagicMock()
+                mock_build.return_value = {"known_senders": 5, "messages_scanned": 10}
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        assert response.status_code == 200
+        assert response.json()["processed"] == 2
+        assert mock_build.call_count == 2
+
+    def test_returns_known_senders_count_per_user(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.build_known_senders") as mock_build:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [{"id": "uid-1", "email": "a@example.com"}]
+                mock_auth.get_service.return_value = MagicMock()
+                mock_build.return_value = {"known_senders": 42, "messages_scanned": 100}
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        result = response.json()["results"][0]
+        assert result["known_senders"] == 42
+        assert result["messages_scanned"] == 100
+        assert result["status"] == "ok"
+
+    def test_user_error_recorded_without_aborting_others(self):
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.build_known_senders") as mock_build:
+                _fake_db_ctx(mock_db)
+                mock_db.get_all_users.return_value = [
+                    {"id": "uid-1", "email": "a@example.com"},
+                    {"id": "uid-2", "email": "b@example.com"},
+                ]
+                mock_auth.get_service.return_value = MagicMock()
+                mock_build.side_effect = [Exception("Gmail API error"), {"known_senders": 3, "messages_scanned": 5}]
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/internal/build-known-senders",
+                        headers={"Authorization": "Bearer test-internal-secret"},
+                    )
+        results = response.json()["results"]
+        assert results[0]["status"] == "error"
+        assert results[1]["status"] == "ok"
 
 
 class TestWebhookGmail:
@@ -409,7 +502,7 @@ class TestWebhookGmail:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_email.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 100
@@ -430,7 +523,7 @@ class TestWebhookGmail:
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, patch("claven.server.auth") as mock_auth, patch(
                 "claven.server.poll_new_messages"
-            ) as mock_poll:
+            ) as mock_poll, patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_email.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 100
@@ -521,40 +614,46 @@ class TestApiMe:
         messages_unread=0,
         messages_total=0,
         read_estimate=0,
-        filtered_in_estimate=0,
-        filtered_out_estimate=0,
+        filtered_in_total=0,
+        filtered_out_total=0,
     ):
-        """Return a mock Gmail service with inbox label counts and per-label estimates."""
+        """Return a mock Gmail service with label counts."""
         svc = MagicMock()
-
-        # labels.get → INBOX totals
-        svc.users.return_value.labels.return_value.get.return_value.execute.return_value = {
-            "messagesUnread": messages_unread,
-            "messagesTotal": messages_total,
-        }
-
-        # labels.list → label ID map (known-sender and unknown-sender)
-        svc.users.return_value.labels.return_value.list.return_value.execute.return_value = {
-            "labels": [
-                {"name": "known-sender", "id": self._KNOWN_LABEL_ID},
-                {"name": "unknown-sender", "id": self._UNKNOWN_LABEL_ID},
-            ]
-        }
-
-        # messages.list → route by labelIds / q
         known_id = self._KNOWN_LABEL_ID
         unknown_id = self._UNKNOWN_LABEL_ID
 
+        # labels.get → route by label ID
+        def _labels_get(**kwargs):
+            lid = kwargs.get("id", "")
+            result = MagicMock()
+            if lid == "INBOX":
+                result.execute.return_value = {"messagesUnread": messages_unread, "messagesTotal": messages_total}
+            elif lid == "SENT":
+                result.execute.return_value = {"messagesTotal": 0}
+            elif lid == known_id:
+                result.execute.return_value = {"messagesTotal": filtered_in_total}
+            elif lid == unknown_id:
+                result.execute.return_value = {"messagesTotal": filtered_out_total}
+            else:
+                result.execute.return_value = {"messagesTotal": 0}
+            return result
+
+        svc.users.return_value.labels.return_value.get.side_effect = _labels_get
+
+        # labels.list → label ID map
+        svc.users.return_value.labels.return_value.list.return_value.execute.return_value = {
+            "labels": [
+                {"name": "known-sender", "id": known_id},
+                {"name": "unknown-sender", "id": unknown_id},
+            ]
+        }
+
+        # messages.list → route by q
         def _messages_list(**kwargs):
-            label_ids = kwargs.get("labelIds", [])
             q = kwargs.get("q", "")
             result = MagicMock()
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
-            elif known_id in label_ids:
-                result.execute.return_value = {"resultSizeEstimate": filtered_in_estimate}
-            elif unknown_id in label_ids:
-                result.execute.return_value = {"resultSizeEstimate": filtered_out_estimate}
             else:
                 result.execute.return_value = {"resultSizeEstimate": 0}
             return result
@@ -664,7 +763,7 @@ class TestApiMe:
         assert response.json()["processed_count"] == 42
 
     def test_returns_pending_count_as_inbox_minus_processed(self):
-        """pending = max(0, inbox_count - processed_count), computed live."""
+        """pending = max(0, inbox_count - processed_count) when scan not complete."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -674,6 +773,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_db.get_processed_count.return_value = 10
+                mock_db.is_inbox_scan_completed.return_value = False
                 mock_auth.get_service.return_value = self._make_gmail_service(messages_total=100)
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -724,7 +824,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_estimate=30
+                    messages_total=100, filtered_in_total=30
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -741,7 +841,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_out_estimate=50
+                    messages_total=100, filtered_out_total=50
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -758,7 +858,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_estimate=30, filtered_out_estimate=50
+                    messages_total=100, filtered_in_total=30, filtered_out_total=50
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -781,6 +881,59 @@ class TestApiMe:
         assert response.json()["filtered_in_count"] is None
         assert response.json()["filtered_out_count"] is None
         assert response.json()["unlabeled_count"] is None
+
+
+    def test_auto_triggers_sent_scan_when_never_run(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_sent_scan_progress.return_value = {"messages_scanned": 0, "messages_total": None, "status": None}
+                mock_db.load_tokens.return_value = {"access_token_enc": b"x", "refresh_token_enc": b"y"}
+                mock_auth.get_service.return_value = self._make_gmail_service()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["sent_scan_status"] == "in_progress"
+        mock_threading.Thread.assert_called_once()
+        mock_threading.Thread.return_value.start.assert_called_once()
+
+    def test_does_not_trigger_any_scan_when_both_complete(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.is_inbox_scan_completed.return_value = True
+                mock_auth.get_service.return_value = self._make_gmail_service()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    client.get("/api/me")
+        mock_threading.Thread.assert_not_called()
+
+    def test_auto_triggers_inbox_scan_when_not_yet_done(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading, \
+                 patch("claven.server._inbox_scan_running", set()):
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 999
+                mock_db.is_inbox_scan_completed.return_value = False
+                mock_auth.get_service.return_value = self._make_gmail_service(messages_total=50)
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    client.get("/api/me")
+        mock_threading.Thread.assert_called_once()
+        call_kwargs = mock_threading.Thread.call_args[1]
+        assert call_kwargs["target"].__name__ == "_run_inbox_scan"
 
 
 class TestApiConfig:
@@ -873,7 +1026,8 @@ class TestApiConnect:
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.start_watch") as mock_watch:
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_auth.get_service.return_value = MagicMock()
                 mock_watch.return_value = {"historyId": "99999"}
@@ -888,7 +1042,8 @@ class TestApiConnect:
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.start_watch") as mock_watch:
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_auth.get_service.return_value = MagicMock()
                 mock_watch.return_value = {"historyId": "99999"}
@@ -902,7 +1057,8 @@ class TestApiConnect:
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
                  patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.start_watch") as mock_watch:
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.build_known_senders"):
                 _fake_db_ctx(mock_db)
                 mock_auth.get_service.return_value = MagicMock()
                 mock_watch.return_value = {"historyId": "99999"}
@@ -910,6 +1066,22 @@ class TestApiConnect:
                     client.cookies.set("session", token)
                     client.post("/api/connect")
         mock_db.set_history_id.assert_called_once_with(ANY, "uid-1", 99999)
+
+    def test_triggers_sent_scan_in_background(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.start_watch") as mock_watch, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_auth.get_service.return_value = MagicMock()
+                mock_watch.return_value = {"historyId": "99999"}
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    client.post("/api/connect")
+        mock_threading.Thread.assert_called_once()
+        mock_threading.Thread.return_value.start.assert_called_once()
 
     def test_watch_failure_returns_500(self):
         token = _make_session_token()

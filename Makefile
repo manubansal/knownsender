@@ -6,7 +6,7 @@ dev-read-write:
 	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
 	@set -a; . ./.env.local; set +a; \
 	trap 'kill 0' EXIT; \
-	uvicorn claven.server:app --port 8000 --reload & \
+	CLAVEN_LOG_FILE=/tmp/claven-server.log uvicorn claven.server:app --port 8000 --reload & \
 	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
 	wait
 

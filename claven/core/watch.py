@@ -6,7 +6,10 @@ logger = logging.getLogger(__name__)
 
 
 def start_watch(service, topic_name: str) -> dict:
-    """Register a Pub/Sub push watch for the user's inbox.
+    """Register a Pub/Sub push watch for the user's inbox and sent mail.
+
+    Watches both INBOX and SENT labels so the webhook fires on incoming
+    mail (for label processing) and outgoing mail (for known senders updates).
 
     Returns the Gmail API response containing historyId and expiration.
     Watches expire after 7 days; renew via Cloud Scheduler every 6 days.
@@ -16,7 +19,7 @@ def start_watch(service, topic_name: str) -> dict:
         .watch(
             userId="me",
             body={
-                "labelIds": ["INBOX"],
+                "labelIds": ["INBOX", "SENT"],
                 "topicName": topic_name,
             },
         )
