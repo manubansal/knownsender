@@ -2,6 +2,7 @@
 
 import base64
 import json
+import logging
 from contextlib import contextmanager
 from unittest.mock import ANY, MagicMock, patch
 
@@ -97,6 +98,25 @@ class TestHealth:
             response = client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+
+class TestHealthz:
+    def test_returns_ok_when_db_reachable(self):
+        with patch("claven.server.db") as mock_db:
+            _fake_db_ctx(mock_db)
+            with TestClient(app) as client:
+                response = client.get("/healthz")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        assert response.json()["db"] == "connected"
+
+    def test_returns_503_when_db_unreachable(self):
+        with patch("claven.server.db") as mock_db:
+            mock_db.get_connection.side_effect = Exception("connection refused")
+            with TestClient(app) as client:
+                response = client.get("/healthz")
+        assert response.status_code == 503
+        assert response.json()["db"] == "unreachable"
 
 
 class TestOAuthStart:
@@ -1386,3 +1406,39 @@ class TestOAuthCallbackSession:
         """Returning users receive a fresh session JWT."""
         response = self._run_full_oauth(has_existing_tokens=True)
         assert "session" in response.cookies
+
+
+class TestCloudJsonFormatter:
+    def test_formats_info_as_json(self):
+        import json
+        from claven.server import _CloudJsonFormatter
+        formatter = _CloudJsonFormatter()
+        record = logging.LogRecord("test", logging.INFO, "", 0, "hello world", (), None)
+        output = json.loads(formatter.format(record))
+        assert output["severity"] == "INFO"
+        assert output["message"] == "hello world"
+        assert output["logger"] == "test"
+
+    def test_includes_extra_fields(self):
+        import json
+        from claven.server import _CloudJsonFormatter
+        formatter = _CloudJsonFormatter()
+        record = logging.LogRecord("test", logging.INFO, "", 0, "scan done", (), None)
+        record.user_id = "uid-1"
+        record.event = "inbox_scan_complete"
+        output = json.loads(formatter.format(record))
+        assert output["user_id"] == "uid-1"
+        assert output["event"] == "inbox_scan_complete"
+
+    def test_includes_exception(self):
+        import json
+        from claven.server import _CloudJsonFormatter
+        formatter = _CloudJsonFormatter()
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            import sys
+            record = logging.LogRecord("test", logging.ERROR, "", 0, "failed", (), sys.exc_info())
+        output = json.loads(formatter.format(record))
+        assert output["severity"] == "ERROR"
+        assert "ValueError: boom" in output["exception"]
