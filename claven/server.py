@@ -507,6 +507,7 @@ def api_me(request: Request):
         inbox_count = None
         all_mail_count = None
         sent_total_live = None
+        sent_scanned_count = 0
         filtered_in_count = None
         filtered_out_count = None
         unlabeled_count = None
@@ -525,6 +526,16 @@ def api_me(request: Request):
 
             sent_label = service.users().labels().get(userId="me", id="SENT").execute()
             sent_total_live = sent_label.get("messagesTotal")
+
+            # Sent scan progress from mailbox state
+            from claven.core.scan import SENT_SCANNED_LABEL
+            all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
+            sent_scanned_label_id = next((l["id"] for l in all_gmail_labels if l["name"] == SENT_SCANNED_LABEL), None)
+            if sent_scanned_label_id:
+                sent_scanned_info = service.users().labels().get(userId="me", id=sent_scanned_label_id).execute()
+                sent_scanned_count = sent_scanned_info.get("messagesTotal", 0)
+            else:
+                sent_scanned_count = 0
 
             label_configs = load_config().get("labels", [])
             all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
@@ -559,8 +570,8 @@ def api_me(request: Request):
         "connected": history_id is not None,
         "history_id": history_id,
         "known_senders": known_senders,
-        "sent_messages_scanned": sent_scan_progress["messages_scanned"],
-        "sent_messages_total": sent_total_live if sent_total_live is not None else sent_scan_progress["messages_total"],
+        "sent_scanned_count": sent_scanned_count,
+        "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_in_progress": inbox_scan_status == "in_progress",
         "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,

@@ -5,6 +5,7 @@ from claven.core.gmail import (
     batch_apply_labels,
     batch_get_message_headers,
     batch_get_message_metadata,
+    ensure_label_exists,
     get_message,
     get_profile,
     list_history,
@@ -25,122 +26,81 @@ running = True
 _BATCH_SIZE = 50
 
 
+SENT_SCANNED_LABEL = "claven/sent-scanned"
+
+
 def build_known_senders(service, conn, user_id, should_continue=None):
-    """Build or incrementally update the known senders list from Sent mail.
+    """Build known senders list by scanning unlabeled sent messages.
 
-    On first run (no cursor): scans all sent messages, extracts To/Cc/Bcc
-    addresses, and bulk-inserts them into sent_recipients.
+    Queries Gmail for sent messages without the 'claven/sent-scanned' label,
+    extracts recipients, inserts into sent_recipients, and applies the label.
+    Loops until no unlabeled sent messages remain.
 
-    On subsequent runs (cursor exists): uses the Gmail History API to fetch
-    only new sent messages since the last run.
+    Progress is mailbox-based — multiple workers converge naturally since
+    each queries remaining unlabeled messages and labels what it processes.
 
-    If the cursor has expired (404), falls back to a full scan.
-
-    Inserts are batched and idempotent (ON CONFLICT DO NOTHING), so the
-    function is safe to interrupt and re-run from scratch. The cursor is
-    only saved on successful completion — an interrupted full scan will
-    restart from the beginning next time.
-
-    Returns a dict with:
-      - known_senders: total count in DB after the update
-      - messages_scanned: number of sent messages processed in this run
+    Returns the number of sent messages scanned in this run.
     """
-    cursor = db.get_sent_scan_cursor(conn, user_id)
-    messages_scanned = 0
+    scanned_label_id = ensure_label_exists(service, SENT_SCANNED_LABEL)
+    query = f"in:sent -label:{SENT_SCANNED_LABEL}"
+    logger.info("Sent scan starting (query=%s)", query)
 
-    if cursor is not None:
+    total_scanned = 0
+    batch_num = 0
+    while True:
+        if should_continue is not None and not should_continue():
+            logger.info("Sent scan stopped by caller after %d scanned", total_scanned)
+            return total_scanned
+
+        # Fetch next batch of unscanned sent messages
+        unscanned = list_messages(service, query=query, max_results=_BATCH_SIZE)
+        if not unscanned:
+            logger.info("Sent scan complete: %d messages scanned, 0 remaining", total_scanned)
+            break
+
+        batch_num += 1
+        batch_ids = [m["id"] for m in unscanned]
+        logger.info("Sent scan batch %d: %d unscanned messages", batch_num, len(batch_ids))
+
+        # Batch fetch To/Cc/Bcc headers
         try:
-            records = list_history(service, cursor, label_id="SENT")
+            metadata = batch_get_message_metadata(service, batch_ids, ["To", "Cc", "Bcc"])
         except Exception as exc:
-            if "404" in str(exc):
-                logger.warning("Sent scan cursor expired, falling back to full scan")
-                cursor = None
-            else:
-                raise
+            logger.warning("Batch sent fetch failed: %s", exc)
+            time.sleep(5)
+            continue
 
-    prior = db.get_sent_scan_progress(conn, user_id)
-    cumulative_scanned = prior["messages_scanned"]
-    messages_total = prior["messages_total"]
-
-    if cursor is not None:
-        # Incremental: only new sent messages since last cursor
-        new_ids = {
-            added["message"]["id"]
-            for record in records
-            for added in record.get("messagesAdded", [])
-            if "SENT" in added["message"].get("labelIds", [])
-        }
-        if new_ids:
-            logger.info("Found %d new sent message(s)", len(new_ids))
-            recipients = _recipients_from_messages(service, [{"id": mid} for mid in new_ids])
-            db.bulk_add_known_senders(conn, user_id, list(recipients))
-            conn.commit()
-            messages_scanned = len(new_ids)
-            cumulative_scanned += messages_scanned
-            if messages_total is not None:
-                messages_total += messages_scanned
-        else:
-            logger.info("No new sent messages since last scan")
-    else:
-        # Full scan: walk all sent messages using batch API
-        messages = list_messages(service, query="in:sent", max_results=None)
-        total = len(messages)
-        messages_total = total
-        resume_from = prior["messages_scanned"] if prior["messages_scanned"] > 0 else 0
-        if resume_from > 0 and resume_from < total:
-            logger.info("Full sent scan: resuming from %d/%d", resume_from, total)
-        else:
-            resume_from = 0
-        logger.info("Full sent scan: %d messages to process (%d already done)", total, resume_from)
-
-        for batch_start in range(resume_from, total, _BATCH_SIZE):
-            if batch_start > 0:
-                time.sleep(1)
-            if should_continue is not None and not should_continue():
-                logger.info("Sent scan interrupted at %d/%d, partial results saved", batch_start, total)
-                db.set_sent_scan_progress(conn, user_id, batch_start, messages_total)
-                conn.commit()
-                return {
-                    "known_senders": db.count_known_senders(conn, user_id),
-                    "messages_scanned": batch_start,
-                }
-            batch_ids = [m["id"] for m in messages[batch_start:batch_start + _BATCH_SIZE]]
-            batch_end = batch_start + len(batch_ids)
-            try:
-                metadata = batch_get_message_metadata(service, batch_ids, ["To", "Cc", "Bcc"])
-            except Exception as exc:
-                logger.warning("Batch sent fetch failed at %d-%d: %s", batch_start + 1, batch_end, exc)
-                db.set_sent_scan_progress(conn, user_id, batch_end, messages_total)
-                conn.commit()
+        # Extract recipients
+        recipients = []
+        scanned_ids = []
+        for msg_id in batch_ids:
+            result = metadata.get(msg_id)
+            if not result:
                 continue
+            headers = result[0]
+            for field in ("to", "cc", "bcc"):
+                if value := headers.get(field):
+                    for addr in _parse_addresses(value):
+                        recipients.append(addr.lower())
+            scanned_ids.append(msg_id)
 
-            recipients = []
-            for msg_id in batch_ids:
-                result = metadata.get(msg_id)
-                if not result:
-                    continue
-                headers = result[0]
-                for field in ("to", "cc", "bcc"):
-                    if value := headers.get(field):
-                        for addr in _parse_addresses(value):
-                            recipients.append(addr.lower())
+        # Insert recipients and mark messages as scanned
+        if recipients:
+            db.bulk_add_known_senders(conn, user_id, recipients)
+        if scanned_ids:
+            try:
+                applied = batch_apply_labels(service, [(mid, scanned_label_id) for mid in scanned_ids])
+                total_scanned += applied
+                conn.commit()
+                logger.info("Sent scan batch %d: scanned %d messages (%d total, %d senders)",
+                            batch_num, applied, total_scanned, db.count_known_senders(conn, user_id))
+            except Exception as exc:
+                logger.warning("Batch label apply failed: %s", exc)
+                time.sleep(5)
 
-            if recipients:
-                db.bulk_add_known_senders(conn, user_id, recipients)
-            db.set_sent_scan_progress(conn, user_id, batch_end, messages_total)
-            conn.commit()
-            if batch_end % 500 == 0 or batch_end == total:
-                logger.info("Sent scan progress: %d/%d (%.0f%%)", batch_end, total, 100 * batch_end / total)
+        time.sleep(1)
 
-        messages_scanned = total
-        cumulative_scanned = total
-
-    profile = get_profile(service)
-    db.set_sent_scan_cursor(conn, user_id, int(profile["historyId"]))
-    db.set_sent_scan_progress(conn, user_id, cumulative_scanned, messages_total)
-    count = db.count_known_senders(conn, user_id)
-    logger.info("Known senders: %d total (%d messages scanned)", count, messages_scanned)
-    return {"known_senders": count, "messages_scanned": messages_scanned}
+    return total_scanned
 
 
 def _unlabeled_query(label_configs):
