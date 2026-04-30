@@ -17,6 +17,45 @@ def _batch_metadata(**msg_map):
 
 
 # ---------------------------------------------------------------------------
+# _sample_batch — random desynchronization for concurrent workers
+# ---------------------------------------------------------------------------
+
+class TestSampleBatch:
+    def test_returns_all_when_pool_smaller_than_batch(self):
+        from claven.core.scan import _sample_batch
+        candidates = [{"id": "m1"}, {"id": "m2"}]
+        result = _sample_batch(candidates, 5)
+        assert result == candidates
+
+    def test_returns_all_when_pool_equals_batch(self):
+        from claven.core.scan import _sample_batch
+        candidates = [{"id": f"m{i}"} for i in range(5)]
+        result = _sample_batch(candidates, 5)
+        assert result == candidates
+
+    def test_returns_subset_when_pool_larger_than_batch(self):
+        from claven.core.scan import _sample_batch
+        candidates = [{"id": f"m{i}"} for i in range(25)]
+        result = _sample_batch(candidates, 5)
+        assert len(result) == 5
+        assert all(item in candidates for item in result)
+
+    def test_subset_is_random_not_always_first_n(self):
+        """Two samples from the same pool should differ (with high probability)."""
+        from claven.core.scan import _sample_batch
+        candidates = [{"id": f"m{i}"} for i in range(100)]
+        sample_a = _sample_batch(candidates, 5)
+        sample_b = _sample_batch(candidates, 5)
+        # With 100 candidates and batch of 5, probability of identical samples
+        # is ~1 in 75 million. Safe to assert they differ.
+        assert sample_a != sample_b
+
+    def test_returns_empty_for_empty_pool(self):
+        from claven.core.scan import _sample_batch
+        assert _sample_batch([], 5) == []
+
+
+# ---------------------------------------------------------------------------
 # build_known_senders — label-based sent scan
 # ---------------------------------------------------------------------------
 
