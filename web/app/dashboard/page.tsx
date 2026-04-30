@@ -14,8 +14,8 @@ type MeResponse = {
   connected: boolean;
   history_id: number | null;
   known_senders: number;
-  sent_messages_scanned: number;
-  sent_messages_total: number | null;
+  sent_scanned_count: number;
+  sent_total_count: number | null;
   sent_scan_status: string | null;
   inbox_scan_in_progress: boolean;
   last_processed_at: string | null;
@@ -166,7 +166,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_messages_scanned, sent_messages_total, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
   const { labels } = state;
 
   return (
@@ -268,7 +268,7 @@ export default function DashboardPage() {
                               Messages scanned
                             </span>
                             <span className="text-xs tabular-nums text-muted-foreground">
-                              {sent_messages_scanned}{sent_messages_total !== null ? ` / ${sent_messages_total}` : ""}
+                              {sent_scanned_count}{sent_total_count !== null ? ` / ${sent_total_count}` : ""}
                             </span>
                           </div>
                           <div className="flex justify-between gap-4 items-center">
