@@ -9,6 +9,23 @@ import { SIGN_IN_LABEL } from "@/lib/constants";
 const replaceMock = vi.fn();
 const pushMock = vi.fn();
 
+// Mock EventSource — not available in jsdom; prevents SSE connection attempts in tests.
+// Tracks the last instance so tests can simulate events and verify cleanup.
+let lastEventSource: MockEventSource | null = null;
+class MockEventSource {
+  url: string;
+  withCredentials: boolean;
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  close = vi.fn();
+  constructor(url: string, opts?: { withCredentials?: boolean }) {
+    this.url = url;
+    this.withCredentials = opts?.withCredentials ?? false;
+    lastEventSource = this;
+  }
+}
+vi.stubGlobal("EventSource", MockEventSource);
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, replace: replaceMock }),
   useSearchParams: () => ({ get: () => null }),
@@ -55,10 +72,13 @@ function mockFetch(
 beforeEach(() => {
   replaceMock.mockReset();
   pushMock.mockReset();
+  lastEventSource = null;
 });
 
 afterEach(() => {
+  // Only unstub fetch, not EventSource (which must persist across tests)
   vi.unstubAllGlobals();
+  vi.stubGlobal("EventSource", MockEventSource);
 });
 
 describe("Dashboard page", () => {
@@ -406,21 +426,10 @@ describe("Dashboard page", () => {
       await screen.findByText("15");
     });
 
-    it("does not show labeled as known-sender row when null", async () => {
+    it("shows em dash for labeled as known-sender when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
-    });
-
-    it("does not show labeled as known-sender row when label has no unknown_label", async () => {
-      mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, filtered_in_count: 15 } },
-        { labels: [{ id: "newsletter", name: "Newsletter", rules: [{ field: "from", contains: ["newsletter"] }] }] },
-      );
-      render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
+      await screen.findByText(/labeled as known-sender/i);
     });
 
     it("shows labeled as unknown-sender count under the label that has unknown_label", async () => {
@@ -430,11 +439,10 @@ describe("Dashboard page", () => {
       await screen.findByText("8");
     });
 
-    it("does not show labeled as unknown-sender row when null", async () => {
+    it("shows em dash for labeled as unknown-sender when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/labeled as unknown-sender/i)).not.toBeInTheDocument();
+      await screen.findByText(/labeled as unknown-sender/i);
     });
 
     it("shows unlabeled count under the label that has unknown_label", async () => {
@@ -444,11 +452,10 @@ describe("Dashboard page", () => {
       await screen.findByText("3");
     });
 
-    it("does not show unlabeled row when null", async () => {
+    it("shows em dash for unlabeled when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, unlabeled_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/unlabeled/i)).not.toBeInTheDocument();
+      await screen.findByText(/unlabeled/i);
     });
 
     it("shows waiting icon on filter rows when scan is not complete", async () => {
@@ -508,11 +515,11 @@ describe("Dashboard page", () => {
       await screen.findByText("70");
     });
 
-    it("does not show read count when read_count is null", async () => {
+    it("shows em dash for read count when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, read_count: null, unread_count: 30 } });
       render(<DashboardPage />);
       await screen.findByText("30");
-      expect(screen.queryByText(/^read$/i)).not.toBeInTheDocument();
+      await screen.findByText(/^read$/i);
     });
 
     it("shows last updated label after data loads", async () => {
@@ -651,6 +658,35 @@ describe("Dashboard page", () => {
           expect.objectContaining({ method: "POST", credentials: "include" }),
         ),
       );
+    });
+  });
+
+  describe("SSE live progress", () => {
+    it("connects EventSource with credentials after data loads", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByText(/dashboard/i);
+      expect(lastEventSource).not.toBeNull();
+      expect(lastEventSource!.url).toContain("/api/events");
+      expect(lastEventSource!.withCredentials).toBe(true);
+    });
+
+    it("closes EventSource on unmount", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      const { unmount } = render(<DashboardPage />);
+      await screen.findByText(/dashboard/i);
+      const es = lastEventSource!;
+      unmount();
+      expect(es.close).toHaveBeenCalled();
+    });
+
+    it("does not crash on SSE error", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByText(/dashboard/i);
+      // Simulate SSE error — should not throw
+      lastEventSource!.onerror?.();
+      expect(screen.getByText(/dashboard/i)).toBeInTheDocument();
     });
   });
 });

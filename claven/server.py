@@ -95,7 +95,8 @@ _shutting_down = False  # Reset on every module load (--reload re-imports)
 def _shutdown_handler(signum, frame):
     global _shutting_down
     _shutting_down = True
-    logger.info("Shutdown signal received (pid=%d, signal=%d)", os.getpid(), signum)
+    # Don't log here — signal handlers can interrupt mid-flush, causing
+    # "reentrant call inside BufferedWriter" on shutdown.
 
 
 import signal
@@ -594,6 +595,90 @@ def api_me(request: Request):
 def api_config():
     config = load_config()
     return {"labels": config.get("labels", [])}
+
+
+@app.get("/api/events")
+async def api_events(request: Request):
+    """Server-Sent Events endpoint for live scan progress.
+
+    Listens on Postgres NOTIFY 'scan_progress' and forwards events
+    matching the authenticated user's ID. Workers send NOTIFY after
+    each batch commit, so the dashboard updates in real-time without
+    polling.
+
+    The connection stays open until the client disconnects. Sends a
+    heartbeat comment every 30s to keep the connection alive through
+    load balancers (Cloud Run, Cloudflare).
+
+    Cost: one Postgres LISTEN connection per SSE client. No CPU while
+    idle — select() blocks in a thread without burning cycles.
+    """
+    import asyncio
+    import select
+    import psycopg2
+    import psycopg2.extensions as pg_ext
+
+    session = _get_session(request)
+    user_id = session["user_id"]
+
+    listen_conn = None
+    try:
+        listen_conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        listen_conn.set_isolation_level(pg_ext.ISOLATION_LEVEL_AUTOCOMMIT)
+        with listen_conn.cursor() as cur:
+            cur.execute("LISTEN scan_progress")
+    except Exception as exc:
+        if listen_conn:
+            listen_conn.close()
+        logger.warning("SSE: failed to open LISTEN connection: %s", exc)
+        raise HTTPException(status_code=503, detail="Event stream unavailable")
+
+    _HEARTBEAT_INTERVAL = 30  # seconds
+    _SELECT_TIMEOUT = 5       # seconds — check disconnect + heartbeat periodically
+
+    async def event_stream():
+        last_heartbeat = asyncio.get_event_loop().time()
+        try:
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+
+                # Poll Postgres for notifications (non-blocking via asyncio)
+                ready = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: select.select([listen_conn], [], [], _SELECT_TIMEOUT)
+                )
+                if ready[0]:
+                    listen_conn.poll()
+                    while listen_conn.notifies:
+                        notify = listen_conn.notifies.pop(0)
+                        try:
+                            payload = json.loads(notify.payload)
+                        except Exception:
+                            continue
+                        if payload.get("user_id") != user_id:
+                            continue
+                        yield f"data: {notify.payload}\n\n"
+
+                # Heartbeat — keeps connection alive through load balancers
+                now = asyncio.get_event_loop().time()
+                if now - last_heartbeat >= _HEARTBEAT_INTERVAL:
+                    yield ": keepalive\n\n"
+                    last_heartbeat = now
+        except (GeneratorExit, asyncio.CancelledError):
+            pass
+        finally:
+            try:
+                listen_conn.close()
+            except Exception:
+                pass
+
+    from starlette.responses import StreamingResponse
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _is_current_worker() -> bool:

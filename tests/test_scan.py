@@ -304,3 +304,102 @@ class TestScanInbox:
              patch("claven.core.scan.time.sleep"):
             result = scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
         assert result == 1
+
+
+# ---------------------------------------------------------------------------
+# _notify_progress — Postgres NOTIFY for SSE
+# ---------------------------------------------------------------------------
+
+class TestNotifyProgress:
+    def test_sends_pg_notify_with_json_payload(self):
+        import json
+        from claven.core.scan import _notify_progress
+        conn = MagicMock()
+        _notify_progress(conn, "uid-1", "inbox_scan_progress", labeled=50)
+        conn.cursor.return_value.__enter__.return_value.execute.assert_called_once()
+        call_args = conn.cursor.return_value.__enter__.return_value.execute.call_args
+        assert call_args[0][0] == "SELECT pg_notify('scan_progress', %s)"
+        payload = json.loads(call_args[0][1][0])
+        assert payload["user_id"] == "uid-1"
+        assert payload["event"] == "inbox_scan_progress"
+        assert payload["labeled"] == 50
+
+    def test_includes_extra_data_fields(self):
+        import json
+        from claven.core.scan import _notify_progress
+        conn = MagicMock()
+        _notify_progress(conn, "uid-1", "sent_scan_progress", scanned=100, senders=42)
+        call_args = conn.cursor.return_value.__enter__.return_value.execute.call_args
+        payload = json.loads(call_args[0][1][0])
+        assert payload["scanned"] == 100
+        assert payload["senders"] == 42
+
+
+class TestScanInboxNotify:
+    """Verify scan_inbox sends NOTIFY after labeling batches."""
+
+    def _once_then_empty(self, messages):
+        calls = [0]
+        def side_effect(*args, **kwargs):
+            calls[0] += 1
+            return messages if calls[0] == 1 else []
+        return side_effect
+
+    def test_notify_sent_after_labeling(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}]
+        headers_map = {"m1": ({"from": "a@x.com"}, [], None)}
+        with patch("claven.core.scan.list_messages", side_effect=self._once_then_empty(messages)), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1), \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan._notify_progress") as mock_notify, \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
+        # Should have notified for batch progress + completion
+        events = [c.args[2] for c in mock_notify.call_args_list]
+        assert "inbox_scan_progress" in events
+        assert "inbox_scan_complete" in events
+
+    def test_no_notify_when_nothing_labeled(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        with patch("claven.core.scan.list_messages", return_value=[]), \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan._notify_progress") as mock_notify, \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE)
+        # Complete event still fires even with 0 labeled
+        events = [c.args[2] for c in mock_notify.call_args_list]
+        assert "inbox_scan_complete" in events
+
+
+class TestBuildKnownSendersNotify:
+    """Verify build_known_senders sends NOTIFY after scanning batches."""
+
+    def _once_then_empty(self, messages):
+        calls = [0]
+        def side_effect(*args, **kwargs):
+            calls[0] += 1
+            return messages if calls[0] == 1 else []
+        return side_effect
+
+    def test_notify_sent_after_batch(self):
+        from claven.core.scan import build_known_senders
+        service, conn = MagicMock(), MagicMock()
+        messages = [{"id": "s1"}]
+        metadata = _batch_metadata(s1={"to": "a@x.com"})
+        with patch("claven.core.scan.ensure_label_exists", return_value="Label_scanned"), \
+             patch("claven.core.scan.list_messages", side_effect=self._once_then_empty(messages)), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=metadata), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1), \
+             patch("claven.core.scan.db") as mock_db, \
+             patch("claven.core.scan._notify_progress") as mock_notify, \
+             patch("claven.core.scan.time.sleep"):
+            mock_db.count_known_senders.return_value = 1
+            build_known_senders(service, conn, "u1")
+        events = [c.args[2] for c in mock_notify.call_args_list]
+        assert "sent_scan_progress" in events

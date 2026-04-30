@@ -1,3 +1,4 @@
+import json
 import logging
 import random
 
@@ -43,6 +44,17 @@ def _sample_batch(candidates, batch_size):
     if len(candidates) > batch_size:
         return random.sample(candidates, batch_size)
     return candidates
+
+
+def _notify_progress(conn, user_id, event, **data):
+    """Send a Postgres NOTIFY with scan progress for SSE clients.
+
+    NOTIFY fires on the next commit, so call this before conn.commit().
+    Payload is JSON with user_id, event type, and any extra data.
+    """
+    payload = json.dumps({"user_id": user_id, "event": event, **data})
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_notify('scan_progress', %s)", (payload,))
 
 
 SENT_SCANNED_LABEL = "claven/sent-scanned"
@@ -114,9 +126,12 @@ def build_known_senders(service, conn, user_id, should_continue=None):
             try:
                 applied = batch_apply_labels(service, [(mid, scanned_label_id) for mid in scanned_ids])
                 total_scanned += applied
+                senders_count = db.count_known_senders(conn, user_id)
+                _notify_progress(conn, user_id, "sent_scan_progress",
+                                 scanned=total_scanned, senders=senders_count)
                 conn.commit()
                 logger.info("Sent scan batch %d: scanned %d messages (%d total, %d senders)",
-                            batch_num, applied, total_scanned, db.count_known_senders(conn, user_id))
+                            batch_num, applied, total_scanned, senders_count)
             except Exception as exc:
                 logger.warning("Batch label apply failed: %s", exc)
                 time.sleep(5)
@@ -207,6 +222,8 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                     db.touch_last_processed(conn, user_id)
                     if newest_date_ms:
                         db.update_newest_labeled(conn, user_id, newest_date_ms)
+                    _notify_progress(conn, user_id, "inbox_scan_progress",
+                                     labeled=total_labeled)
                     conn.commit()
                 logger.info("Inbox scan batch %d: labeled %d messages (%d total)", batch_num, applied, total_labeled)
             except Exception as exc:
@@ -221,6 +238,7 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
     # Update history_id to current point
     profile = get_profile(service)
     db.set_history_id(conn, user_id, int(profile["historyId"]))
+    _notify_progress(conn, user_id, "inbox_scan_complete", labeled=total_labeled)
     conn.commit()
     return total_labeled
 
