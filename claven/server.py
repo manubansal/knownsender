@@ -89,7 +89,7 @@ logger = logging.getLogger(__name__)
 # Worker generation ID — unique per process. Background scan threads check this
 # per batch and exit if it changes (means --reload spawned a new worker).
 _worker_id = os.getpid()
-_shutting_down = False
+_shutting_down = False  # Reset on every module load (--reload re-imports)
 
 
 def _shutdown_handler(signum, frame):
@@ -545,11 +545,15 @@ def api_me(request: Request):
             filtered_out_count = 0
             for lc in label_configs:
                 if lid := label_id_by_name.get(lc["id"]):
-                    label_info = service.users().labels().get(userId="me", id=lid).execute()
-                    filtered_in_count += label_info.get("messagesTotal", 0)
+                    r = service.users().messages().list(
+                        userId="me", labelIds=["INBOX", lid], maxResults=1
+                    ).execute()
+                    filtered_in_count += r.get("resultSizeEstimate", 0)
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
-                    label_info = service.users().labels().get(userId="me", id=uid).execute()
-                    filtered_out_count += label_info.get("messagesTotal", 0)
+                    r = service.users().messages().list(
+                        userId="me", labelIds=["INBOX", uid], maxResults=1
+                    ).execute()
+                    filtered_out_count += r.get("resultSizeEstimate", 0)
 
             if inbox_count is not None:
                 unlabeled_count = max(0, inbox_count - filtered_in_count - filtered_out_count)
