@@ -770,6 +770,7 @@ class TestApiMe:
         read_estimate=0,
         filtered_in_total=0,
         filtered_out_total=0,
+        unlabeled_total=0,
     ):
         """Return a mock Gmail service with label counts."""
         svc = MagicMock()
@@ -805,6 +806,9 @@ class TestApiMe:
             result = MagicMock()
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
+            elif "in:inbox" in q and "-label:" in q:
+                # Unlabeled query (same as scan's _unlabeled_query)
+                result.execute.return_value = {"resultSizeEstimate": unlabeled_total}
             elif known_id in label_ids:
                 result.execute.return_value = {"resultSizeEstimate": filtered_in_total}
             elif unknown_id in label_ids:
@@ -937,7 +941,7 @@ class TestApiMe:
                     response = client.get("/api/me")
         assert response.json()["filtered_out_count"] == 50
 
-    def test_returns_unlabeled_count_as_inbox_minus_filtered(self):
+    def test_returns_unlabeled_count_from_search_query(self):
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -947,7 +951,8 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=30, filtered_out_total=50
+                    messages_total=100, filtered_in_total=30, filtered_out_total=50,
+                    unlabeled_total=20,
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -999,12 +1004,12 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.get_inbox_scan_status.return_value = "complete"
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=30, filtered_out_total=50
+                    messages_total=100, filtered_in_total=30, filtered_out_total=50,
+                    unlabeled_total=20,
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        # 100 - 30 - 50 = 20 unlabeled → should retrigger
         assert response.json()["unlabeled_count"] == 20
         assert response.json()["inbox_scan_in_progress"] is True
         mock_threading.Thread.assert_called_once()
@@ -1022,7 +1027,7 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.get_inbox_scan_status.return_value = None
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=0, filtered_out_total=0
+                    messages_total=100, unlabeled_total=100,
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
@@ -1043,7 +1048,8 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.get_inbox_scan_status.return_value = "complete"
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=60, filtered_out_total=40
+                    messages_total=100, filtered_in_total=60, filtered_out_total=40,
+                    unlabeled_total=0,
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)

@@ -556,8 +556,16 @@ def api_me(request: Request):
                     ).execute()
                     filtered_out_count += r.get("resultSizeEstimate", 0)
 
-            if inbox_count is not None:
-                unlabeled_count = max(0, inbox_count - filtered_in_count - filtered_out_count)
+            # Use the same Gmail search query the scan uses to count
+            # unlabeled messages. This avoids disagreement between
+            # arithmetic on approximate resultSizeEstimate values and
+            # the scan's own exit condition.
+            from claven.core.scan import _unlabeled_query
+            unlabeled_q = _unlabeled_query(label_configs)
+            unlabeled_result = service.users().messages().list(
+                userId="me", q=unlabeled_q, maxResults=1
+            ).execute()
+            unlabeled_count = unlabeled_result.get("resultSizeEstimate", 0)
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
