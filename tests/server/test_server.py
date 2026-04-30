@@ -747,10 +747,6 @@ class TestApiMe:
                 result.execute.return_value = {"messagesUnread": messages_unread, "messagesTotal": messages_total}
             elif lid == "SENT":
                 result.execute.return_value = {"messagesTotal": 0}
-            elif lid == known_id:
-                result.execute.return_value = {"messagesTotal": filtered_in_total}
-            elif lid == unknown_id:
-                result.execute.return_value = {"messagesTotal": filtered_out_total}
             else:
                 result.execute.return_value = {"messagesTotal": 0}
             return result
@@ -765,12 +761,17 @@ class TestApiMe:
             ]
         }
 
-        # messages.list → route by q
+        # messages.list → route by labelIds and q
         def _messages_list(**kwargs):
+            label_ids = kwargs.get("labelIds", [])
             q = kwargs.get("q", "")
             result = MagicMock()
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
+            elif known_id in label_ids:
+                result.execute.return_value = {"resultSizeEstimate": filtered_in_total}
+            elif unknown_id in label_ids:
+                result.execute.return_value = {"resultSizeEstimate": filtered_out_total}
             else:
                 result.execute.return_value = {"resultSizeEstimate": 0}
             return result
