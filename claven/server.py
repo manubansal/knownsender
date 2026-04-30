@@ -95,7 +95,8 @@ _shutting_down = False  # Reset on every module load (--reload re-imports)
 def _shutdown_handler(signum, frame):
     global _shutting_down
     _shutting_down = True
-    logger.info("Shutdown signal received (pid=%d, signal=%d)", os.getpid(), signum)
+    # Don't log here — signal handlers can interrupt mid-flush, causing
+    # "reentrant call inside BufferedWriter" on shutdown.
 
 
 import signal

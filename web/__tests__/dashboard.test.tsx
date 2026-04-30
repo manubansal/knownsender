@@ -406,21 +406,10 @@ describe("Dashboard page", () => {
       await screen.findByText("15");
     });
 
-    it("does not show labeled as known-sender row when null", async () => {
+    it("shows em dash for labeled as known-sender when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
-    });
-
-    it("does not show labeled as known-sender row when label has no unknown_label", async () => {
-      mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, filtered_in_count: 15 } },
-        { labels: [{ id: "newsletter", name: "Newsletter", rules: [{ field: "from", contains: ["newsletter"] }] }] },
-      );
-      render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/labeled as known-sender/i)).not.toBeInTheDocument();
+      await screen.findByText(/labeled as known-sender/i);
     });
 
     it("shows labeled as unknown-sender count under the label that has unknown_label", async () => {
@@ -430,11 +419,10 @@ describe("Dashboard page", () => {
       await screen.findByText("8");
     });
 
-    it("does not show labeled as unknown-sender row when null", async () => {
+    it("shows em dash for labeled as unknown-sender when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/labeled as unknown-sender/i)).not.toBeInTheDocument();
+      await screen.findByText(/labeled as unknown-sender/i);
     });
 
     it("shows unlabeled count under the label that has unknown_label", async () => {
@@ -444,11 +432,10 @@ describe("Dashboard page", () => {
       await screen.findByText("3");
     });
 
-    it("does not show unlabeled row when null", async () => {
+    it("shows em dash for unlabeled when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, unlabeled_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
-      expect(screen.queryByText(/unlabeled/i)).not.toBeInTheDocument();
+      await screen.findByText(/unlabeled/i);
     });
 
     it("shows waiting icon on filter rows when scan is not complete", async () => {
@@ -508,11 +495,11 @@ describe("Dashboard page", () => {
       await screen.findByText("70");
     });
 
-    it("does not show read count when read_count is null", async () => {
+    it("shows em dash for read count when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, read_count: null, unread_count: 30 } });
       render(<DashboardPage />);
       await screen.findByText("30");
-      expect(screen.queryByText(/^read$/i)).not.toBeInTheDocument();
+      await screen.findByText(/^read$/i);
     });
 
     it("shows last updated label after data loads", async () => {

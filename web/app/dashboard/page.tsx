@@ -89,7 +89,7 @@ export default function DashboardPage() {
 
   function formatRelativeTime(date: Date, suffix = "ago"): string {
     const seconds = Math.floor((now - date.getTime()) / 1000);
-    if (seconds < 60) return seconds <= 5 ? "just now" : `${seconds} seconds ${suffix}`;
+    if (seconds < 60) return seconds <= 5 && suffix === "ago" ? "just now" : `${seconds} seconds ${suffix}`;
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return minutes === 1 ? `1 minute ${suffix}` : `${minutes} minutes ${suffix}`;
     const hours = Math.floor(minutes / 60);
@@ -217,30 +217,22 @@ export default function DashboardPage() {
 
           <div className="w-full flex flex-col gap-1">
             <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm divide-y divide-border/50">
-              {inbox_count !== null && (
-                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">Inbox</span>
-                  <span className="tabular-nums">{inbox_count}</span>
-                </div>
-              )}
-              {read_count !== null && (
-                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">Read</span>
-                  <span className="tabular-nums">{read_count}</span>
-                </div>
-              )}
-              {unread_count !== null && (
-                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">Unread</span>
-                  <span className="tabular-nums">{unread_count}</span>
-                </div>
-              )}
-              {all_mail_count !== null && (
-                <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                  <span className="text-muted-foreground">All mail</span>
-                  <span className="tabular-nums">{all_mail_count}</span>
-                </div>
-              )}
+              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Inbox</span>
+                <span className="tabular-nums">{inbox_count ?? "—"}</span>
+              </div>
+              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Read</span>
+                <span className="tabular-nums">{read_count ?? "—"}</span>
+              </div>
+              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">Unread</span>
+                <span className="tabular-nums">{unread_count ?? "—"}</span>
+              </div>
+              <div className="flex justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <span className="text-muted-foreground">All mail</span>
+                <span className="tabular-nums">{all_mail_count ?? "—"}</span>
+              </div>
               {labels.map((label) => {
                 const isKnownSender = label.rules.some((r) => r.known_sender);
                 const desc = label.description ?? label.rules
@@ -296,44 +288,36 @@ export default function DashboardPage() {
                         <div className="flex flex-col gap-2 mt-2">
                           <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Received scan</span>
                           <div className="flex flex-col gap-0.5">
-                            {inbox_count !== null && (
-                              <div className="flex justify-between gap-4 items-center">
-                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                  Messages labeled
-                                </span>
-                                <span className="text-xs tabular-nums text-muted-foreground">
-                                  {(filtered_in_count ?? 0) + (filtered_out_count ?? 0)} / {inbox_count}
-                                </span>
-                              </div>
-                            )}
-                            {unlabeled_count !== null && (
-                              <div className="flex justify-between gap-4 items-center">
-                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                  Unlabeled
-                                </span>
-                                <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count}</span>
-                              </div>
-                            )}
-                            {filtered_in_count !== null && (
-                              <div className="flex justify-between gap-4 items-center">
-                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                  Labeled as known-sender
-                                </span>
-                                <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count}</span>
-                              </div>
-                            )}
-                            {filtered_out_count !== null && (
-                              <div className="flex justify-between gap-4 items-center">
-                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                  Labeled as unknown-sender
-                                </span>
-                                <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count}</span>
-                              </div>
-                            )}
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Messages labeled
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {(filtered_in_count ?? 0) + (filtered_out_count ?? 0)} / {inbox_count ?? "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Unlabeled
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count ?? "—"}</span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Labeled as known-sender
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count ?? "—"}</span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Labeled as unknown-sender
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count ?? "—"}</span>
+                            </div>
                             <div className="flex justify-between gap-4 items-center mt-1 pt-1 border-t border-border/30">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
@@ -372,9 +356,9 @@ export default function DashboardPage() {
                 );
               })}
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               {lastUpdated !== null ? (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground min-w-0 truncate">
                   Last updated{" "}
                   <span data-testid="last-updated-time">
                     {formatRelativeTime(lastUpdated)}
@@ -387,7 +371,7 @@ export default function DashboardPage() {
                 onClick={handleRefresh}
                 disabled={refreshing}
                 aria-label="Refresh stats"
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 shrink-0"
               >
                 <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
                 <span>Refresh now</span>
