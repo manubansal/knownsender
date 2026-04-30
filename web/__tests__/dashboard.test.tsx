@@ -9,6 +9,23 @@ import { SIGN_IN_LABEL } from "@/lib/constants";
 const replaceMock = vi.fn();
 const pushMock = vi.fn();
 
+// Mock EventSource — not available in jsdom; prevents SSE connection attempts in tests.
+// Tracks the last instance so tests can simulate events and verify cleanup.
+let lastEventSource: MockEventSource | null = null;
+class MockEventSource {
+  url: string;
+  withCredentials: boolean;
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  close = vi.fn();
+  constructor(url: string, opts?: { withCredentials?: boolean }) {
+    this.url = url;
+    this.withCredentials = opts?.withCredentials ?? false;
+    lastEventSource = this;
+  }
+}
+vi.stubGlobal("EventSource", MockEventSource);
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, replace: replaceMock }),
   useSearchParams: () => ({ get: () => null }),
@@ -55,10 +72,13 @@ function mockFetch(
 beforeEach(() => {
   replaceMock.mockReset();
   pushMock.mockReset();
+  lastEventSource = null;
 });
 
 afterEach(() => {
+  // Only unstub fetch, not EventSource (which must persist across tests)
   vi.unstubAllGlobals();
+  vi.stubGlobal("EventSource", MockEventSource);
 });
 
 describe("Dashboard page", () => {
@@ -638,6 +658,35 @@ describe("Dashboard page", () => {
           expect.objectContaining({ method: "POST", credentials: "include" }),
         ),
       );
+    });
+  });
+
+  describe("SSE live progress", () => {
+    it("connects EventSource with credentials after data loads", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByText(/dashboard/i);
+      expect(lastEventSource).not.toBeNull();
+      expect(lastEventSource!.url).toContain("/api/events");
+      expect(lastEventSource!.withCredentials).toBe(true);
+    });
+
+    it("closes EventSource on unmount", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      const { unmount } = render(<DashboardPage />);
+      await screen.findByText(/dashboard/i);
+      const es = lastEventSource!;
+      unmount();
+      expect(es.close).toHaveBeenCalled();
+    });
+
+    it("does not crash on SSE error", async () => {
+      mockFetch({ ok: true, body: DEFAULT_ME });
+      render(<DashboardPage />);
+      await screen.findByText(/dashboard/i);
+      // Simulate SSE error — should not throw
+      lastEventSource!.onerror?.();
+      expect(screen.getByText(/dashboard/i)).toBeInTheDocument();
     });
   });
 });

@@ -87,6 +87,31 @@ export default function DashboardPage() {
 
   useEffect(() => { loadData(); }, []);
 
+  // Live progress via Server-Sent Events — workers push updates after each
+  // batch commit via Postgres NOTIFY. No polling, no wasted API calls.
+  // Debounced: rapid events (multiple batches/second) collapse into one
+  // loadData call every 3 seconds to avoid flooding /api/me.
+  useEffect(() => {
+    if (state.status !== "loaded") return;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const es = new EventSource(`${API_URL}/api/events`, { withCredentials: true });
+    es.onmessage = () => {
+      if (!debounceTimer) {
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          loadData();
+        }, 3_000);
+      }
+    };
+    es.onerror = () => {
+      // SSE disconnected — EventSource auto-reconnects (browser default)
+    };
+    return () => {
+      es.close();
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  }, [state.status]);
+
   function formatRelativeTime(date: Date, suffix = "ago"): string {
     const seconds = Math.floor((now - date.getTime()) / 1000);
     if (seconds < 60) return seconds <= 5 && suffix === "ago" ? "just now" : `${seconds} seconds ${suffix}`;

@@ -1379,3 +1379,20 @@ class TestCloudJsonFormatter:
         output = json.loads(formatter.format(record))
         assert output["severity"] == "ERROR"
         assert "ValueError: boom" in output["exception"]
+
+
+class TestApiEvents:
+    def test_no_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/api/events")
+        assert response.status_code == 401
+
+    def test_db_unavailable_returns_503(self):
+        token = _make_session_token()
+        bad_env = {**_ENV, "DATABASE_URL": "postgresql://bad:bad@localhost:1/nonexistent"}
+        with patch.dict("os.environ", bad_env):
+            with TestClient(app) as client:
+                client.cookies.set("session", token)
+                response = client.get("/api/events")
+        assert response.status_code == 503
