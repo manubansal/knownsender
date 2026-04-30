@@ -21,8 +21,8 @@ const DEFAULT_ME: object = {
   connected: true,
   history_id: 12345,
   known_senders: 0,
-  sent_messages_scanned: 0,
-  sent_messages_total: null,
+  sent_scanned_count: 0,
+  sent_total_count: null,
   sent_scan_status: null,
   inbox_scan_in_progress: false,
   unread_count: null,
@@ -312,7 +312,7 @@ describe("Dashboard page", () => {
 
     it("shows messages scanned as fraction before known senders", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, known_senders: 10, sent_messages_scanned: 150, sent_messages_total: 500 } },
+        { ok: true, body: { ...DEFAULT_ME, known_senders: 10, sent_scanned_count: 150, sent_total_count: 500 } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
@@ -322,7 +322,7 @@ describe("Dashboard page", () => {
 
     it("shows messages scanned without total when total is null", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, known_senders: 10, sent_messages_scanned: 75, sent_messages_total: null } },
+        { ok: true, body: { ...DEFAULT_ME, known_senders: 10, sent_scanned_count: 75, sent_total_count: null } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
@@ -332,7 +332,7 @@ describe("Dashboard page", () => {
 
     it("shows messages scanned row even when zero", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, known_senders: 0, sent_messages_scanned: 0, sent_messages_total: null } },
+        { ok: true, body: { ...DEFAULT_ME, known_senders: 0, sent_scanned_count: 0, sent_total_count: null } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
@@ -341,7 +341,7 @@ describe("Dashboard page", () => {
 
     it("shows spinner when sent scan is in progress", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "in_progress", sent_messages_scanned: 50, sent_messages_total: 200 } },
+        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "in_progress", sent_scanned_count: 50, sent_total_count: 200 } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
@@ -350,7 +350,7 @@ describe("Dashboard page", () => {
 
     it("does not show spinner when sent scan is complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "complete", sent_messages_scanned: 200, sent_messages_total: 200 } },
+        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "complete", sent_scanned_count: 200, sent_total_count: 200 } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
