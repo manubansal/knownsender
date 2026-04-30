@@ -362,6 +362,12 @@ def oauth_callback(
 
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id,
                 extra={"event": "oauth_complete", "user_id": user_id, "email": email})
+
+    # Kick off sent scan immediately — user is now eligible (has tokens).
+    # Don't wait for dashboard load. The scan runs in a background thread
+    # and the dashboard will show progress when the user arrives.
+    threading.Thread(target=_run_sent_scan, args=(user_id,), daemon=True).start()
+
     session_token = _issue_session(user_id, email)
     response = RedirectResponse(url=f"{base}/dashboard", status_code=302)
     response.delete_cookie("oauth_state")
@@ -497,12 +503,6 @@ def api_me(request: Request):
         last_processed_at = db.get_last_processed_at(conn, session["user_id"])
         newest_labeled_at = db.get_newest_labeled_at(conn, session["user_id"])
 
-        # Auto-trigger sent scan if it has never run for this user
-        if _needs_sent_scan(sent_scan_progress):
-            has_tokens = db.load_tokens(conn, session["user_id"]) is not None
-            if has_tokens:
-                threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
-
         unread_count = None
         read_count = None
         inbox_count = None
@@ -561,14 +561,7 @@ def api_me(request: Request):
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
-        # Auto-trigger inbox scan if sent scan is done and there are unlabeled messages
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
-
-        if (sent_scan_progress["status"] == "complete"
-                and history_id is not None
-                and unlabeled_count is not None and unlabeled_count > 0
-                and inbox_scan_status != "in_progress"):
-            threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
 
     return {
         "email": user["email"],
@@ -697,14 +690,13 @@ def _run_inbox_scan(user_id: str):
     """Background task: scan all inbox messages and apply labels."""
     my_pid = os.getpid()
     logger.info("Inbox scan thread started for %s (worker pid=%d)", user_id, my_pid)
-    with db.get_connection() as conn:
-        db.set_inbox_scan_status(conn, user_id, "in_progress")
     label_configs = load_config().get("labels", [])
     try:
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
                 logger.info("Inbox scan skipped for %s — locked by another instance", user_id)
                 return
+            db.set_inbox_scan_status(conn, user_id, "in_progress")
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
@@ -780,7 +772,11 @@ def api_connect(request: Request):
         except Exception as exc:
             logger.exception("Connect failed for %s: %s", session["email"], exc)
             raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
+    # Kick off both scans — sent scan may already be complete (from sign-in),
+    # in which case _run_sent_scan is a no-op and inbox scan starts immediately.
+    # If sent scan is still running, _run_sent_scan chains into inbox scan on completion.
     threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
+    threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
     return JSONResponse({"ok": True, "history_id": history_id})
 
 

@@ -665,7 +665,7 @@ describe("Dashboard page", () => {
     it("connects EventSource with credentials after data loads", async () => {
       mockFetch({ ok: true, body: DEFAULT_ME });
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
+      await screen.findByText("user@example.com");
       expect(lastEventSource).not.toBeNull();
       expect(lastEventSource!.url).toContain("/api/events");
       expect(lastEventSource!.withCredentials).toBe(true);
@@ -674,7 +674,7 @@ describe("Dashboard page", () => {
     it("closes EventSource on unmount", async () => {
       mockFetch({ ok: true, body: DEFAULT_ME });
       const { unmount } = render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
+      await screen.findByText("user@example.com");
       const es = lastEventSource!;
       unmount();
       expect(es.close).toHaveBeenCalled();
@@ -683,7 +683,7 @@ describe("Dashboard page", () => {
     it("does not crash on SSE error", async () => {
       mockFetch({ ok: true, body: DEFAULT_ME });
       render(<DashboardPage />);
-      await screen.findByText(/dashboard/i);
+      await screen.findByText("user@example.com");
       // Simulate SSE error — should not throw
       lastEventSource!.onerror?.();
       expect(screen.getByText(/dashboard/i)).toBeInTheDocument();
