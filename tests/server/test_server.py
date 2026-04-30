@@ -327,6 +327,7 @@ class TestOAuthCallback:
                     patch("claven.server.db") as mock_db,
                     patch("claven.server.auth"),
                     patch("claven.server.start_watch") as mock_watch,
+                    patch("claven.server.build_known_senders"),
                 ):
                     mock_flow_cls.from_client_config.return_value = mock_flow
                     mock_verify.return_value = {"email": "user@example.com"}
@@ -340,6 +341,42 @@ class TestOAuthCallback:
                     )
         mock_watch.assert_not_called()
 
+    def test_callback_triggers_sent_scan(self):
+        """oauth_callback kicks off sent scan in background after storing credentials."""
+        with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+
+                mock_creds = MagicMock()
+                mock_creds.id_token = "fake-id-token"
+                mock_creds.refresh_token = "fake-refresh-token"
+                mock_creds.scopes = {"https://www.googleapis.com/auth/gmail.modify", "openid"}
+
+                mock_flow = MagicMock()
+                mock_flow.credentials = mock_creds
+
+                with (
+                    patch("claven.server.Flow") as mock_flow_cls,
+                    patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify,
+                    patch("claven.server.db") as mock_db,
+                    patch("claven.server.auth"),
+                    patch("claven.server.threading") as mock_threading,
+                ):
+                    mock_flow_cls.from_client_config.return_value = mock_flow
+                    mock_verify.return_value = {"email": "user@example.com"}
+                    _fake_db_ctx(mock_db)
+                    mock_db.upsert_user.return_value = "uid-1"
+                    mock_db.load_tokens.return_value = None
+
+                    client.get(
+                        f"/oauth/callback?code=abc&state={state}",
+                        follow_redirects=False,
+                    )
+        mock_threading.Thread.assert_called_once()
+        call_kwargs = mock_threading.Thread.call_args[1]
+        assert call_kwargs["target"].__name__ == "_run_sent_scan"
 
 class TestInternalPoll:
     def test_no_auth_returns_401(self):
@@ -935,7 +972,8 @@ class TestApiMe:
         assert response.json()["unlabeled_count"] is None
 
 
-    def test_auto_triggers_sent_scan_when_never_run(self):
+    def test_api_me_does_not_trigger_scans(self):
+        """Dashboard is read-only — no scan triggers from /api/me."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -943,51 +981,11 @@ class TestApiMe:
                  patch("claven.server.threading") as mock_threading:
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
-                mock_db.get_sent_scan_progress.return_value = {"messages_scanned": 0, "messages_total": None, "status": None}
-                mock_db.load_tokens.return_value = {"access_token_enc": b"x", "refresh_token_enc": b"y"}
-                mock_auth.get_service.return_value = self._make_gmail_service()
-                with TestClient(app) as client:
-                    client.cookies.set("session", token)
-                    response = client.get("/api/me")
-        # Status is still None in the response — the thread sets it after acquiring the lock
-        assert response.json()["sent_scan_status"] is None
-        mock_threading.Thread.assert_called_once()
-        mock_threading.Thread.return_value.start.assert_called_once()
-
-    def test_does_not_trigger_any_scan_when_both_complete(self):
-        token = _make_session_token()
-        with patch.dict("os.environ", _ENV):
-            with patch("claven.server.db") as mock_db, \
-                 patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.threading") as mock_threading:
-                _fake_db_ctx(mock_db)
-                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
-                mock_db.is_inbox_scan_completed.return_value = True
-                mock_db.get_inbox_scan_status.return_value = "complete"
                 mock_auth.get_service.return_value = self._make_gmail_service()
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     client.get("/api/me")
         mock_threading.Thread.assert_not_called()
-
-    def test_auto_triggers_inbox_scan_when_not_yet_done(self):
-        token = _make_session_token()
-        with patch.dict("os.environ", _ENV):
-            with patch("claven.server.db") as mock_db, \
-                 patch("claven.server.auth") as mock_auth, \
-                 patch("claven.server.threading") as mock_threading:
-                _fake_db_ctx(mock_db)
-                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
-                mock_db.get_history_id.return_value = 999
-                mock_db.is_inbox_scan_completed.return_value = False
-                mock_db.get_inbox_scan_status.return_value = None
-                mock_auth.get_service.return_value = self._make_gmail_service(messages_total=50)
-                with TestClient(app) as client:
-                    client.cookies.set("session", token)
-                    client.get("/api/me")
-        mock_threading.Thread.assert_called_once()
-        call_kwargs = mock_threading.Thread.call_args[1]
-        assert call_kwargs["target"].__name__ == "_run_inbox_scan"
 
 
 class TestApiConfig:
@@ -1121,7 +1119,8 @@ class TestApiConnect:
                     client.post("/api/connect")
         mock_db.set_history_id.assert_called_once_with(ANY, "uid-1", 99999)
 
-    def test_triggers_sent_scan_in_background(self):
+    def test_triggers_scans_in_background(self):
+        """Connect triggers both sent scan and inbox scan threads."""
         token = _make_session_token()
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
@@ -1134,8 +1133,9 @@ class TestApiConnect:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     client.post("/api/connect")
-        mock_threading.Thread.assert_called_once()
-        mock_threading.Thread.return_value.start.assert_called_once()
+        assert mock_threading.Thread.call_count == 2
+        targets = {c.kwargs["target"].__name__ for c in mock_threading.Thread.call_args_list}
+        assert targets == {"_run_sent_scan", "_run_inbox_scan"}
 
     def test_watch_failure_returns_500(self):
         token = _make_session_token()
@@ -1215,7 +1215,8 @@ class TestOAuthCallbackSession:
              patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify, \
              patch("claven.server.db") as mock_db, \
              patch("claven.server.auth") as mock_auth, \
-             patch("claven.server.start_watch") as mock_watch:
+             patch("claven.server.start_watch") as mock_watch, \
+             patch("claven.server.build_known_senders"):
             mock_flow_cls.from_client_config.return_value = mock_flow
             mock_verify.return_value = {"email": "user@example.com"}
             _fake_db_ctx(mock_db)
@@ -1343,6 +1344,42 @@ class TestOAuthCallbackSession:
         """Returning users receive a fresh session JWT."""
         response = self._run_full_oauth(has_existing_tokens=True)
         assert "session" in response.cookies
+
+    def test_returning_user_still_triggers_sent_scan(self):
+        """Returning users get a sent scan triggered (incremental update)."""
+        env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}
+        mock_creds = MagicMock()
+        mock_creds.id_token = "fake-id-token"
+        mock_creds.token = "fake-access-token"
+        mock_creds.refresh_token = "fake-refresh-token"
+        mock_creds.expiry = None
+        mock_creds.scopes = {"https://www.googleapis.com/auth/gmail.modify", "openid", "https://www.googleapis.com/auth/userinfo.email"}
+
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+        mock_flow.authorization_url.return_value = ("https://accounts.google.com/o/oauth2/auth", "ignored")
+
+        with patch.dict("os.environ", env), \
+             patch("claven.server.Flow") as mock_flow_cls, \
+             patch("claven.server.google_id_token.verify_oauth2_token") as mock_verify, \
+             patch("claven.server.db") as mock_db, \
+             patch("claven.server.auth"), \
+             patch("claven.server.start_watch"), \
+             patch("claven.server.threading") as mock_threading:
+            mock_flow_cls.from_client_config.return_value = mock_flow
+            mock_verify.return_value = {"email": "user@example.com"}
+            _fake_db_ctx(mock_db)
+            mock_db.upsert_user.return_value = "uid-1"
+            mock_db.load_tokens.return_value = {"access_token": "existing-token"}
+
+            with TestClient(app) as client:
+                start = client.get("/oauth/start", follow_redirects=False)
+                state = start.cookies.get("oauth_state")
+                client.cookies.set("oauth_state", state)
+                client.get(f"/oauth/callback?code=abc&state={state}", follow_redirects=False)
+        # Sent scan should trigger even for returning users (incremental update)
+        mock_threading.Thread.assert_called_once()
+        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
 
 
 class TestCloudJsonFormatter:

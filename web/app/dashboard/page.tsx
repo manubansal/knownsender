@@ -311,7 +311,7 @@ export default function DashboardPage() {
                       const iconTestId = inbox_scan_in_progress ? "filter-labeling-icon" : filterActive ? "filter-active-icon" : "filter-waiting-icon";
                       return (
                         <div className="flex flex-col gap-2 mt-2">
-                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Received scan</span>
+                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Inbox scan</span>
                           <div className="flex flex-col gap-0.5">
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
