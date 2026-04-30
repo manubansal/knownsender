@@ -474,7 +474,7 @@ describe("Dashboard page", () => {
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
-      const icons = await screen.findAllByTestId("filter-active-icon");
+      const icons = await screen.findAllByTestId("filter-complete-icon");
       expect(icons.length).toBe(4);
     });
 
@@ -504,7 +504,7 @@ describe("Dashboard page", () => {
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
-      const icons = await screen.findAllByTestId("filter-active-icon");
+      const icons = await screen.findAllByTestId("filter-complete-icon");
       expect(icons.length).toBe(4);
     });
 
