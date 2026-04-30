@@ -5,8 +5,9 @@
 dev-read-write:
 	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
 	@set -a; . ./.env.local; set +a; \
+	lsof -ti :8000 | xargs kill -9 2>/dev/null; true; \
 	trap 'kill 0' EXIT; \
-	CLAVEN_LOG_FILE=/tmp/claven-server.log uvicorn claven.server:app --port 8000 --reload & \
+	CLAVEN_LOG_FILE=/tmp/claven-server.log uvicorn claven.server:app --port 8000 --reload --timeout-graceful-shutdown 3 & \
 	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
 	wait
 
@@ -17,8 +18,9 @@ dev-read-only:
 	@[ -f .env.local ] || (echo "Error: .env.local not found. Copy .env.local.example and fill in values."; exit 1)
 	@set -a; . ./.env.local; set +a; \
 	[ -n "$$DATABASE_URL_READONLY" ] || (echo "Error: DATABASE_URL_READONLY not set in .env.local."; exit 1); \
+	lsof -ti :8000 | xargs kill -9 2>/dev/null; true; \
 	trap 'kill 0' EXIT; \
-	DATABASE_URL=$$DATABASE_URL_READONLY uvicorn claven.server:app --port 8000 --reload & \
+	DATABASE_URL=$$DATABASE_URL_READONLY uvicorn claven.server:app --port 8000 --reload --timeout-graceful-shutdown 3 & \
 	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
 	wait
 
