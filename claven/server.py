@@ -563,6 +563,16 @@ def api_me(request: Request):
 
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
 
+    # Reconciliation: if the inbox scan completed but unlabeled messages
+    # remain (new mail arrived, Gmail search index lag, etc.), retrigger
+    # the scan automatically. The row lock in _run_inbox_scan makes this
+    # idempotent — concurrent triggers just exit immediately.
+    if (unlabeled_count is not None and unlabeled_count > 0
+            and inbox_scan_status == "complete"
+            and history_id is not None):
+        inbox_scan_status = "in_progress"
+        threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
+
     return {
         "email": user["email"],
         "connected": history_id is not None,

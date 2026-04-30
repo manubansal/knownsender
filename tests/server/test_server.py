@@ -972,8 +972,8 @@ class TestApiMe:
         assert response.json()["unlabeled_count"] is None
 
 
-    def test_api_me_does_not_trigger_scans(self):
-        """Dashboard is read-only — no scan triggers from /api/me."""
+    def test_api_me_does_not_trigger_scans_when_no_unlabeled(self):
+        """No scan triggers when all messages are labeled."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -985,6 +985,71 @@ class TestApiMe:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     client.get("/api/me")
+        mock_threading.Thread.assert_not_called()
+
+    def test_api_me_retriggers_scan_when_unlabeled_remain(self):
+        """If scan is complete but unlabeled messages remain, retrigger inbox scan."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.get_inbox_scan_status.return_value = "complete"
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, filtered_in_total=30, filtered_out_total=50
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        # 100 - 30 - 50 = 20 unlabeled → should retrigger
+        assert response.json()["unlabeled_count"] == 20
+        assert response.json()["inbox_scan_in_progress"] is True
+        mock_threading.Thread.assert_called_once()
+        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_inbox_scan"
+
+    def test_api_me_no_retrigger_when_scan_never_ran(self):
+        """Don't retrigger if scan never ran (status=None) — user must click Start."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.get_inbox_scan_status.return_value = None
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, filtered_in_total=0, filtered_out_total=0
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["unlabeled_count"] == 100
+        assert response.json()["inbox_scan_in_progress"] is False
+        mock_threading.Thread.assert_not_called()
+
+    def test_api_me_no_retrigger_when_all_labeled(self):
+        """Don't retrigger if scan is complete and all messages are labeled."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.get_inbox_scan_status.return_value = "complete"
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, filtered_in_total=60, filtered_out_total=40
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["unlabeled_count"] == 0
+        assert response.json()["inbox_scan_in_progress"] is False
         mock_threading.Thread.assert_not_called()
 
 
