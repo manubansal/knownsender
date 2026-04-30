@@ -25,6 +25,14 @@ logger = logging.getLogger(__name__)
 
 running = True
 
+
+def _interruptible_sleep(seconds, shutdown_event=None):
+    """Sleep that wakes immediately if shutdown_event is set."""
+    if shutdown_event is not None:
+        shutdown_event.wait(seconds)
+    else:
+        time.sleep(seconds)
+
 _BATCH_SIZE = 50
 
 # Fetch more candidates than needed and randomly sample from them.
@@ -60,7 +68,7 @@ def _notify_progress(conn, user_id, event, **data):
 SENT_SCANNED_LABEL = "claven/sent-scanned"
 
 
-def build_known_senders(service, conn, user_id, should_continue=None):
+def build_known_senders(service, conn, user_id, should_continue=None, shutdown_event=None):
     """Build known senders list by scanning unlabeled sent messages.
 
     Queries Gmail for sent messages without the 'claven/sent-scanned' label,
@@ -69,6 +77,9 @@ def build_known_senders(service, conn, user_id, should_continue=None):
 
     Progress is mailbox-based — multiple workers converge naturally since
     each queries remaining unlabeled messages and labels what it processes.
+
+    shutdown_event: threading.Event that, when set, wakes sleeps immediately
+    so the thread exits within one loop iteration instead of blocking.
 
     Returns the number of sent messages scanned in this run.
     """
@@ -102,7 +113,7 @@ def build_known_senders(service, conn, user_id, should_continue=None):
             metadata = batch_get_message_metadata(service, batch_ids, ["To", "Cc", "Bcc"])
         except Exception as exc:
             logger.warning("Batch sent fetch failed: %s", exc)
-            time.sleep(5)
+            _interruptible_sleep(5, shutdown_event)
             continue
 
         # Extract recipients
@@ -134,9 +145,9 @@ def build_known_senders(service, conn, user_id, should_continue=None):
                             batch_num, applied, total_scanned, senders_count)
             except Exception as exc:
                 logger.warning("Batch label apply failed: %s", exc)
-                time.sleep(5)
+                _interruptible_sleep(5, shutdown_event)
 
-        time.sleep(1)
+        _interruptible_sleep(1, shutdown_event)
 
     return total_scanned
 
@@ -151,12 +162,15 @@ def _unlabeled_query(label_configs):
     return "in:inbox " + " ".join(exclude)
 
 
-def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None):
+def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None, shutdown_event=None):
     """Label unlabeled inbox messages using batch API calls.
 
     Queries Gmail for messages that don't have any filter label, processes
     them in batches, and repeats until none remain. Progress is based
     entirely on mailbox state — multiple workers naturally converge.
+
+    shutdown_event: threading.Event that, when set, wakes sleeps immediately
+    so the thread exits within one loop iteration instead of blocking.
 
     Returns the total number of messages labeled in this run.
     """
@@ -190,7 +204,7 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
             headers_map = batch_get_message_headers(service, batch_ids)
         except Exception as exc:
             logger.warning("Batch header fetch failed: %s", exc)
-            time.sleep(5)
+            _interruptible_sleep(5, shutdown_event)
             continue
 
         # Evaluate rules and collect label applications
@@ -228,12 +242,12 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                 logger.info("Inbox scan batch %d: labeled %d messages (%d total)", batch_num, applied, total_labeled)
             except Exception as exc:
                 logger.warning("Batch label apply failed: %s", exc)
-                time.sleep(5)
+                _interruptible_sleep(5, shutdown_event)
         else:
             # All messages in this batch were already labeled (race with another worker)
             logger.info("Inbox scan batch %d: all %d already labeled by another worker", batch_num, len(batch_ids))
 
-        time.sleep(1)
+        _interruptible_sleep(1, shutdown_event)
 
     # Update history_id to current point
     profile = get_profile(service)

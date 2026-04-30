@@ -191,6 +191,19 @@ With a Google Workspace org (e.g. `test.claven.app`) each test run creates and d
 - [ ] Update `test_signup_live.py` to use the throwaway account instead of the shared inbox
 - [ ] Store the admin service account key as a GitHub Actions secret; document the Workspace setup
 
+### Graceful shutdown tests — `server.py` + `core/scan.py`
+
+- [ ] Tests for `_interruptible_sleep` (fallback to `time.sleep`, event.wait, instant wake on set event, wake on mid-sleep set)
+- [ ] Tests for `_is_current_worker` (True normally, False when shutdown event set, False when PID changed)
+- [ ] Tests for `_shutdown_handler` (sets event, idempotent)
+- [ ] Tests for `_spawn_scan_thread` (daemon flag, thread registry, start, arg passthrough)
+- [ ] Tests for lifespan startup (clears event + thread list)
+- [ ] Tests for lifespan shutdown (sets event, joins threads with timeout, clears list, warns on stuck threads)
+- [ ] Integration: spawned thread exits on lifespan shutdown (full flow)
+- [ ] Tests for `build_known_senders`/`scan_inbox` passing `shutdown_event` to `_interruptible_sleep`
+
+See full plan: `docs/graceful-shutdown-test-plan.md`
+
 ### Unit test cases — `core/rules.py`
 
 - [x] Rule matches on `From` header

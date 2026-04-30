@@ -16,6 +16,7 @@ import logging
 import os
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, quote
 
@@ -89,12 +90,21 @@ logger = logging.getLogger(__name__)
 # Worker generation ID — unique per process. Background scan threads check this
 # per batch and exit if it changes (means --reload spawned a new worker).
 _worker_id = os.getpid()
-_shutting_down = False  # Reset on every module load (--reload re-imports)
+
+# Shutdown event — replaces a plain boolean flag. threading.Event lets
+# background threads use event.wait(timeout) instead of time.sleep(),
+# so they wake up instantly when shutdown is signalled instead of
+# blocking for the full sleep duration.
+_shutdown_event = threading.Event()
+
+# Registry of active scan threads — joined during lifespan shutdown
+# so the process exits cleanly instead of leaving orphans.
+_active_threads: list[threading.Thread] = []
+_threads_lock = threading.Lock()
 
 
 def _shutdown_handler(signum, frame):
-    global _shutting_down
-    _shutting_down = True
+    _shutdown_event.set()
     # Don't log here — signal handlers can interrupt mid-flush, causing
     # "reentrant call inside BufferedWriter" on shutdown.
 
@@ -103,9 +113,39 @@ import signal
 signal.signal(signal.SIGINT, _shutdown_handler)
 signal.signal(signal.SIGTERM, _shutdown_handler)
 
-logger.info("Worker started (pid=%d)", _worker_id)
 
-app = FastAPI(title="Claven")
+def _spawn_scan_thread(target, args):
+    """Start a daemon thread and track it for graceful shutdown."""
+    t = threading.Thread(target=target, args=args, daemon=True)
+    with _threads_lock:
+        _active_threads.append(t)
+    t.start()
+    return t
+
+
+@asynccontextmanager
+async def lifespan(app):
+    # Reset shutdown state — needed for test isolation since TestClient
+    # enters/exits lifespan for every test.
+    _shutdown_event.clear()
+    with _threads_lock:
+        _active_threads.clear()
+    logger.info("Worker started (pid=%d)", _worker_id)
+    yield
+    # Shutdown: signal all threads to stop, then wait for them.
+    _shutdown_event.set()
+    with _threads_lock:
+        threads = list(_active_threads)
+    for t in threads:
+        t.join(timeout=5)
+    still_alive = sum(1 for t in threads if t.is_alive())
+    if still_alive:
+        logger.warning("Shutdown: %d scan thread(s) still alive after timeout", still_alive)
+    with _threads_lock:
+        _active_threads.clear()
+    logger.info("Worker shutdown complete (pid=%d)", _worker_id)
+
+app = FastAPI(title="Claven", lifespan=lifespan)
 
 def _allowed_origins() -> list[str]:
     origins = [os.environ.get("FRONTEND_URL", "https://claven.app")]
@@ -366,7 +406,7 @@ def oauth_callback(
     # Kick off sent scan immediately — user is now eligible (has tokens).
     # Don't wait for dashboard load. The scan runs in a background thread
     # and the dashboard will show progress when the user arrives.
-    threading.Thread(target=_run_sent_scan, args=(user_id,), daemon=True).start()
+    _spawn_scan_thread(_run_sent_scan, (user_id,))
 
     session_token = _issue_session(user_id, email)
     response = RedirectResponse(url=f"{base}/dashboard", status_code=302)
@@ -697,9 +737,9 @@ def _is_current_worker() -> bool:
 
     Returns False if:
     - --reload spawned a new worker (PID changed)
-    - Ctrl+C / SIGTERM received (shutdown flag set)
+    - Ctrl+C / SIGTERM received (shutdown event set)
     """
-    if _shutting_down:
+    if _shutdown_event.is_set():
         return False
     return os.getpid() == _worker_id
 
@@ -718,7 +758,7 @@ def _run_inbox_scan(user_id: str):
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
-            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders, should_continue=_is_current_worker)
+            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders, should_continue=_is_current_worker, shutdown_event=_shutdown_event)
             db.set_inbox_scan_status(conn, user_id, "complete")
             logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
                         extra={"event": "inbox_scan_complete", "user_id": user_id})
@@ -754,7 +794,7 @@ def _run_sent_scan(user_id: str):
                 logger.info("Sent scan skipped for %s — locked by another instance", user_id)
                 return
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
-            build_known_senders(service, conn, user_id, should_continue=_is_current_worker)
+            build_known_senders(service, conn, user_id, should_continue=_is_current_worker, shutdown_event=_shutdown_event)
             if not _is_current_worker():
                 logger.info("Sent scan stopped — worker replaced (pid=%d, current=%d)", _worker_id, os.getpid())
                 return
@@ -793,8 +833,8 @@ def api_connect(request: Request):
     # Kick off both scans — sent scan may already be complete (from sign-in),
     # in which case _run_sent_scan is a no-op and inbox scan starts immediately.
     # If sent scan is still running, _run_sent_scan chains into inbox scan on completion.
-    threading.Thread(target=_run_sent_scan, args=(session["user_id"],), daemon=True).start()
-    threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
+    _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
+    _spawn_scan_thread(_run_inbox_scan, (session["user_id"],))
     return JSONResponse({"ok": True, "history_id": history_id})
 
 
