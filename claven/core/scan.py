@@ -1,4 +1,5 @@
 import logging
+import random
 
 import claven.core.db as db
 from claven.core.gmail import (
@@ -24,6 +25,24 @@ logger = logging.getLogger(__name__)
 running = True
 
 _BATCH_SIZE = 50
+
+# Fetch more candidates than needed and randomly sample from them.
+# This desynchronizes concurrent workers so they process different messages
+# instead of always picking the same batch (Gmail returns newest-first by
+# default, so without sampling two workers would grab identical batches).
+_SAMPLE_POOL_MULTIPLIER = 5
+
+
+def _sample_batch(candidates, batch_size):
+    """Randomly sample a batch from a larger candidate pool.
+
+    If the pool is larger than the batch size, pick randomly to reduce
+    overlap between concurrent workers scanning the same mailbox.
+    If the pool is smaller or equal, use all candidates.
+    """
+    if len(candidates) > batch_size:
+        return random.sample(candidates, batch_size)
+    return candidates
 
 
 SENT_SCANNED_LABEL = "claven/sent-scanned"
@@ -52,14 +71,18 @@ def build_known_senders(service, conn, user_id, should_continue=None):
             logger.info("Sent scan stopped by caller after %d scanned", total_scanned)
             return total_scanned
 
-        # Fetch next batch of unscanned sent messages
-        unscanned = list_messages(service, query=query, max_results=_BATCH_SIZE)
-        if not unscanned:
+        # Fetch a pool of unscanned messages and randomly sample a batch.
+        # Random sampling desynchronizes concurrent workers (local + cloud)
+        # so they process different messages instead of always grabbing the
+        # same newest-first batch from Gmail.
+        pool = list_messages(service, query=query, max_results=_BATCH_SIZE * _SAMPLE_POOL_MULTIPLIER)
+        if not pool:
             logger.info("Sent scan complete: %d messages scanned, 0 remaining", total_scanned)
             break
 
         batch_num += 1
-        batch_ids = [m["id"] for m in unscanned]
+        batch = _sample_batch(pool, _BATCH_SIZE)
+        batch_ids = [m["id"] for m in batch]
         logger.info("Sent scan batch %d: %d unscanned messages", batch_num, len(batch_ids))
 
         # Batch fetch To/Cc/Bcc headers
@@ -133,14 +156,18 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
             logger.info("Inbox scan stopped by caller after %d labeled", total_labeled)
             return total_labeled
 
-        # Fetch next batch of unlabeled messages
-        unlabeled = list_messages(service, query=query, max_results=_BATCH_SIZE)
-        if not unlabeled:
+        # Fetch a pool of unlabeled messages and randomly sample a batch.
+        # Random sampling desynchronizes concurrent workers (local + cloud)
+        # so they process different messages instead of always grabbing the
+        # same newest-first batch from Gmail.
+        unlabeled_pool = list_messages(service, query=query, max_results=_BATCH_SIZE * _SAMPLE_POOL_MULTIPLIER)
+        if not unlabeled_pool:
             logger.info("Inbox scan complete: %d messages labeled, 0 remaining", total_labeled)
             break
 
         batch_num += 1
-        batch_ids = [m["id"] for m in unlabeled]
+        batch = _sample_batch(unlabeled_pool, _BATCH_SIZE)
+        batch_ids = [m["id"] for m in batch]
         logger.info("Inbox scan batch %d: %d unlabeled messages to process", batch_num, len(batch_ids))
 
         # Batch fetch headers
