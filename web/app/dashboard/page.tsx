@@ -3,7 +3,7 @@
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { CheckCircle, Clock, Loader2, Play, RefreshCw, Zap } from "lucide-react";
+import { CheckCircle, Clock, Loader2, RefreshCw, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -304,11 +304,11 @@ export default function DashboardPage() {
                     )}
                     {label.unknown_label !== undefined && (() => {
                       const scanDone = connected && sent_scan_status === "complete";
-                      const filterActive = scanDone && !inbox_scan_in_progress;
-                      const FilterIcon = inbox_scan_in_progress ? Loader2 : filterActive ? Play : Clock;
-                      const iconColor = filterActive ? "text-green-500" : "";
+                      const filterComplete = scanDone && !inbox_scan_in_progress;
+                      const FilterIcon = inbox_scan_in_progress ? Loader2 : filterComplete ? CheckCircle : Clock;
+                      const iconColor = filterComplete ? "text-green-500" : "";
                       const iconExtra = inbox_scan_in_progress ? "animate-spin" : "";
-                      const iconTestId = inbox_scan_in_progress ? "filter-labeling-icon" : filterActive ? "filter-active-icon" : "filter-waiting-icon";
+                      const iconTestId = inbox_scan_in_progress ? "filter-labeling-icon" : filterComplete ? "filter-complete-icon" : "filter-waiting-icon";
                       return (
                         <div className="flex flex-col gap-2 mt-2">
                           <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Inbox scan</span>
