@@ -45,7 +45,11 @@ const DEFAULT_ME: object = {
   unread_count: null,
   read_count: null,
   inbox_count: null,
-  labeled_count: null,
+  allmail_labeled_known_count: null,
+  allmail_labeled_unknown_count: null,
+  allmail_labeled_total_count: null,
+  inbox_unlabeled_first_page_count: null,
+  inbox_unlabeled_deep_count: null,
 };
 
 const DEFAULT_CONFIG: object = { labels: [] };
@@ -420,48 +424,48 @@ describe("Dashboard page", () => {
       }],
     };
 
-    it("shows labeled as known-sender count under the label that has unknown_label", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: 15 } }, FILTER_CONFIG);
+    it("shows labeled as known-sender count", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_known_count: 15 } }, FILTER_CONFIG);
       render(<DashboardPage />);
       await screen.findByText(/labeled as known-sender/i);
       await screen.findByText("15");
     });
 
     it("shows em dash for labeled as known-sender when null", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_in_count: null } }, FILTER_CONFIG);
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_known_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
       await screen.findByText(/labeled as known-sender/i);
     });
 
-    it("shows labeled as unknown-sender count under the label that has unknown_label", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: 8 } }, FILTER_CONFIG);
+    it("shows labeled as unknown-sender count", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_unknown_count: 8 } }, FILTER_CONFIG);
       render(<DashboardPage />);
       await screen.findByText(/labeled as unknown-sender/i);
       await screen.findByText("8");
     });
 
     it("shows em dash for labeled as unknown-sender when null", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, filtered_out_count: null } }, FILTER_CONFIG);
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_unknown_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
       await screen.findByText(/labeled as unknown-sender/i);
     });
 
-    it("shows unlabeled count under the label that has unknown_label", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, unlabeled_count: 3 } }, FILTER_CONFIG);
+    it("shows inbox unlabeled count", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, inbox_unlabeled_deep_count: 3 } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/unlabeled/i);
+      await screen.findByText(/inbox unlabeled/i);
       await screen.findByText("3");
     });
 
-    it("shows em dash for unlabeled when null", async () => {
-      mockFetch({ ok: true, body: { ...DEFAULT_ME, unlabeled_count: null } }, FILTER_CONFIG);
+    it("shows em dash for inbox unlabeled when null", async () => {
+      mockFetch({ ok: true, body: { ...DEFAULT_ME, inbox_unlabeled_deep_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/unlabeled/i);
+      await screen.findByText(/inbox unlabeled/i);
     });
 
     it("shows waiting icon on filter rows when scan is not complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "in_progress", inbox_count: 50, unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "in_progress", inbox_count: 50, allmail_labeled_total_count: 8, inbox_unlabeled_deep_count: 10 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
@@ -469,9 +473,9 @@ describe("Dashboard page", () => {
       expect(icons.length).toBe(4);
     });
 
-    it("shows active icon on filter rows when connected and scan is complete", async () => {
+    it("shows complete icon on filter rows when connected and scan is complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_count: 50, unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_count: 50, allmail_labeled_total_count: 40, inbox_unlabeled_deep_count: 10 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
@@ -481,7 +485,7 @@ describe("Dashboard page", () => {
 
     it("shows waiting icon when not connected even if scan complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: false, sent_scan_status: "complete", inbox_count: 50, unlabeled_count: 10, filtered_in_count: 5, filtered_out_count: 3 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: false, sent_scan_status: "complete", inbox_count: 50, allmail_labeled_total_count: 40, inbox_unlabeled_deep_count: 10 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
@@ -491,7 +495,7 @@ describe("Dashboard page", () => {
 
     it("shows spinner on filter rows during initial labeling", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: true, inbox_count: 50, unlabeled_count: 50, filtered_in_count: 0, filtered_out_count: 0 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: true, inbox_count: 50, allmail_labeled_total_count: 0, inbox_unlabeled_deep_count: 50 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
@@ -499,9 +503,9 @@ describe("Dashboard page", () => {
       expect(icons.length).toBe(4);
     });
 
-    it("shows active icon after initial labeling completes", async () => {
+    it("shows complete icon after initial labeling completes", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: false, inbox_count: 50, unlabeled_count: 10, filtered_in_count: 30, filtered_out_count: 20 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: false, inbox_count: 50, allmail_labeled_total_count: 40, inbox_unlabeled_deep_count: 10 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);

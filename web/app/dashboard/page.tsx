@@ -24,10 +24,11 @@ type MeResponse = {
   read_count: number | null;
   inbox_count: number | null;
   all_mail_count: number | null;
-  labeled_count: number | null;
-  filtered_in_count: number | null;
-  filtered_out_count: number | null;
-  unlabeled_count: number | null;
+  allmail_labeled_known_count: number | null;
+  allmail_labeled_unknown_count: number | null;
+  allmail_labeled_total_count: number | null;
+  inbox_unlabeled_first_page_count: number | null;
+  inbox_unlabeled_deep_count: number | null;
 };
 
 type LabelRule = {
@@ -192,7 +193,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, labeled_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count } = state.data;
   const { labels } = state;
 
   return (
@@ -317,32 +318,32 @@ export default function DashboardPage() {
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Messages labeled
+                                Labeled total
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
-                                {labeled_count ?? "—"} / {inbox_count ?? "—"}
+                                {allmail_labeled_total_count ?? "—"}
                               </span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Unlabeled
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
                                 Labeled as known-sender
                               </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count ?? "—"}</span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_known_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
                                 Labeled as unknown-sender
                               </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count ?? "—"}</span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_unknown_count ?? "—"}</span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                                Inbox unlabeled
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{inbox_unlabeled_deep_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center mt-1 pt-1 border-t border-border/30">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -373,8 +374,8 @@ export default function DashboardPage() {
                     <div className="flex justify-between gap-4 items-center mt-3 pt-2 border-t border-border/50">
                       <span className="text-xs font-semibold">Noise reduced</span>
                       <span className="text-xs font-semibold tabular-nums">
-                        {filtered_in_count !== null && filtered_out_count !== null && (filtered_in_count + filtered_out_count) > 0
-                          ? `${Math.round((filtered_out_count / (filtered_in_count + filtered_out_count)) * 100)}%`
+                        {allmail_labeled_total_count !== null && allmail_labeled_unknown_count !== null && allmail_labeled_total_count > 0
+                          ? `${Math.round((allmail_labeled_unknown_count / allmail_labeled_total_count) * 100)}%`
                           : "—"}
                       </span>
                     </div>

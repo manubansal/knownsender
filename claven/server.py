@@ -549,10 +549,11 @@ def api_me(request: Request):
         all_mail_count = None
         sent_total_live = None
         sent_scanned_count = 0
-        labeled_count = None
-        filtered_in_count = None
-        filtered_out_count = None
-        unlabeled_count = None
+        allmail_labeled_known_count = None
+        allmail_labeled_unknown_count = None
+        allmail_labeled_total_count = None
+        inbox_unlabeled_first_page_count = None
+        inbox_unlabeled_deep_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
             inbox = service.users().labels().get(userId="me", id="INBOX").execute()
@@ -583,51 +584,48 @@ def api_me(request: Request):
             all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
             label_id_by_name = {l["name"]: l["id"] for l in all_gmail_labels}
 
-            # All counts measured independently via labelIds intersection.
-            filtered_in_count = 0
-            filtered_out_count = 0
-            labeled_label_ids = []
+            # Exact per-label counts via labels.get().messagesTotal
+            allmail_labeled_known_count = 0
+            allmail_labeled_unknown_count = 0
             for lc in label_configs:
                 if lid := label_id_by_name.get(lc["id"]):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", lid], maxResults=1
-                    ).execute()
-                    filtered_in_count += r.get("resultSizeEstimate", 0)
-                    labeled_label_ids.append(lid)
+                    info = service.users().labels().get(userId="me", id=lid).execute()
+                    allmail_labeled_known_count += info.get("messagesTotal", 0)
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", uid], maxResults=1
-                    ).execute()
-                    filtered_out_count += r.get("resultSizeEstimate", 0)
-                    labeled_label_ids.append(uid)
+                    info = service.users().labels().get(userId="me", id=uid).execute()
+                    allmail_labeled_unknown_count += info.get("messagesTotal", 0)
+            allmail_labeled_total_count = allmail_labeled_known_count + allmail_labeled_unknown_count
 
-            # Labeled = inbox messages with any filter label
-            labeled_count = 0
-            if labeled_label_ids:
-                labeled_q = "in:inbox (" + " OR ".join(f"label:{l['name']}" for l in all_gmail_labels if l["id"] in labeled_label_ids) + ")"
-                labeled_result = service.users().messages().list(
-                    userId="me", q=labeled_q, maxResults=1
-                ).execute()
-                labeled_count = labeled_result.get("resultSizeEstimate", 0)
-
-            # Unlabeled from the same search query the scan uses —
-            # source of truth for retrigger decisions.
+            # Unlabeled inbox messages — same query the scan uses.
+            # First page gives exact count (up to 500) for quick retrigger check.
+            # Full pagination gives exact total.
             from claven.core.scan import _unlabeled_query
             unlabeled_q = _unlabeled_query(label_configs)
-            unlabeled_result = service.users().messages().list(
-                userId="me", q=unlabeled_q, maxResults=1
+            first_page = service.users().messages().list(
+                userId="me", q=unlabeled_q, maxResults=500
             ).execute()
-            unlabeled_count = unlabeled_result.get("resultSizeEstimate", 0)
+            first_page_messages = first_page.get("messages", [])
+            inbox_unlabeled_first_page_count = len(first_page_messages)
+
+            total_unlabeled = inbox_unlabeled_first_page_count
+            page_token = first_page.get("nextPageToken")
+            while page_token:
+                page = service.users().messages().list(
+                    userId="me", q=unlabeled_q, maxResults=500,
+                    pageToken=page_token,
+                ).execute()
+                total_unlabeled += len(page.get("messages", []))
+                page_token = page.get("nextPageToken")
+            inbox_unlabeled_deep_count = total_unlabeled
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
 
-    # Reconciliation: if the inbox scan completed but unlabeled messages
-    # remain (new mail arrived, Gmail search index lag, etc.), retrigger
-    # the scan automatically. The row lock in _run_inbox_scan makes this
-    # idempotent — concurrent triggers just exit immediately.
-    if (unlabeled_count is not None and unlabeled_count > 0
+    # Reconciliation: if the inbox scan completed but the first page
+    # finds unlabeled messages, retrigger. Row lock makes this idempotent.
+    if (inbox_unlabeled_first_page_count is not None
+            and inbox_unlabeled_first_page_count > 0
             and inbox_scan_status == "complete"
             and history_id is not None):
         inbox_scan_status = "in_progress"
@@ -644,10 +642,11 @@ def api_me(request: Request):
         "inbox_scan_in_progress": inbox_scan_status == "in_progress",
         "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
         "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
-        "labeled_count": labeled_count,
-        "filtered_in_count": filtered_in_count,
-        "filtered_out_count": filtered_out_count,
-        "unlabeled_count": unlabeled_count,
+        "allmail_labeled_known_count": allmail_labeled_known_count,
+        "allmail_labeled_unknown_count": allmail_labeled_unknown_count,
+        "allmail_labeled_total_count": allmail_labeled_total_count,
+        "inbox_unlabeled_first_page_count": inbox_unlabeled_first_page_count,
+        "inbox_unlabeled_deep_count": inbox_unlabeled_deep_count,
         "unread_count": unread_count,
         "read_count": read_count,
         "inbox_count": inbox_count,
