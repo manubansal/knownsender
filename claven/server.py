@@ -549,6 +549,7 @@ def api_me(request: Request):
         all_mail_count = None
         sent_total_live = None
         sent_scanned_count = 0
+        newest_mail_at = None
         allmail_labeled_known_count = None
         allmail_labeled_unknown_count = None
         allmail_labeled_total_count = None
@@ -563,6 +564,19 @@ def api_me(request: Request):
                 userId="me", labelIds=["INBOX"], q="is:read", maxResults=1
             ).execute()
             read_count = read_result.get("resultSizeEstimate")
+
+            # Newest inbox message timestamp
+            newest_result = service.users().messages().list(
+                userId="me", labelIds=["INBOX"], maxResults=1
+            ).execute()
+            newest_msgs = newest_result.get("messages", [])
+            if newest_msgs:
+                newest_msg = service.users().messages().get(
+                    userId="me", id=newest_msgs[0]["id"], format="minimal"
+                ).execute()
+                newest_mail_ms = newest_msg.get("internalDate")
+                if newest_mail_ms:
+                    newest_mail_at = datetime.fromtimestamp(int(newest_mail_ms) / 1000, tz=timezone.utc)
 
             profile_data = service.users().getProfile(userId="me").execute()
             all_mail_count = profile_data.get("messagesTotal")
@@ -641,6 +655,7 @@ def api_me(request: Request):
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_in_progress": inbox_scan_status == "in_progress",
         "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
+        "newest_mail_at": newest_mail_at.isoformat() if newest_mail_at else None,
         "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
         "allmail_labeled_known_count": allmail_labeled_known_count,
         "allmail_labeled_unknown_count": allmail_labeled_unknown_count,

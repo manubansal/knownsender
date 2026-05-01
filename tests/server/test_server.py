@@ -771,11 +771,13 @@ class TestApiMe:
         labeled_known_total=0,
         labeled_unknown_total=0,
         unlabeled_ids=None,
+        newest_mail_internal_date=None,
     ):
         """Return a mock Gmail service with label counts.
 
         unlabeled_ids: list of message ID strings for the unlabeled query.
             Paginated in chunks of 500. Defaults to [] (no unlabeled).
+        newest_mail_internal_date: epoch ms string for newest inbox message.
         """
         if unlabeled_ids is None:
             unlabeled_ids = []
@@ -819,6 +821,7 @@ class TestApiMe:
 
         def _messages_list(**kwargs):
             q = kwargs.get("q", "")
+            label_ids = kwargs.get("labelIds", [])
             result = MagicMock()
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
@@ -831,11 +834,25 @@ class TestApiMe:
                 if has_next:
                     resp["nextPageToken"] = f"page-{idx + 1}"
                 result.execute.return_value = resp
+            elif not q and "INBOX" in label_ids:
+                # Newest inbox message lookup
+                if newest_mail_internal_date:
+                    result.execute.return_value = {"messages": [{"id": "newest-1"}]}
+                else:
+                    result.execute.return_value = {"messages": []}
             else:
                 result.execute.return_value = {"resultSizeEstimate": 0}
             return result
 
         svc.users.return_value.messages.return_value.list.side_effect = _messages_list
+
+        # messages.get → newest mail internal date
+        def _messages_get(**kwargs):
+            result = MagicMock()
+            result.execute.return_value = {"internalDate": newest_mail_internal_date}
+            return result
+
+        svc.users.return_value.messages.return_value.get.side_effect = _messages_get
         return svc
 
     def test_returns_known_senders_count(self):
@@ -903,6 +920,39 @@ class TestApiMe:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["read_count"] == 70
+
+    def test_returns_newest_mail_at(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    newest_mail_internal_date="1714500000000",
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["newest_mail_at"] is not None
+        assert response.json()["newest_mail_at"].startswith("2024-04-30")
+
+    def test_newest_mail_at_is_none_when_inbox_empty(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["newest_mail_at"] is None
 
     def test_unread_count_is_none_when_gmail_api_fails(self):
         """A Gmail API error must not break /api/me — return null for all Gmail fields."""

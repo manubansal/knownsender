@@ -19,6 +19,7 @@ type MeResponse = {
   sent_scan_status: string | null;
   inbox_scan_in_progress: boolean;
   last_processed_at: string | null;
+  newest_mail_at: string | null;
   newest_labeled_at: string | null;
   unread_count: number | null;
   read_count: number | null;
@@ -353,6 +354,17 @@ export default function DashboardPage() {
                               <span className="text-xs tabular-nums text-muted-foreground">
                                 {state.data.last_processed_at
                                   ? formatRelativeTime(new Date(state.data.last_processed_at))
+                                  : "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                                Newest email
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {state.data.newest_mail_at
+                                  ? formatRelativeTime(new Date(state.data.newest_mail_at), "old")
                                   : "—"}
                               </span>
                             </div>
