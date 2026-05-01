@@ -31,6 +31,9 @@ type MeResponse = {
   allmail_labeled_total_count: number | null;
   inbox_unlabeled_first_page_count: number | null;
   inbox_unlabeled_deep_count: number | null;
+  inbox_labeled_unknown_shallow_count: number | null;
+  inbox_labeled_unknown_has_more: boolean | null;
+  archive_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
 };
 
 type LabelRule = {
@@ -59,6 +62,7 @@ export default function DashboardPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -174,6 +178,25 @@ export default function DashboardPage() {
     setDisconnecting(false);
   }
 
+  async function handleArchiveUnknown() {
+    if (!confirm(archiveLabel)) return;
+    setArchiving(true);
+    await fetch(`${API_URL}/api/actions/archive-unknown`, { method: "POST", credentials: "include" });
+    // SSE will push progress updates; loadData will refresh on completion
+    await loadData();
+    setArchiving(false);
+  }
+
+  async function handleCancelArchive() {
+    if (state.status !== "loaded" || !state.data.archive_job) return;
+    await fetch(`${API_URL}/api/actions/archive-unknown/cancel`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: state.data.archive_job.job_id }),
+    });
+  }
+
   if (state.status === "loading") {
     return (
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-24">
@@ -202,8 +225,17 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job } = state.data;
   const { labels } = state;
+
+  const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
+  const archiveHasMore = inbox_labeled_unknown_has_more ?? false;
+  const archiveLabel = archiveCount === 0
+    ? "Archive unknown-sender"
+    : archiveHasMore
+      ? `Archive ${archiveCount}+ messages`
+      : `Archive ${archiveCount} messages`;
+  const archiveRunning = archive_job?.status === "in_progress";
 
   return (
     <>
@@ -436,6 +468,54 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
+
+          {connected && (
+            <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Actions</span>
+              <div className="flex flex-col gap-2 mt-2">
+                {archiveRunning ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex justify-between items-center">
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Archiving unknown-sender
+                      </span>
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {archive_job?.progress ?? 0} / {archive_job?.total ?? "…"}
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleCancelArchive}
+                      className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : archive_job?.status === "cancelled" ? (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-muted-foreground">
+                      Cancelled at {archive_job.progress} / {archive_job.total}
+                    </span>
+                    <button
+                      onClick={handleArchiveUnknown}
+                      disabled={archiveCount === 0 || archiving}
+                      className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                    >
+                      {archiveLabel}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleArchiveUnknown}
+                    disabled={archiveCount === 0 || archiving}
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                  >
+                    {archiving ? "Starting…" : archiveLabel}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <button
             onClick={connected ? handleDisconnect : handleConnect}
