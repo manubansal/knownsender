@@ -207,8 +207,9 @@ export default function DashboardPage() {
   async function handleArchiveUnknown() {
     setArchiving(true);
     await fetch(`${API_URL}/api/actions/archive-unknown`, { method: "POST", credentials: "include" });
-    await loadData();
     setArchiving(false);
+    // SSE will push progress updates; no need to await loadData
+    loadData();
   }
 
   async function handleCancelArchive() {
