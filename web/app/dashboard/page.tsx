@@ -61,7 +61,7 @@ function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled
     <AlertDialog>
       <AlertDialogTrigger
         disabled={disabled}
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full truncate")}
       >
         {label}
       </AlertDialogTrigger>
@@ -288,7 +288,7 @@ export default function DashboardPage() {
         </button>
       </header>
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-24">
-        <div className="flex flex-col items-center gap-6 text-center max-w-md">
+        <div className="flex flex-col items-center gap-6 text-center w-full max-w-md">
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
 
           <p className="text-lg font-medium">{email}</p>
@@ -467,7 +467,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-3 pt-2 border-t border-border/50">
+                      <div className="flex flex-col gap-2 mt-4 pt-3 border-t border-border/50">
                         <button
                           onClick={connected ? handleDisconnect : handleConnect}
                           disabled={connecting || disconnecting}
@@ -475,34 +475,36 @@ export default function DashboardPage() {
                         >
                           {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
                         </button>
-                        {archiveRunning ? (
-                          <div className="flex flex-col gap-1">
-                            <div className="flex justify-between items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                Archiving unknown-sender
+                        <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-border/30">
+                          {archiveRunning ? (
+                            <>
+                              <div className="flex justify-between items-center">
+                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  Archiving unknown-sender
+                                </span>
+                                <span className="text-xs tabular-nums text-muted-foreground">
+                                  {archive_job?.progress ?? 0} / {archive_job?.total ?? "…"}
+                                </span>
+                              </div>
+                              <button
+                                onClick={handleCancelArchive}
+                                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : archive_job?.status === "cancelled" ? (
+                            <>
+                              <span className="text-xs text-muted-foreground">
+                                Cancelled at {archive_job.progress} / {archive_job.total}
                               </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {archive_job?.progress ?? 0} / {archive_job?.total ?? "…"}
-                              </span>
-                            </div>
-                            <button
-                              onClick={handleCancelArchive}
-                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : archive_job?.status === "cancelled" ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="text-xs text-muted-foreground">
-                              Cancelled at {archive_job.progress} / {archive_job.total}
-                            </span>
-                            <ArchiveButton label={archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
-                          </div>
-                        ) : (
-                          <ArchiveButton label={archiving ? "Starting…" : archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
-                        )}
+                              <ArchiveButton label={archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
+                            </>
+                          ) : (
+                            <ArchiveButton label={archiving ? "Starting…" : archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
