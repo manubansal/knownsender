@@ -1,4 +1,6 @@
 """Tests for scan functions — build_known_senders and scan_inbox."""
+import threading
+import time as time_mod
 import pytest
 from unittest.mock import MagicMock, patch, call
 
@@ -403,3 +405,138 @@ class TestBuildKnownSendersNotify:
             build_known_senders(service, conn, "u1")
         events = [c.args[2] for c in mock_notify.call_args_list]
         assert "sent_scan_progress" in events
+
+
+# ---------------------------------------------------------------------------
+# _interruptible_sleep — event-aware sleep for graceful shutdown
+# ---------------------------------------------------------------------------
+
+class TestInterruptibleSleep:
+    def test_falls_back_to_time_sleep_without_event(self):
+        from claven.core.scan import _interruptible_sleep
+        with patch("claven.core.scan.time.sleep") as mock_sleep:
+            _interruptible_sleep(1.5)
+        mock_sleep.assert_called_once_with(1.5)
+
+    def test_uses_event_wait_when_event_provided(self):
+        from claven.core.scan import _interruptible_sleep
+        event = threading.Event()
+        with patch("claven.core.scan.time.sleep") as mock_sleep:
+            _interruptible_sleep(0.01, shutdown_event=event)
+        mock_sleep.assert_not_called()
+
+    def test_returns_immediately_when_event_already_set(self):
+        from claven.core.scan import _interruptible_sleep
+        event = threading.Event()
+        event.set()
+        start = time_mod.monotonic()
+        _interruptible_sleep(10, shutdown_event=event)
+        assert time_mod.monotonic() - start < 0.1
+
+    def test_wakes_when_event_set_during_sleep(self):
+        from claven.core.scan import _interruptible_sleep
+        event = threading.Event()
+        timer = threading.Timer(0.05, event.set)
+        timer.start()
+        start = time_mod.monotonic()
+        _interruptible_sleep(10, shutdown_event=event)
+        elapsed = time_mod.monotonic() - start
+        assert elapsed < 0.5
+        timer.join()
+
+
+# ---------------------------------------------------------------------------
+# build_known_senders / scan_inbox — shutdown_event passthrough
+# ---------------------------------------------------------------------------
+
+class TestBuildKnownSendersShutdown:
+    def _once_then_empty(self, messages):
+        calls = [0]
+        def side_effect(*args, **kwargs):
+            calls[0] += 1
+            return messages if calls[0] == 1 else []
+        return side_effect
+
+    def test_passes_shutdown_event_to_interruptible_sleep(self):
+        from claven.core.scan import build_known_senders
+        service, conn = _make_service(), _make_conn()
+        messages = [{"id": "s1"}]
+        metadata = _batch_metadata(s1={"to": "a@x.com"})
+        event = threading.Event()
+        with patch("claven.core.scan.ensure_label_exists", return_value="Label_scanned"), \
+             patch("claven.core.scan.list_messages", side_effect=self._once_then_empty(messages)), \
+             patch("claven.core.scan.batch_get_message_metadata", return_value=metadata), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan._interruptible_sleep") as mock_sleep:
+            build_known_senders(service, conn, "u1", shutdown_event=event)
+        # At least the 1s between-batch sleep should pass the event
+        assert any(c.args[1] is event for c in mock_sleep.call_args_list if len(c.args) > 1)
+
+    def test_error_uses_interruptible_sleep_with_event(self):
+        from claven.core.scan import build_known_senders
+        service, conn = _make_service(), _make_conn()
+        event = threading.Event()
+        call_count = [0]
+        def fail_then_empty(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [{"id": "s1"}]
+            return []
+        with patch("claven.core.scan.ensure_label_exists", return_value="Label_scanned"), \
+             patch("claven.core.scan.list_messages", side_effect=fail_then_empty), \
+             patch("claven.core.scan.batch_get_message_metadata", side_effect=Exception("API error")), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan._interruptible_sleep") as mock_sleep:
+            build_known_senders(service, conn, "u1", shutdown_event=event)
+        # Error backoff should use 5s with the event
+        assert any(c.args == (5, event) for c in mock_sleep.call_args_list)
+
+
+class TestScanInboxShutdown:
+    def _once_then_empty(self, messages):
+        calls = [0]
+        def side_effect(*args, **kwargs):
+            calls[0] += 1
+            return messages if calls[0] == 1 else []
+        return side_effect
+
+    def test_passes_shutdown_event_to_interruptible_sleep(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}]
+        headers_map = {"m1": ({"from": "a@x.com"}, [], None)}
+        event = threading.Event()
+        with patch("claven.core.scan.list_messages", side_effect=self._once_then_empty(messages)), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1), \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan._interruptible_sleep") as mock_sleep:
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE,
+                       known_senders=set(), shutdown_event=event)
+        assert any(c.args[1] is event for c in mock_sleep.call_args_list if len(c.args) > 1)
+
+    def test_error_uses_interruptible_sleep_with_event(self):
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        event = threading.Event()
+        call_count = [0]
+        def fail_then_succeed(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("API error")
+            return {"m1": ({"from": "a@x.com"}, [], None)}
+        list_calls = [0]
+        def list_side(*args, **kwargs):
+            list_calls[0] += 1
+            return [{"id": "m1"}] if list_calls[0] <= 2 else []
+        with patch("claven.core.scan.list_messages", side_effect=list_side), \
+             patch("claven.core.scan.batch_get_message_headers", side_effect=fail_then_succeed), \
+             patch("claven.core.scan.batch_apply_labels", return_value=1), \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan._interruptible_sleep") as mock_sleep:
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE,
+                       known_senders=set(), shutdown_event=event)
+        assert any(c.args == (5, event) for c in mock_sleep.call_args_list)
