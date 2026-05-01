@@ -494,6 +494,12 @@ export default function DashboardPage() {
                           {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
                         </button>
                         <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-border/30">
+                          {archiving && (
+                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Starting archive…
+                            </span>
+                          )}
                           {archiveRunning ? (
                             <>
                               <div className="flex justify-between items-center">
