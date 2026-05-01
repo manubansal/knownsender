@@ -182,20 +182,39 @@ def set_history_id(conn, user_id: str, history_id: int) -> None:
         )
 
 
-def touch_last_processed(conn, user_id: str) -> None:
-    """Set last_processed_at to NOW()."""
+def touch_last_labeled(conn, user_id: str) -> None:
+    """Set last_labeled_at to NOW()."""
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE scan_state SET last_processed_at = NOW() WHERE user_id = %s",
+            "UPDATE scan_state SET last_labeled_at = NOW() WHERE user_id = %s",
             (user_id,),
         )
 
 
-def get_last_processed_at(conn, user_id: str):
-    """Return last_processed_at timestamp or None."""
+def get_last_labeled_at(conn, user_id: str):
+    """Return last_labeled_at timestamp or None."""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT last_processed_at FROM scan_state WHERE user_id = %s", (user_id,)
+            "SELECT last_labeled_at FROM scan_state WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def touch_last_fetched(conn, user_id: str) -> None:
+    """Set last_fetched_at to NOW()."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET last_fetched_at = NOW() WHERE user_id = %s",
+            (user_id,),
+        )
+
+
+def get_last_fetched_at(conn, user_id: str):
+    """Return last_fetched_at timestamp or None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT last_fetched_at FROM scan_state WHERE user_id = %s", (user_id,)
         )
         row = cur.fetchone()
         return row[0] if row else None

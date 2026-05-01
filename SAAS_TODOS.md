@@ -237,6 +237,12 @@ See full plan: `docs/graceful-shutdown-test-plan.md`
 - [ ] Optimistic locking: two processes read same `historyId`, first write wins, second detects conflict
 - [x] `SKIP LOCKED`: locked user row is skipped, not blocked indefinitely
 
+### Gmail API call correctness — outgoing query assertions
+
+- [ ] Assert exact parameters on all Gmail API calls issued by `/api/me` (labels.get IDs, messages.list queries, messages.get format)
+- [ ] Assert exact parameters on all Gmail API calls issued by `scan_inbox` and `build_known_senders`
+- [ ] Assert exact parameters on all Gmail API calls issued by `/webhook/gmail` and `/internal/poll`
+
 ### Server test cases — `server.py`
 
 - [x] `/webhook/gmail` — valid Pub/Sub notification → processing triggered

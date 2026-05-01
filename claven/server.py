@@ -487,10 +487,11 @@ def internal_poll(request: Request):
 
                 label_id_cache = _label_id_cache_for_config(service, label_configs)
                 count = poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders)
+                db.touch_last_fetched(conn, user_id)
                 db.set_history_id(conn, user_id, latest_history_id)
                 if count is not None and count > 0:
                     db.increment_processed_count(conn, user_id, count)
-                    db.touch_last_processed(conn, user_id)
+                    db.touch_last_labeled(conn, user_id)
                 results.append({"user_id": user_id, "status": "ok"})
             except Exception as exc:
                 logger.exception("Error processing user %s", user_id, exc_info=exc)
@@ -540,8 +541,8 @@ def api_me(request: Request):
         known_senders = db.count_known_senders(conn, session["user_id"])
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         # processed_count no longer used — progress derived from live Gmail label counts
-        last_processed_at = db.get_last_processed_at(conn, session["user_id"])
-        newest_labeled_at = db.get_newest_labeled_at(conn, session["user_id"])
+        last_labeled_at = db.get_last_labeled_at(conn, session["user_id"])
+        last_fetched_at = db.get_last_fetched_at(conn, session["user_id"])
 
         unread_count = None
         read_count = None
@@ -549,73 +550,151 @@ def api_me(request: Request):
         all_mail_count = None
         sent_total_live = None
         sent_scanned_count = 0
-        filtered_in_count = None
-        filtered_out_count = None
-        unlabeled_count = None
+        newest_mail_at = None
+        newest_labeled_at = None
+        allmail_labeled_known_count = None
+        allmail_labeled_unknown_count = None
+        allmail_labeled_total_count = None
+        inbox_unlabeled_first_page_count = None
+        inbox_unlabeled_deep_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
-            inbox = service.users().labels().get(userId="me", id="INBOX").execute()
-            unread_count = inbox.get("messagesUnread")
-            inbox_count = inbox.get("messagesTotal")
-            read_result = service.users().messages().list(
-                userId="me", labelIds=["INBOX"], q="is:read", maxResults=1
-            ).execute()
-            read_count = read_result.get("resultSizeEstimate")
 
-            profile_data = service.users().getProfile(userId="me").execute()
-            all_mail_count = profile_data.get("messagesTotal")
-
-            sent_label = service.users().labels().get(userId="me", id="SENT").execute()
-            sent_total_live = sent_label.get("messagesTotal")
-
-            # Sent scan progress from mailbox state
-            from claven.core.scan import SENT_SCANNED_LABEL
-            all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
-            sent_scanned_label_id = next((l["id"] for l in all_gmail_labels if l["name"] == SENT_SCANNED_LABEL), None)
-            if sent_scanned_label_id:
-                sent_scanned_info = service.users().labels().get(userId="me", id=sent_scanned_label_id).execute()
-                sent_scanned_count = sent_scanned_info.get("messagesTotal", 0)
-            else:
-                sent_scanned_count = 0
-
+            # ── Batch 1: all independent Gmail calls ─────────────────
+            b1 = {}
+            def _b1_cb(rid, resp, exc):
+                if not exc:
+                    b1[rid] = resp
+            batch1 = service.new_batch_http_request(callback=_b1_cb)
+            batch1.add(service.users().labels().get(userId="me", id="INBOX"), request_id="inbox")
+            batch1.add(service.users().labels().get(userId="me", id="SENT"), request_id="sent")
+            batch1.add(service.users().labels().list(userId="me"), request_id="labels")
+            batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], q="is:read", maxResults=1), request_id="read")
+            batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=1), request_id="newest_msg")
             label_configs = load_config().get("labels", [])
-            all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
+            batch1.add(service.users().getProfile(userId="me"), request_id="profile")
+            batch1.execute()
+
+            inbox_data = b1.get("inbox", {})
+            unread_count = inbox_data.get("messagesUnread")
+            inbox_count = inbox_data.get("messagesTotal")
+            read_count = b1.get("read", {}).get("resultSizeEstimate")
+            all_mail_count = b1.get("profile", {}).get("messagesTotal")
+            sent_total_live = b1.get("sent", {}).get("messagesTotal")
+
+            all_gmail_labels = b1.get("labels", {}).get("labels", [])
             label_id_by_name = {l["name"]: l["id"] for l in all_gmail_labels}
 
-            filtered_in_count = 0
-            filtered_out_count = 0
+            newest_msgs = b1.get("newest_msg", {}).get("messages", [])
+
+            # ── Batch 2: calls that depend on batch 1 results ────────
+            from claven.core.scan import SENT_SCANNED_LABEL, _unlabeled_query
+
+            b2 = {}
+            def _b2_cb(rid, resp, exc):
+                if not exc:
+                    b2[rid] = resp
+            batch2 = service.new_batch_http_request(callback=_b2_cb)
+
+            sent_scanned_label_id = next((l["id"] for l in all_gmail_labels if l["name"] == SENT_SCANNED_LABEL), None)
+            if sent_scanned_label_id:
+                batch2.add(service.users().labels().get(userId="me", id=sent_scanned_label_id), request_id="sent_scanned")
+
             for lc in label_configs:
                 if lid := label_id_by_name.get(lc["id"]):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", lid], maxResults=1
-                    ).execute()
-                    filtered_in_count += r.get("resultSizeEstimate", 0)
+                    batch2.add(service.users().labels().get(userId="me", id=lid), request_id=f"known_{lc['id']}")
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
-                    r = service.users().messages().list(
-                        userId="me", labelIds=["INBOX", uid], maxResults=1
-                    ).execute()
-                    filtered_out_count += r.get("resultSizeEstimate", 0)
+                    batch2.add(service.users().labels().get(userId="me", id=uid), request_id=f"unknown_{unknown}")
 
-            # Use the same Gmail search query the scan uses to count
-            # unlabeled messages. This avoids disagreement between
-            # arithmetic on approximate resultSizeEstimate values and
-            # the scan's own exit condition.
-            from claven.core.scan import _unlabeled_query
+            if newest_msgs:
+                batch2.add(service.users().messages().get(userId="me", id=newest_msgs[0]["id"], format="minimal"), request_id="newest_detail")
+
+            # Newest labeled message — one call per label (labelIds is AND logic),
+            # take the newer result. Uses labelIds (message-level) not q (thread-level)
+            # so we get the actual labeled message, not a newer reply in the same thread.
+            for lc in label_configs:
+                if lid := label_id_by_name.get(lc["id"]):
+                    batch2.add(service.users().messages().list(userId="me", labelIds=[lid], maxResults=1), request_id=f"newest_known_{lc['id']}")
+                if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
+                    batch2.add(service.users().messages().list(userId="me", labelIds=[uid], maxResults=1), request_id=f"newest_unknown_{unknown}")
+
             unlabeled_q = _unlabeled_query(label_configs)
-            unlabeled_result = service.users().messages().list(
-                userId="me", q=unlabeled_q, maxResults=1
-            ).execute()
-            unlabeled_count = unlabeled_result.get("resultSizeEstimate", 0)
+            batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
+
+            batch2.execute()
+
+            # ── Extract batch 2 results ──────────────────────────────
+            sent_scanned_count = b2.get("sent_scanned", {}).get("messagesTotal", 0)
+
+            allmail_labeled_known_count = 0
+            allmail_labeled_unknown_count = 0
+            for lc in label_configs:
+                allmail_labeled_known_count += b2.get(f"known_{lc['id']}", {}).get("messagesTotal", 0)
+                if unknown := lc.get("unknown_label"):
+                    allmail_labeled_unknown_count += b2.get(f"unknown_{unknown}", {}).get("messagesTotal", 0)
+            allmail_labeled_total_count = allmail_labeled_known_count + allmail_labeled_unknown_count
+
+            newest_detail = b2.get("newest_detail")
+            if newest_detail:
+                newest_mail_ms = newest_detail.get("internalDate")
+                if newest_mail_ms:
+                    newest_mail_at = datetime.fromtimestamp(int(newest_mail_ms) / 1000, tz=timezone.utc)
+
+            # Find newest labeled message across all label queries.
+            # Each query returns newest-first, so we fetch the top candidate
+            # from each label and pick the one with the highest internalDate.
+            labeled_candidate_ids = []
+            for lc in label_configs:
+                for key in [f"newest_known_{lc['id']}", f"newest_unknown_{lc.get('unknown_label', '')}"]:
+                    msgs = b2.get(key, {}).get("messages", [])
+                    if msgs:
+                        labeled_candidate_ids.append(msgs[0]["id"])
+
+            if labeled_candidate_ids:
+                b3 = {}
+                def _b3_cb(rid, resp, exc):
+                    if not exc:
+                        b3[rid] = resp
+                batch3 = service.new_batch_http_request(callback=_b3_cb)
+                for cid in labeled_candidate_ids:
+                    batch3.add(service.users().messages().get(userId="me", id=cid, format="minimal"), request_id=cid)
+                batch3.execute()
+
+                best_ms = 0
+                for cid in labeled_candidate_ids:
+                    detail = b3.get(cid, {})
+                    ms = int(detail.get("internalDate", 0) or 0)
+                    if ms > best_ms:
+                        best_ms = ms
+                if best_ms:
+                    newest_labeled_at = datetime.fromtimestamp(best_ms / 1000, tz=timezone.utc)
+
+            unlabeled_data = b2.get("unlabeled", {})
+            first_page_messages = unlabeled_data.get("messages", [])
+            inbox_unlabeled_first_page_count = len(first_page_messages)
+
+            # Paginate remaining unlabeled (sequential — can't batch pagination)
+            total_unlabeled = inbox_unlabeled_first_page_count
+            page_token = unlabeled_data.get("nextPageToken")
+            while page_token:
+                page = service.users().messages().list(
+                    userId="me", q=unlabeled_q, maxResults=500,
+                    pageToken=page_token,
+                ).execute()
+                total_unlabeled += len(page.get("messages", []))
+                page_token = page.get("nextPageToken")
+            inbox_unlabeled_deep_count = total_unlabeled
+
+            db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
 
-    # Reconciliation: if the inbox scan completed but unlabeled messages
-    # remain (new mail arrived, Gmail search index lag, etc.), retrigger
-    # the scan automatically. The row lock in _run_inbox_scan makes this
-    # idempotent — concurrent triggers just exit immediately.
-    if (unlabeled_count is not None and unlabeled_count > 0
+    # Reconciliation: if the inbox scan completed but the first page
+    # finds unlabeled messages, retrigger. Row lock makes this idempotent.
+    if (inbox_unlabeled_first_page_count is not None
+            and inbox_unlabeled_first_page_count > 0
             and inbox_scan_status == "complete"
             and history_id is not None):
         inbox_scan_status = "in_progress"
@@ -630,11 +709,15 @@ def api_me(request: Request):
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_in_progress": inbox_scan_status == "in_progress",
-        "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
+        "last_fetched_at": last_fetched_at.isoformat() if last_fetched_at else None,
+        "last_labeled_at": last_labeled_at.isoformat() if last_labeled_at else None,
+        "newest_mail_at": newest_mail_at.isoformat() if newest_mail_at else None,
         "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
-        "filtered_in_count": filtered_in_count,
-        "filtered_out_count": filtered_out_count,
-        "unlabeled_count": unlabeled_count,
+        "allmail_labeled_known_count": allmail_labeled_known_count,
+        "allmail_labeled_unknown_count": allmail_labeled_unknown_count,
+        "allmail_labeled_total_count": allmail_labeled_total_count,
+        "inbox_unlabeled_first_page_count": inbox_unlabeled_first_page_count,
+        "inbox_unlabeled_deep_count": inbox_unlabeled_deep_count,
         "unread_count": unread_count,
         "read_count": read_count,
         "inbox_count": inbox_count,
@@ -924,9 +1007,10 @@ async def webhook_gmail(request: Request):
         known_senders = db.get_known_senders(conn, user["id"])
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)
+        db.touch_last_fetched(conn, user["id"])
         db.set_history_id(conn, user["id"], notification_history_id)
         if count is not None and count > 0:
             db.increment_processed_count(conn, user["id"], count)
-            db.touch_last_processed(conn, user["id"])
+            db.touch_last_labeled(conn, user["id"])
 
     return {"status": "ok"}
