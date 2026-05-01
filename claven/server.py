@@ -684,6 +684,8 @@ def api_me(request: Request):
                 total_unlabeled += len(page.get("messages", []))
                 page_token = page.get("nextPageToken")
             inbox_unlabeled_deep_count = total_unlabeled
+
+            db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 

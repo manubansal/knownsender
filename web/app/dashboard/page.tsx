@@ -350,7 +350,7 @@ export default function DashboardPage() {
                             <div className="flex justify-between gap-4 items-center mt-1 pt-1 border-t border-border/30">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
-                                Last fetch
+                                Last fetched
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
                                 {state.data.last_fetched_at
