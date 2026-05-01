@@ -557,72 +557,85 @@ def api_me(request: Request):
         inbox_unlabeled_deep_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
-            inbox = service.users().labels().get(userId="me", id="INBOX").execute()
-            unread_count = inbox.get("messagesUnread")
-            inbox_count = inbox.get("messagesTotal")
-            read_result = service.users().messages().list(
-                userId="me", labelIds=["INBOX"], q="is:read", maxResults=1
-            ).execute()
-            read_count = read_result.get("resultSizeEstimate")
 
-            # Newest inbox message timestamp
-            newest_result = service.users().messages().list(
-                userId="me", labelIds=["INBOX"], maxResults=1
-            ).execute()
-            newest_msgs = newest_result.get("messages", [])
-            if newest_msgs:
-                newest_msg = service.users().messages().get(
-                    userId="me", id=newest_msgs[0]["id"], format="minimal"
-                ).execute()
-                newest_mail_ms = newest_msg.get("internalDate")
-                if newest_mail_ms:
-                    newest_mail_at = datetime.fromtimestamp(int(newest_mail_ms) / 1000, tz=timezone.utc)
+            # ── Batch 1: all independent Gmail calls ─────────────────
+            b1 = {}
+            def _b1_cb(rid, resp, exc):
+                if not exc:
+                    b1[rid] = resp
+            batch1 = service.new_batch_http_request(callback=_b1_cb)
+            batch1.add(service.users().labels().get(userId="me", id="INBOX"), request_id="inbox")
+            batch1.add(service.users().labels().get(userId="me", id="SENT"), request_id="sent")
+            batch1.add(service.users().labels().list(userId="me"), request_id="labels")
+            batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], q="is:read", maxResults=1), request_id="read")
+            batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=1), request_id="newest_msg")
+            batch1.add(service.users().getProfile(userId="me"), request_id="profile")
+            batch1.execute()
 
-            profile_data = service.users().getProfile(userId="me").execute()
-            all_mail_count = profile_data.get("messagesTotal")
+            inbox_data = b1.get("inbox", {})
+            unread_count = inbox_data.get("messagesUnread")
+            inbox_count = inbox_data.get("messagesTotal")
+            read_count = b1.get("read", {}).get("resultSizeEstimate")
+            all_mail_count = b1.get("profile", {}).get("messagesTotal")
+            sent_total_live = b1.get("sent", {}).get("messagesTotal")
 
-            sent_label = service.users().labels().get(userId="me", id="SENT").execute()
-            sent_total_live = sent_label.get("messagesTotal")
-
-            # Sent scan progress from mailbox state
-            from claven.core.scan import SENT_SCANNED_LABEL
-            all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
-            sent_scanned_label_id = next((l["id"] for l in all_gmail_labels if l["name"] == SENT_SCANNED_LABEL), None)
-            if sent_scanned_label_id:
-                sent_scanned_info = service.users().labels().get(userId="me", id=sent_scanned_label_id).execute()
-                sent_scanned_count = sent_scanned_info.get("messagesTotal", 0)
-            else:
-                sent_scanned_count = 0
-
-            label_configs = load_config().get("labels", [])
-            all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
+            all_gmail_labels = b1.get("labels", {}).get("labels", [])
             label_id_by_name = {l["name"]: l["id"] for l in all_gmail_labels}
 
-            # Exact per-label counts via labels.get().messagesTotal
+            newest_msgs = b1.get("newest_msg", {}).get("messages", [])
+
+            # ── Batch 2: calls that depend on batch 1 results ────────
+            from claven.core.scan import SENT_SCANNED_LABEL, _unlabeled_query
+            label_configs = load_config().get("labels", [])
+
+            b2 = {}
+            def _b2_cb(rid, resp, exc):
+                if not exc:
+                    b2[rid] = resp
+            batch2 = service.new_batch_http_request(callback=_b2_cb)
+
+            sent_scanned_label_id = next((l["id"] for l in all_gmail_labels if l["name"] == SENT_SCANNED_LABEL), None)
+            if sent_scanned_label_id:
+                batch2.add(service.users().labels().get(userId="me", id=sent_scanned_label_id), request_id="sent_scanned")
+
+            for lc in label_configs:
+                if lid := label_id_by_name.get(lc["id"]):
+                    batch2.add(service.users().labels().get(userId="me", id=lid), request_id=f"known_{lc['id']}")
+                if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
+                    batch2.add(service.users().labels().get(userId="me", id=uid), request_id=f"unknown_{unknown}")
+
+            if newest_msgs:
+                batch2.add(service.users().messages().get(userId="me", id=newest_msgs[0]["id"], format="minimal"), request_id="newest_detail")
+
+            unlabeled_q = _unlabeled_query(label_configs)
+            batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
+
+            batch2.execute()
+
+            # ── Extract batch 2 results ──────────────────────────────
+            sent_scanned_count = b2.get("sent_scanned", {}).get("messagesTotal", 0)
+
             allmail_labeled_known_count = 0
             allmail_labeled_unknown_count = 0
             for lc in label_configs:
-                if lid := label_id_by_name.get(lc["id"]):
-                    info = service.users().labels().get(userId="me", id=lid).execute()
-                    allmail_labeled_known_count += info.get("messagesTotal", 0)
-                if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
-                    info = service.users().labels().get(userId="me", id=uid).execute()
-                    allmail_labeled_unknown_count += info.get("messagesTotal", 0)
+                allmail_labeled_known_count += b2.get(f"known_{lc['id']}", {}).get("messagesTotal", 0)
+                if unknown := lc.get("unknown_label"):
+                    allmail_labeled_unknown_count += b2.get(f"unknown_{unknown}", {}).get("messagesTotal", 0)
             allmail_labeled_total_count = allmail_labeled_known_count + allmail_labeled_unknown_count
 
-            # Unlabeled inbox messages — same query the scan uses.
-            # First page gives exact count (up to 500) for quick retrigger check.
-            # Full pagination gives exact total.
-            from claven.core.scan import _unlabeled_query
-            unlabeled_q = _unlabeled_query(label_configs)
-            first_page = service.users().messages().list(
-                userId="me", q=unlabeled_q, maxResults=500
-            ).execute()
-            first_page_messages = first_page.get("messages", [])
+            newest_detail = b2.get("newest_detail")
+            if newest_detail:
+                newest_mail_ms = newest_detail.get("internalDate")
+                if newest_mail_ms:
+                    newest_mail_at = datetime.fromtimestamp(int(newest_mail_ms) / 1000, tz=timezone.utc)
+
+            unlabeled_data = b2.get("unlabeled", {})
+            first_page_messages = unlabeled_data.get("messages", [])
             inbox_unlabeled_first_page_count = len(first_page_messages)
 
+            # Paginate remaining unlabeled (sequential — can't batch pagination)
             total_unlabeled = inbox_unlabeled_first_page_count
-            page_token = first_page.get("nextPageToken")
+            page_token = unlabeled_data.get("nextPageToken")
             while page_token:
                 page = service.users().messages().list(
                     userId="me", q=unlabeled_q, maxResults=500,

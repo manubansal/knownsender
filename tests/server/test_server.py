@@ -9,6 +9,28 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+
+class _FakeBatch:
+    """Simulate Gmail batch execution for tests.
+
+    Collects add() calls, then on execute() calls each request's .execute()
+    and passes the result to the callback — same contract as the real batch API.
+    """
+    def __init__(self, callback):
+        self._callback = callback
+        self._requests = []
+
+    def add(self, request, request_id=None):
+        self._requests.append((request, request_id))
+
+    def execute(self):
+        for request, request_id in self._requests:
+            try:
+                response = request.execute()
+                self._callback(request_id, response, None)
+            except Exception as exc:
+                self._callback(request_id, None, exc)
+
 from claven.server import app
 
 pytestmark = pytest.mark.server
@@ -853,6 +875,9 @@ class TestApiMe:
             return result
 
         svc.users.return_value.messages.return_value.get.side_effect = _messages_get
+
+        # Batch API — use _FakeBatch to execute requests individually
+        svc.new_batch_http_request.side_effect = lambda callback: _FakeBatch(callback)
         return svc
 
     def test_returns_known_senders_count(self):
