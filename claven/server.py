@@ -541,7 +541,6 @@ def api_me(request: Request):
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         # processed_count no longer used — progress derived from live Gmail label counts
         last_processed_at = db.get_last_processed_at(conn, session["user_id"])
-        newest_labeled_at = db.get_newest_labeled_at(conn, session["user_id"])
 
         unread_count = None
         read_count = None
@@ -550,6 +549,7 @@ def api_me(request: Request):
         sent_total_live = None
         sent_scanned_count = 0
         newest_mail_at = None
+        newest_labeled_at = None
         allmail_labeled_known_count = None
         allmail_labeled_unknown_count = None
         allmail_labeled_total_count = None
@@ -569,6 +569,7 @@ def api_me(request: Request):
             batch1.add(service.users().labels().list(userId="me"), request_id="labels")
             batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], q="is:read", maxResults=1), request_id="read")
             batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=1), request_id="newest_msg")
+            label_configs = load_config().get("labels", [])
             batch1.add(service.users().getProfile(userId="me"), request_id="profile")
             batch1.execute()
 
@@ -586,7 +587,6 @@ def api_me(request: Request):
 
             # ── Batch 2: calls that depend on batch 1 results ────────
             from claven.core.scan import SENT_SCANNED_LABEL, _unlabeled_query
-            label_configs = load_config().get("labels", [])
 
             b2 = {}
             def _b2_cb(rid, resp, exc):
@@ -606,6 +606,15 @@ def api_me(request: Request):
 
             if newest_msgs:
                 batch2.add(service.users().messages().get(userId="me", id=newest_msgs[0]["id"], format="minimal"), request_id="newest_detail")
+
+            # Newest labeled message — one call per label (labelIds is AND logic),
+            # take the newer result. Uses labelIds (message-level) not q (thread-level)
+            # so we get the actual labeled message, not a newer reply in the same thread.
+            for lc in label_configs:
+                if lid := label_id_by_name.get(lc["id"]):
+                    batch2.add(service.users().messages().list(userId="me", labelIds=[lid], maxResults=1), request_id=f"newest_known_{lc['id']}")
+                if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
+                    batch2.add(service.users().messages().list(userId="me", labelIds=[uid], maxResults=1), request_id=f"newest_unknown_{unknown}")
 
             unlabeled_q = _unlabeled_query(label_configs)
             batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
@@ -628,6 +637,35 @@ def api_me(request: Request):
                 newest_mail_ms = newest_detail.get("internalDate")
                 if newest_mail_ms:
                     newest_mail_at = datetime.fromtimestamp(int(newest_mail_ms) / 1000, tz=timezone.utc)
+
+            # Find newest labeled message across all label queries.
+            # Each query returns newest-first, so we fetch the top candidate
+            # from each label and pick the one with the highest internalDate.
+            labeled_candidate_ids = []
+            for lc in label_configs:
+                for key in [f"newest_known_{lc['id']}", f"newest_unknown_{lc.get('unknown_label', '')}"]:
+                    msgs = b2.get(key, {}).get("messages", [])
+                    if msgs:
+                        labeled_candidate_ids.append(msgs[0]["id"])
+
+            if labeled_candidate_ids:
+                b3 = {}
+                def _b3_cb(rid, resp, exc):
+                    if not exc:
+                        b3[rid] = resp
+                batch3 = service.new_batch_http_request(callback=_b3_cb)
+                for cid in labeled_candidate_ids:
+                    batch3.add(service.users().messages().get(userId="me", id=cid, format="minimal"), request_id=cid)
+                batch3.execute()
+
+                best_ms = 0
+                for cid in labeled_candidate_ids:
+                    detail = b3.get(cid, {})
+                    ms = int(detail.get("internalDate", 0) or 0)
+                    if ms > best_ms:
+                        best_ms = ms
+                if best_ms:
+                    newest_labeled_at = datetime.fromtimestamp(best_ms / 1000, tz=timezone.utc)
 
             unlabeled_data = b2.get("unlabeled", {})
             first_page_messages = unlabeled_data.get("messages", [])
