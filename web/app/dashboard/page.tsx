@@ -18,7 +18,8 @@ type MeResponse = {
   sent_total_count: number | null;
   sent_scan_status: string | null;
   inbox_scan_in_progress: boolean;
-  last_processed_at: string | null;
+  last_fetched_at: string | null;
+  last_labeled_at: string | null;
   newest_mail_at: string | null;
   newest_labeled_at: string | null;
   unread_count: number | null;
@@ -349,11 +350,22 @@ export default function DashboardPage() {
                             <div className="flex justify-between gap-4 items-center mt-1 pt-1 border-t border-border/30">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                                Last fetch
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {state.data.last_fetched_at
+                                  ? formatRelativeTime(new Date(state.data.last_fetched_at))
+                                  : "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
                                 Last labeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
-                                {state.data.last_processed_at
-                                  ? formatRelativeTime(new Date(state.data.last_processed_at))
+                                {state.data.last_labeled_at
+                                  ? formatRelativeTime(new Date(state.data.last_labeled_at))
                                   : "—"}
                               </span>
                             </div>

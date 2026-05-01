@@ -487,10 +487,11 @@ def internal_poll(request: Request):
 
                 label_id_cache = _label_id_cache_for_config(service, label_configs)
                 count = poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders)
+                db.touch_last_fetched(conn, user_id)
                 db.set_history_id(conn, user_id, latest_history_id)
                 if count is not None and count > 0:
                     db.increment_processed_count(conn, user_id, count)
-                    db.touch_last_processed(conn, user_id)
+                    db.touch_last_labeled(conn, user_id)
                 results.append({"user_id": user_id, "status": "ok"})
             except Exception as exc:
                 logger.exception("Error processing user %s", user_id, exc_info=exc)
@@ -540,7 +541,8 @@ def api_me(request: Request):
         known_senders = db.count_known_senders(conn, session["user_id"])
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         # processed_count no longer used — progress derived from live Gmail label counts
-        last_processed_at = db.get_last_processed_at(conn, session["user_id"])
+        last_labeled_at = db.get_last_labeled_at(conn, session["user_id"])
+        last_fetched_at = db.get_last_fetched_at(conn, session["user_id"])
 
         unread_count = None
         read_count = None
@@ -705,7 +707,8 @@ def api_me(request: Request):
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_in_progress": inbox_scan_status == "in_progress",
-        "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
+        "last_fetched_at": last_fetched_at.isoformat() if last_fetched_at else None,
+        "last_labeled_at": last_labeled_at.isoformat() if last_labeled_at else None,
         "newest_mail_at": newest_mail_at.isoformat() if newest_mail_at else None,
         "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
         "allmail_labeled_known_count": allmail_labeled_known_count,
@@ -1002,9 +1005,10 @@ async def webhook_gmail(request: Request):
         known_senders = db.get_known_senders(conn, user["id"])
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)
+        db.touch_last_fetched(conn, user["id"])
         db.set_history_id(conn, user["id"], notification_history_id)
         if count is not None and count > 0:
             db.increment_processed_count(conn, user["id"], count)
-            db.touch_last_processed(conn, user["id"])
+            db.touch_last_labeled(conn, user["id"])
 
     return {"status": "ok"}
