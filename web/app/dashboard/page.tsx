@@ -91,6 +91,13 @@ export default function DashboardPage() {
 
   useEffect(() => { loadData(); }, []);
 
+  // Auto-refresh when tab regains focus (e.g., returning after hours)
+  useEffect(() => {
+    const onFocus = () => { loadData(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
   // Live progress via Server-Sent Events — workers push updates after each
   // batch commit via Postgres NOTIFY. No polling, no wasted API calls.
   // Debounced: rapid events (multiple batches/second) collapse into one
