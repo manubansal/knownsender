@@ -231,10 +231,10 @@ export default function DashboardPage() {
   const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
   const archiveHasMore = inbox_labeled_unknown_has_more ?? false;
   const archiveLabel = archiveCount === 0
-    ? "Archive unknown-sender"
+    ? "Archive unknown-sender from inbox"
     : archiveHasMore
-      ? `Archive ${archiveCount}+ messages`
-      : `Archive ${archiveCount} messages`;
+      ? `Archive ${archiveCount}+ unknown-sender from inbox`
+      : `Archive ${archiveCount} unknown-sender from inbox`;
   const archiveRunning = archive_job?.status === "in_progress";
 
   return (
@@ -442,6 +442,57 @@ export default function DashboardPage() {
                           : "—"}
                       </span>
                     </div>
+                    {isKnownSender && (
+                      <div className="flex flex-col gap-2 mt-3 pt-2 border-t border-border/50">
+                        <button
+                          onClick={connected ? handleDisconnect : handleConnect}
+                          disabled={connecting || disconnecting}
+                          className={cn(buttonVariants(connected ? { variant: "outline", size: "sm" } : { size: "sm" }), "w-full")}
+                        >
+                          {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
+                        </button>
+                        {archiveRunning ? (
+                          <div className="flex flex-col gap-1">
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Archiving unknown-sender
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {archive_job?.progress ?? 0} / {archive_job?.total ?? "…"}
+                              </span>
+                            </div>
+                            <button
+                              onClick={handleCancelArchive}
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : archive_job?.status === "cancelled" ? (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-xs text-muted-foreground">
+                              Cancelled at {archive_job.progress} / {archive_job.total}
+                            </span>
+                            <button
+                              onClick={handleArchiveUnknown}
+                              disabled={!connected || archiveCount === 0 || archiving}
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                            >
+                              {archiveLabel}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={handleArchiveUnknown}
+                            disabled={!connected || archiveCount === 0 || archiving}
+                            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                          >
+                            {archiving ? "Starting…" : archiveLabel}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -469,61 +520,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {connected && (
-            <div className="w-full rounded-lg border bg-muted/40 px-5 py-4 text-sm">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Actions</span>
-              <div className="flex flex-col gap-2 mt-2">
-                {archiveRunning ? (
-                  <div className="flex flex-col gap-1">
-                    <div className="flex justify-between items-center">
-                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Archiving unknown-sender
-                      </span>
-                      <span className="text-xs tabular-nums text-muted-foreground">
-                        {archive_job?.progress ?? 0} / {archive_job?.total ?? "…"}
-                      </span>
-                    </div>
-                    <button
-                      onClick={handleCancelArchive}
-                      className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : archive_job?.status === "cancelled" ? (
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground">
-                      Cancelled at {archive_job.progress} / {archive_job.total}
-                    </span>
-                    <button
-                      onClick={handleArchiveUnknown}
-                      disabled={archiveCount === 0 || archiving}
-                      className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                    >
-                      {archiveLabel}
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleArchiveUnknown}
-                    disabled={archiveCount === 0 || archiving}
-                    className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                  >
-                    {archiving ? "Starting…" : archiveLabel}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
 
-          <button
-            onClick={connected ? handleDisconnect : handleConnect}
-            disabled={connecting || disconnecting}
-            className={cn(buttonVariants(connected ? { variant: "outline" } : {}))}
-          >
-            {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
-          </button>
         </div>
       </main>
     </>

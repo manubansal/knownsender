@@ -128,12 +128,21 @@ describe("Dashboard page", () => {
     });
   });
 
+  const KNOWN_SENDER_CONFIG = {
+    labels: [{
+      id: "known-sender",
+      name: "Known Sender",
+      unknown_label: "unknown-sender",
+      rules: [{ field: "from", known_sender: true }],
+    }],
+  };
+
   describe("not connected", () => {
     beforeEach(() => {
       mockFetch({
         ok: true,
         body: { email: "user@example.com", connected: false, history_id: null, known_senders: 3, unread_count: 10 },
-      });
+      }, KNOWN_SENDER_CONFIG);
     });
 
     it("shows ready to connect status when history_id is absent", async () => {
@@ -185,7 +194,7 @@ describe("Dashboard page", () => {
             return Promise.resolve({ ok: true, json: async () => ({ ok: true, history_id: 99999 }) });
           }
           if (url.includes("/api/config")) {
-            return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_CONFIG });
+            return Promise.resolve({ ok: true, status: 200, json: async () => KNOWN_SENDER_CONFIG });
           }
           return Promise.resolve({ ok: true, status: 200, json: async () => connectedMe });
         }),
@@ -263,7 +272,7 @@ describe("Dashboard page", () => {
       mockFetch({
         ok: true,
         body: { email: "user@example.com", connected: true, history_id: 12345 },
-      });
+      }, KNOWN_SENDER_CONFIG);
       render(<DashboardPage />);
       const button = await screen.findByRole("button", { name: /disconnect/i });
 
