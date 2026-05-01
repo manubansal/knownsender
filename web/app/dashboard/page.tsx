@@ -204,14 +204,23 @@ export default function DashboardPage() {
     setDisconnecting(false);
   }
 
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+
   function handleArchiveUnknown() {
     setArchiving(true);
     setCancelling(false);
+    setArchiveError(null);
     fetch(`${API_URL}/api/actions/archive-unknown`, { method: "POST", credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setArchiveError(body.detail || "Failed to start archive");
+        }
+      })
+      .catch(() => setArchiveError("Network error"))
       .finally(() => { setArchiving(false); loadData(); });
   }
-
-  const [cancelling, setCancelling] = useState(false);
 
   async function handleCancelArchive() {
     if (state.status !== "loaded" || !state.data.archive_job) return;
@@ -506,7 +515,12 @@ export default function DashboardPage() {
                               <ArchiveButton label={archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
                             </>
                           ) : (
-                            <ArchiveButton label={archiving ? "Starting…" : archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
+                            <>
+                              {archiveError && (
+                                <span className="text-xs text-destructive">{archiveError}</span>
+                              )}
+                              <ArchiveButton label={archiving ? "Starting…" : archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
+                            </>
                           )}
                         </div>
                       </div>
