@@ -755,12 +755,16 @@ async def api_events(request: Request):
     session = _get_session(request)
     user_id = session["user_id"]
 
+    def _open_listen_conn():
+        conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        conn.set_isolation_level(pg_ext.ISOLATION_LEVEL_AUTOCOMMIT)
+        with conn.cursor() as cur:
+            cur.execute("LISTEN scan_progress")
+        return conn
+
     listen_conn = None
     try:
-        listen_conn = psycopg2.connect(os.environ["DATABASE_URL"])
-        listen_conn.set_isolation_level(pg_ext.ISOLATION_LEVEL_AUTOCOMMIT)
-        with listen_conn.cursor() as cur:
-            cur.execute("LISTEN scan_progress")
+        listen_conn = _open_listen_conn()
     except Exception as exc:
         if listen_conn:
             listen_conn.close()
@@ -771,6 +775,7 @@ async def api_events(request: Request):
     _SELECT_TIMEOUT = 5       # seconds — check disconnect + heartbeat periodically
 
     async def event_stream():
+        nonlocal listen_conn
         last_heartbeat = asyncio.get_event_loop().time()
         try:
             while True:
@@ -779,20 +784,31 @@ async def api_events(request: Request):
                     break
 
                 # Poll Postgres for notifications (non-blocking via asyncio)
-                ready = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: select.select([listen_conn], [], [], _SELECT_TIMEOUT)
-                )
-                if ready[0]:
-                    listen_conn.poll()
-                    while listen_conn.notifies:
-                        notify = listen_conn.notifies.pop(0)
-                        try:
-                            payload = json.loads(notify.payload)
-                        except Exception:
-                            continue
-                        if payload.get("user_id") != user_id:
-                            continue
-                        yield f"data: {notify.payload}\n\n"
+                try:
+                    ready = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: select.select([listen_conn], [], [], _SELECT_TIMEOUT)
+                    )
+                    if ready[0]:
+                        listen_conn.poll()
+                        while listen_conn.notifies:
+                            notify = listen_conn.notifies.pop(0)
+                            try:
+                                payload = json.loads(notify.payload)
+                            except Exception:
+                                continue
+                            if payload.get("user_id") != user_id:
+                                continue
+                            yield f"data: {notify.payload}\n\n"
+                except psycopg2.OperationalError:
+                    # Neon suspends idle connections — reconnect
+                    try:
+                        listen_conn.close()
+                    except Exception:
+                        pass
+                    try:
+                        listen_conn = _open_listen_conn()
+                    except Exception:
+                        break
 
                 # Heartbeat — keeps connection alive through load balancers
                 now = asyncio.get_event_loop().time()
