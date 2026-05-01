@@ -237,7 +237,7 @@ export default function DashboardPage() {
             ) : (
               <>
                 <Zap className="h-5 w-5 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Connected and ready to start filtering</span>
+                <span className="text-sm text-muted-foreground">Connected and ready to start labeling</span>
               </>
             )}
           </div>
@@ -318,7 +318,7 @@ export default function DashboardPage() {
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Labeled total
+                                Allmail labeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
                                 {allmail_labeled_total_count ?? "—"}
@@ -327,14 +327,14 @@ export default function DashboardPage() {
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Labeled as known-sender
+                                Allmail known-sender
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_known_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Labeled as unknown-sender
+                                Allmail unknown-sender
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_unknown_count ?? "—"}</span>
                             </div>
@@ -411,7 +411,7 @@ export default function DashboardPage() {
             disabled={connecting || disconnecting}
             className={cn(buttonVariants(connected ? { variant: "outline" } : {}))}
           >
-            {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause filtering" : "Start filtering"}
+            {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
           </button>
         </div>
       </main>

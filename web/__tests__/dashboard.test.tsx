@@ -138,23 +138,23 @@ describe("Dashboard page", () => {
 
     it("shows ready to connect status when history_id is absent", async () => {
       render(<DashboardPage />);
-      await screen.findByText(/connected and ready to start filtering/i);
+      await screen.findByText(/connected and ready to start labeling/i);
     });
 
     it("shows connect gmail button", async () => {
       render(<DashboardPage />);
-      await screen.findByRole("button", { name: /start filtering/i });
+      await screen.findByRole("button", { name: /start labeling/i });
     });
 
     it("does not show disconnect button", async () => {
       render(<DashboardPage />);
-      await screen.findByText(/connected and ready to start filtering/i);
+      await screen.findByText(/connected and ready to start labeling/i);
       expect(screen.queryByRole("button", { name: /disconnect/i })).not.toBeInTheDocument();
     });
 
     it("calls /api/connect on connect button click", async () => {
       render(<DashboardPage />);
-      const button = await screen.findByRole("button", { name: /start filtering/i });
+      const button = await screen.findByRole("button", { name: /start labeling/i });
 
       vi.stubGlobal(
         "fetch",
@@ -175,7 +175,7 @@ describe("Dashboard page", () => {
 
     it("shows connected after successful connect", async () => {
       render(<DashboardPage />);
-      const button = await screen.findByRole("button", { name: /start filtering/i });
+      const button = await screen.findByRole("button", { name: /start labeling/i });
 
       const connectedMe = { ...DEFAULT_ME, connected: true, history_id: 99999 };
       vi.stubGlobal(
@@ -192,7 +192,7 @@ describe("Dashboard page", () => {
       );
       await userEvent.click(button);
       await screen.findByText(/connected/i);
-      expect(screen.queryByText(/connected and ready to start filtering/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/connected and ready to start labeling/i)).not.toBeInTheDocument();
     });
   });
 
@@ -256,7 +256,7 @@ describe("Dashboard page", () => {
         vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
       );
       await userEvent.click(button);
-      await screen.findByText(/connected and ready to start filtering/i);
+      await screen.findByText(/connected and ready to start labeling/i);
     });
 
     it("shows connect gmail button after disconnect", async () => {
@@ -272,7 +272,7 @@ describe("Dashboard page", () => {
         vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
       );
       await userEvent.click(button);
-      await screen.findByRole("button", { name: /start filtering/i });
+      await screen.findByRole("button", { name: /start labeling/i });
     });
   });
 
@@ -424,30 +424,30 @@ describe("Dashboard page", () => {
       }],
     };
 
-    it("shows labeled as known-sender count", async () => {
+    it("shows allmail known-sender count", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_known_count: 15 } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/labeled as known-sender/i);
+      await screen.findByText(/allmail known-sender/i);
       await screen.findByText("15");
     });
 
-    it("shows em dash for labeled as known-sender when null", async () => {
+    it("shows em dash for allmail known-sender when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_known_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/labeled as known-sender/i);
+      await screen.findByText(/allmail known-sender/i);
     });
 
-    it("shows labeled as unknown-sender count", async () => {
+    it("shows allmail unknown-sender count", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_unknown_count: 8 } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/labeled as unknown-sender/i);
+      await screen.findByText(/allmail unknown-sender/i);
       await screen.findByText("8");
     });
 
-    it("shows em dash for labeled as unknown-sender when null", async () => {
+    it("shows em dash for allmail unknown-sender when null", async () => {
       mockFetch({ ok: true, body: { ...DEFAULT_ME, allmail_labeled_unknown_count: null } }, FILTER_CONFIG);
       render(<DashboardPage />);
-      await screen.findByText(/labeled as unknown-sender/i);
+      await screen.findByText(/allmail unknown-sender/i);
     });
 
     it("shows inbox unlabeled count", async () => {
