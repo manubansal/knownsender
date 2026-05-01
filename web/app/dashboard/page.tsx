@@ -24,6 +24,7 @@ type MeResponse = {
   read_count: number | null;
   inbox_count: number | null;
   all_mail_count: number | null;
+  labeled_count: number | null;
   filtered_in_count: number | null;
   filtered_out_count: number | null;
   unlabeled_count: number | null;
@@ -191,7 +192,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, labeled_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
   const { labels } = state;
 
   return (
@@ -319,7 +320,7 @@ export default function DashboardPage() {
                                 Messages labeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
-                                {(filtered_in_count ?? 0) + (filtered_out_count ?? 0)} / {inbox_count ?? "—"}
+                                {labeled_count ?? "—"} / {inbox_count ?? "—"}
                               </span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">

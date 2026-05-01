@@ -549,6 +549,7 @@ def api_me(request: Request):
         all_mail_count = None
         sent_total_live = None
         sent_scanned_count = 0
+        labeled_count = None
         filtered_in_count = None
         filtered_out_count = None
         unlabeled_count = None
@@ -582,24 +583,35 @@ def api_me(request: Request):
             all_gmail_labels = service.users().labels().list(userId="me").execute().get("labels", [])
             label_id_by_name = {l["name"]: l["id"] for l in all_gmail_labels}
 
+            # All counts measured independently via labelIds intersection.
             filtered_in_count = 0
             filtered_out_count = 0
+            labeled_label_ids = []
             for lc in label_configs:
                 if lid := label_id_by_name.get(lc["id"]):
                     r = service.users().messages().list(
                         userId="me", labelIds=["INBOX", lid], maxResults=1
                     ).execute()
                     filtered_in_count += r.get("resultSizeEstimate", 0)
+                    labeled_label_ids.append(lid)
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
                     r = service.users().messages().list(
                         userId="me", labelIds=["INBOX", uid], maxResults=1
                     ).execute()
                     filtered_out_count += r.get("resultSizeEstimate", 0)
+                    labeled_label_ids.append(uid)
 
-            # Use the same Gmail search query the scan uses to count
-            # unlabeled messages. This avoids disagreement between
-            # arithmetic on approximate resultSizeEstimate values and
-            # the scan's own exit condition.
+            # Labeled = inbox messages with any filter label
+            labeled_count = 0
+            if labeled_label_ids:
+                labeled_q = "in:inbox (" + " OR ".join(f"label:{l['name']}" for l in all_gmail_labels if l["id"] in labeled_label_ids) + ")"
+                labeled_result = service.users().messages().list(
+                    userId="me", q=labeled_q, maxResults=1
+                ).execute()
+                labeled_count = labeled_result.get("resultSizeEstimate", 0)
+
+            # Unlabeled from the same search query the scan uses —
+            # source of truth for retrigger decisions.
             from claven.core.scan import _unlabeled_query
             unlabeled_q = _unlabeled_query(label_configs)
             unlabeled_result = service.users().messages().list(
@@ -632,6 +644,7 @@ def api_me(request: Request):
         "inbox_scan_in_progress": inbox_scan_status == "in_progress",
         "last_processed_at": last_processed_at.isoformat() if last_processed_at else None,
         "newest_labeled_at": newest_labeled_at.isoformat() if newest_labeled_at else None,
+        "labeled_count": labeled_count,
         "filtered_in_count": filtered_in_count,
         "filtered_out_count": filtered_out_count,
         "unlabeled_count": unlabeled_count,

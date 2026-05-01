@@ -45,6 +45,7 @@ const DEFAULT_ME: object = {
   unread_count: null,
   read_count: null,
   inbox_count: null,
+  labeled_count: null,
 };
 
 const DEFAULT_CONFIG: object = { labels: [] };
