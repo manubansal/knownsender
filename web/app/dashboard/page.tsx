@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,31 @@ type State =
   | { status: "loading" }
   | { status: "unauthenticated" }
   | { status: "loaded"; data: MeResponse; labels: LabelConfig[] };
+
+function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled: boolean; onConfirm: () => void }) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger
+        disabled={disabled}
+        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+      >
+        {label}
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Archive unknown-sender messages</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will remove all unknown-sender messages from your inbox. The messages won&apos;t be deleted — they&apos;ll still be in All Mail. This action can take a while for large counts.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>{label}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -179,10 +205,8 @@ export default function DashboardPage() {
   }
 
   async function handleArchiveUnknown() {
-    if (!confirm(archiveLabel)) return;
     setArchiving(true);
     await fetch(`${API_URL}/api/actions/archive-unknown`, { method: "POST", credentials: "include" });
-    // SSE will push progress updates; loadData will refresh on completion
     await loadData();
     setArchiving(false);
   }
@@ -474,22 +498,10 @@ export default function DashboardPage() {
                             <span className="text-xs text-muted-foreground">
                               Cancelled at {archive_job.progress} / {archive_job.total}
                             </span>
-                            <button
-                              onClick={handleArchiveUnknown}
-                              disabled={!connected || archiveCount === 0 || archiving}
-                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                            >
-                              {archiveLabel}
-                            </button>
+                            <ArchiveButton label={archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
                           </div>
                         ) : (
-                          <button
-                            onClick={handleArchiveUnknown}
-                            disabled={!connected || archiveCount === 0 || archiving}
-                            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                          >
-                            {archiving ? "Starting…" : archiveLabel}
-                          </button>
+                          <ArchiveButton label={archiving ? "Starting…" : archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
                         )}
                       </div>
                     )}
