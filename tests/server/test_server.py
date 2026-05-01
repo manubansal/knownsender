@@ -3,6 +3,9 @@
 import base64
 import json
 import logging
+import os
+import signal
+import threading
 from contextlib import contextmanager
 from unittest.mock import ANY, MagicMock, patch
 
@@ -1621,3 +1624,189 @@ class TestApiEvents:
                 client.cookies.set("session", token)
                 response = client.get("/api/events")
         assert response.status_code == 503
+
+
+# ── Graceful shutdown tests ──────────────────────────────────────────────────
+
+class TestIsCurrentWorker:
+    def test_returns_true_normally(self):
+        import claven.server as srv
+        srv._shutdown_event.clear()
+        try:
+            assert srv._is_current_worker() is True
+        finally:
+            srv._shutdown_event.clear()
+
+    def test_returns_false_when_shutdown_event_set(self):
+        import claven.server as srv
+        srv._shutdown_event.set()
+        try:
+            assert srv._is_current_worker() is False
+        finally:
+            srv._shutdown_event.clear()
+
+    def test_returns_false_when_pid_changed(self):
+        import claven.server as srv
+        srv._shutdown_event.clear()
+        with patch.object(srv, "_worker_id", os.getpid() + 1):
+            assert srv._is_current_worker() is False
+
+
+class TestShutdownHandler:
+    def test_sets_shutdown_event(self):
+        import claven.server as srv
+        srv._shutdown_event.clear()
+        try:
+            srv._shutdown_handler(signal.SIGTERM, None)
+            assert srv._shutdown_event.is_set()
+        finally:
+            srv._shutdown_event.clear()
+
+    def test_is_idempotent(self):
+        import claven.server as srv
+        srv._shutdown_event.clear()
+        try:
+            srv._shutdown_handler(signal.SIGTERM, None)
+            srv._shutdown_handler(signal.SIGTERM, None)
+            assert srv._shutdown_event.is_set()
+        finally:
+            srv._shutdown_event.clear()
+
+
+class TestSpawnScanThread:
+    def test_creates_daemon_thread(self):
+        import claven.server as srv
+        with patch.object(srv, "threading") as mock_threading:
+            srv._spawn_scan_thread(lambda: None, ())
+        mock_threading.Thread.assert_called_once()
+        assert mock_threading.Thread.call_args[1]["daemon"] is True
+        mock_threading.Thread.return_value.start.assert_called_once()
+
+    def test_adds_thread_to_active_threads(self):
+        import claven.server as srv
+        done = threading.Event()
+        def target():
+            done.wait(1)
+        with srv._threads_lock:
+            srv._active_threads.clear()
+        try:
+            t = srv._spawn_scan_thread(target, ())
+            assert t in srv._active_threads
+        finally:
+            done.set()
+            t.join(timeout=1)
+            with srv._threads_lock:
+                srv._active_threads.clear()
+
+    def test_starts_the_thread(self):
+        import claven.server as srv
+        ran = threading.Event()
+        def target():
+            ran.set()
+        with srv._threads_lock:
+            srv._active_threads.clear()
+        try:
+            t = srv._spawn_scan_thread(target, ())
+            assert ran.wait(timeout=1)
+        finally:
+            t.join(timeout=1)
+            with srv._threads_lock:
+                srv._active_threads.clear()
+
+    def test_passes_args_to_target(self):
+        import claven.server as srv
+        results = []
+        def target(a, b):
+            results.append((a, b))
+        with srv._threads_lock:
+            srv._active_threads.clear()
+        try:
+            t = srv._spawn_scan_thread(target, ("x", "y"))
+            t.join(timeout=1)
+            assert results == [("x", "y")]
+        finally:
+            with srv._threads_lock:
+                srv._active_threads.clear()
+
+
+class TestLifespanStartup:
+    def test_clears_shutdown_event(self):
+        import claven.server as srv
+        srv._shutdown_event.set()
+        with TestClient(app):
+            assert not srv._shutdown_event.is_set()
+
+    def test_clears_active_threads(self):
+        import claven.server as srv
+        with srv._threads_lock:
+            srv._active_threads.append(MagicMock())
+        with TestClient(app):
+            assert len(srv._active_threads) == 0
+
+
+class TestLifespanShutdown:
+    def test_sets_shutdown_event(self):
+        import claven.server as srv
+        with TestClient(app):
+            assert not srv._shutdown_event.is_set()
+        assert srv._shutdown_event.is_set()
+
+    def test_joins_threads(self):
+        import claven.server as srv
+        mock_thread = MagicMock()
+        mock_thread.is_alive.return_value = False
+        with TestClient(app):
+            with srv._threads_lock:
+                srv._active_threads.append(mock_thread)
+        mock_thread.join.assert_called_once_with(timeout=5)
+
+    def test_clears_active_threads(self):
+        import claven.server as srv
+        mock_thread = MagicMock()
+        mock_thread.is_alive.return_value = False
+        with TestClient(app):
+            with srv._threads_lock:
+                srv._active_threads.append(mock_thread)
+        assert len(srv._active_threads) == 0
+
+    def test_logs_warning_for_stuck_threads(self):
+        import claven.server as srv
+        mock_thread = MagicMock()
+        mock_thread.is_alive.return_value = True
+        with patch.object(srv, "logger") as mock_logger:
+            with TestClient(app):
+                with srv._threads_lock:
+                    srv._active_threads.append(mock_thread)
+        mock_logger.warning.assert_any_call(
+            "Shutdown: %d scan thread(s) still alive after timeout", 1
+        )
+
+
+class TestGracefulShutdownIntegration:
+    def test_spawned_thread_exits_on_shutdown(self):
+        import claven.server as srv
+        started = threading.Event()
+        def worker():
+            started.set()
+            while not srv._shutdown_event.is_set():
+                srv._shutdown_event.wait(10)
+        with TestClient(app):
+            t = srv._spawn_scan_thread(worker, ())
+            assert started.wait(timeout=1)
+            assert t.is_alive()
+        # Lifespan shutdown set the event and joined
+        assert not t.is_alive()
+
+    def test_multiple_threads_all_exit(self):
+        import claven.server as srv
+        threads = []
+        def worker():
+            while not srv._shutdown_event.is_set():
+                srv._shutdown_event.wait(10)
+        with TestClient(app):
+            for _ in range(3):
+                threads.append(srv._spawn_scan_thread(worker, ()))
+            for t in threads:
+                assert t.is_alive()
+        for t in threads:
+            assert not t.is_alive()
