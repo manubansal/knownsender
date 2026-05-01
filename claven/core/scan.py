@@ -190,6 +190,8 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
         # so they process different messages instead of always grabbing the
         # same newest-first batch from Gmail.
         unlabeled_pool = list_messages(service, query=query, max_results=_BATCH_SIZE * _SAMPLE_POOL_MULTIPLIER)
+        db.touch_last_fetched(conn, user_id)
+        conn.commit()
         if not unlabeled_pool:
             logger.info("Inbox scan complete: %d messages labeled, 0 remaining", total_labeled)
             break
@@ -233,7 +235,7 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                 applied = batch_apply_labels(service, to_label)
                 total_labeled += applied
                 if applied > 0:
-                    db.touch_last_processed(conn, user_id)
+                    db.touch_last_labeled(conn, user_id)
                     if newest_date_ms:
                         db.update_newest_labeled(conn, user_id, newest_date_ms)
                     _notify_progress(conn, user_id, "inbox_scan_progress",

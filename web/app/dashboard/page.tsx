@@ -18,15 +18,19 @@ type MeResponse = {
   sent_total_count: number | null;
   sent_scan_status: string | null;
   inbox_scan_in_progress: boolean;
-  last_processed_at: string | null;
+  last_fetched_at: string | null;
+  last_labeled_at: string | null;
+  newest_mail_at: string | null;
   newest_labeled_at: string | null;
   unread_count: number | null;
   read_count: number | null;
   inbox_count: number | null;
   all_mail_count: number | null;
-  filtered_in_count: number | null;
-  filtered_out_count: number | null;
-  unlabeled_count: number | null;
+  allmail_labeled_known_count: number | null;
+  allmail_labeled_unknown_count: number | null;
+  allmail_labeled_total_count: number | null;
+  inbox_unlabeled_first_page_count: number | null;
+  inbox_unlabeled_deep_count: number | null;
 };
 
 type LabelRule = {
@@ -191,7 +195,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, filtered_in_count, filtered_out_count, unlabeled_count } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count } = state.data;
   const { labels } = state;
 
   return (
@@ -235,7 +239,7 @@ export default function DashboardPage() {
             ) : (
               <>
                 <Zap className="h-5 w-5 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Connected and ready to start filtering</span>
+                <span className="text-sm text-muted-foreground">Connected and ready to start labeling</span>
               </>
             )}
           </div>
@@ -316,41 +320,63 @@ export default function DashboardPage() {
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Messages labeled
+                                Allmail labeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
-                                {(filtered_in_count ?? 0) + (filtered_out_count ?? 0)} / {inbox_count ?? "—"}
+                                {allmail_labeled_total_count ?? "—"}
                               </span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Unlabeled
+                                Allmail known-sender
                               </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{unlabeled_count ?? "—"}</span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_known_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Labeled as known-sender
+                                Allmail unknown-sender
                               </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_in_count ?? "—"}</span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_unknown_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Labeled as unknown-sender
+                                Inbox unlabeled
                               </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{filtered_out_count ?? "—"}</span>
+                              <span className="text-xs tabular-nums text-muted-foreground">{inbox_unlabeled_deep_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center mt-1 pt-1 border-t border-border/30">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                                Last fetched
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {state.data.last_fetched_at
+                                  ? formatRelativeTime(new Date(state.data.last_fetched_at))
+                                  : "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
                                 Last labeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
-                                {state.data.last_processed_at
-                                  ? formatRelativeTime(new Date(state.data.last_processed_at))
+                                {state.data.last_labeled_at
+                                  ? formatRelativeTime(new Date(state.data.last_labeled_at))
+                                  : "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                                Newest email
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {state.data.newest_mail_at
+                                  ? formatRelativeTime(new Date(state.data.newest_mail_at), "old")
                                   : "—"}
                               </span>
                             </div>
@@ -372,8 +398,8 @@ export default function DashboardPage() {
                     <div className="flex justify-between gap-4 items-center mt-3 pt-2 border-t border-border/50">
                       <span className="text-xs font-semibold">Noise reduced</span>
                       <span className="text-xs font-semibold tabular-nums">
-                        {filtered_in_count !== null && filtered_out_count !== null && (filtered_in_count + filtered_out_count) > 0
-                          ? `${Math.round((filtered_out_count / (filtered_in_count + filtered_out_count)) * 100)}%`
+                        {allmail_labeled_total_count !== null && allmail_labeled_unknown_count !== null && allmail_labeled_total_count > 0
+                          ? `${Math.round((allmail_labeled_unknown_count / allmail_labeled_total_count) * 100)}%`
                           : "—"}
                       </span>
                     </div>
@@ -409,7 +435,7 @@ export default function DashboardPage() {
             disabled={connecting || disconnecting}
             className={cn(buttonVariants(connected ? { variant: "outline" } : {}))}
           >
-            {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause filtering" : "Start filtering"}
+            {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
           </button>
         </div>
       </main>

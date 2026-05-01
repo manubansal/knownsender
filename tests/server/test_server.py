@@ -9,6 +9,28 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+
+class _FakeBatch:
+    """Simulate Gmail batch execution for tests.
+
+    Collects add() calls, then on execute() calls each request's .execute()
+    and passes the result to the callback — same contract as the real batch API.
+    """
+    def __init__(self, callback):
+        self._callback = callback
+        self._requests = []
+
+    def add(self, request, request_id=None):
+        self._requests.append((request, request_id))
+
+    def execute(self):
+        for request, request_id in self._requests:
+            try:
+                response = request.execute()
+                self._callback(request_id, response, None)
+            except Exception as exc:
+                self._callback(request_id, None, exc)
+
 from claven.server import app
 
 pytestmark = pytest.mark.server
@@ -768,16 +790,24 @@ class TestApiMe:
         messages_unread=0,
         messages_total=0,
         read_estimate=0,
-        filtered_in_total=0,
-        filtered_out_total=0,
-        unlabeled_total=0,
+        labeled_known_total=0,
+        labeled_unknown_total=0,
+        unlabeled_ids=None,
+        newest_mail_internal_date=None,
     ):
-        """Return a mock Gmail service with label counts."""
+        """Return a mock Gmail service with label counts.
+
+        unlabeled_ids: list of message ID strings for the unlabeled query.
+            Paginated in chunks of 500. Defaults to [] (no unlabeled).
+        newest_mail_internal_date: epoch ms string for newest inbox message.
+        """
+        if unlabeled_ids is None:
+            unlabeled_ids = []
         svc = MagicMock()
         known_id = self._KNOWN_LABEL_ID
         unknown_id = self._UNKNOWN_LABEL_ID
 
-        # labels.get → route by label ID
+        # labels.get → exact per-label counts
         def _labels_get(**kwargs):
             lid = kwargs.get("id", "")
             result = MagicMock()
@@ -785,6 +815,10 @@ class TestApiMe:
                 result.execute.return_value = {"messagesUnread": messages_unread, "messagesTotal": messages_total}
             elif lid == "SENT":
                 result.execute.return_value = {"messagesTotal": 0}
+            elif lid == known_id:
+                result.execute.return_value = {"messagesTotal": labeled_known_total}
+            elif lid == unknown_id:
+                result.execute.return_value = {"messagesTotal": labeled_unknown_total}
             else:
                 result.execute.return_value = {"messagesTotal": 0}
             return result
@@ -799,25 +833,51 @@ class TestApiMe:
             ]
         }
 
-        # messages.list → route by labelIds and q
+        # messages.list → paginated unlabeled results
+        _pages = []
+        for i in range(0, max(len(unlabeled_ids), 1), 500):
+            _pages.append(unlabeled_ids[i:i + 500])
+        if not unlabeled_ids:
+            _pages = [[]]
+        _page_idx = [0]
+
         def _messages_list(**kwargs):
-            label_ids = kwargs.get("labelIds", [])
             q = kwargs.get("q", "")
+            label_ids = kwargs.get("labelIds", [])
             result = MagicMock()
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
-            elif "in:inbox" in q and "-label:" in q:
-                # Unlabeled query (same as scan's _unlabeled_query)
-                result.execute.return_value = {"resultSizeEstimate": unlabeled_total}
-            elif known_id in label_ids:
-                result.execute.return_value = {"resultSizeEstimate": filtered_in_total}
-            elif unknown_id in label_ids:
-                result.execute.return_value = {"resultSizeEstimate": filtered_out_total}
+            elif "-label:" in q:
+                idx = _page_idx[0]
+                page = _pages[idx] if idx < len(_pages) else []
+                has_next = idx + 1 < len(_pages) and _pages[idx + 1]
+                _page_idx[0] = idx + 1
+                resp = {"messages": [{"id": mid} for mid in page]}
+                if has_next:
+                    resp["nextPageToken"] = f"page-{idx + 1}"
+                result.execute.return_value = resp
+            elif not q and "INBOX" in label_ids:
+                # Newest inbox message lookup
+                if newest_mail_internal_date:
+                    result.execute.return_value = {"messages": [{"id": "newest-1"}]}
+                else:
+                    result.execute.return_value = {"messages": []}
             else:
                 result.execute.return_value = {"resultSizeEstimate": 0}
             return result
 
         svc.users.return_value.messages.return_value.list.side_effect = _messages_list
+
+        # messages.get → newest mail internal date
+        def _messages_get(**kwargs):
+            result = MagicMock()
+            result.execute.return_value = {"internalDate": newest_mail_internal_date}
+            return result
+
+        svc.users.return_value.messages.return_value.get.side_effect = _messages_get
+
+        # Batch API — use _FakeBatch to execute requests individually
+        svc.new_batch_http_request.side_effect = lambda callback: _FakeBatch(callback)
         return svc
 
     def test_returns_known_senders_count(self):
@@ -886,6 +946,39 @@ class TestApiMe:
                     response = client.get("/api/me")
         assert response.json()["read_count"] == 70
 
+    def test_returns_newest_mail_at(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    newest_mail_internal_date="1714500000000",
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["newest_mail_at"] is not None
+        assert response.json()["newest_mail_at"].startswith("2024-04-30")
+
+    def test_newest_mail_at_is_none_when_inbox_empty(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["newest_mail_at"] is None
+
     def test_unread_count_is_none_when_gmail_api_fails(self):
         """A Gmail API error must not break /api/me — return null for all Gmail fields."""
         token = _make_session_token()
@@ -907,7 +1000,7 @@ class TestApiMe:
 
     # processed_count and pending_count removed — progress derived from live Gmail label counts
 
-    def test_returns_filtered_in_count(self):
+    def test_returns_labeled_known_count(self):
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -917,14 +1010,14 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=30
+                    messages_total=100, labeled_known_total=60
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["filtered_in_count"] == 30
+        assert response.json()["allmail_labeled_known_count"] == 60
 
-    def test_returns_filtered_out_count(self):
+    def test_returns_labeled_unknown_count(self):
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -934,14 +1027,14 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_out_total=50
+                    messages_total=100, labeled_unknown_total=40
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["filtered_out_count"] == 50
+        assert response.json()["allmail_labeled_unknown_count"] == 40
 
-    def test_returns_unlabeled_count_from_search_query(self):
+    def test_returns_all_counts(self):
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -951,15 +1044,41 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.count_known_senders.return_value = 0
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=30, filtered_out_total=50,
-                    unlabeled_total=20,
+                    messages_total=100, labeled_known_total=50,
+                    labeled_unknown_total=30, unlabeled_ids=[f"m{i}" for i in range(20)],
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["unlabeled_count"] == 20
+        body = response.json()
+        assert body["allmail_labeled_known_count"] == 50
+        assert body["allmail_labeled_unknown_count"] == 30
+        assert body["allmail_labeled_total_count"] == 80
+        assert body["inbox_unlabeled_first_page_count"] == 20
+        assert body["inbox_unlabeled_deep_count"] == 20
 
-    def test_filtered_counts_are_null_when_gmail_api_unavailable(self):
+    def test_unlabeled_deep_count_paginates(self):
+        """Deep count paginates beyond the first 500 messages."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=1000,
+                    unlabeled_ids=[f"m{i}" for i in range(750)],
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        body = response.json()
+        assert body["inbox_unlabeled_first_page_count"] == 500
+        assert body["inbox_unlabeled_deep_count"] == 750
+
+    def test_counts_are_null_when_gmail_api_unavailable(self):
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -972,9 +1091,9 @@ class TestApiMe:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["filtered_in_count"] is None
-        assert response.json()["filtered_out_count"] is None
-        assert response.json()["unlabeled_count"] is None
+        assert response.json()["allmail_labeled_known_count"] is None
+        assert response.json()["allmail_labeled_unknown_count"] is None
+        assert response.json()["inbox_unlabeled_deep_count"] is None
 
 
     def test_api_me_does_not_trigger_scans_when_no_unlabeled(self):
@@ -1004,13 +1123,12 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.get_inbox_scan_status.return_value = "complete"
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=30, filtered_out_total=50,
-                    unlabeled_total=20,
+                    messages_total=100, unlabeled_ids=["m1", "m2", "m3"],
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["unlabeled_count"] == 20
+        assert response.json()["inbox_unlabeled_first_page_count"] == 3
         assert response.json()["inbox_scan_in_progress"] is True
         mock_threading.Thread.assert_called_once()
         assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_inbox_scan"
@@ -1027,12 +1145,12 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.get_inbox_scan_status.return_value = None
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, unlabeled_total=100,
+                    messages_total=100, unlabeled_ids=[f"m{i}" for i in range(100)],
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["unlabeled_count"] == 100
+        assert response.json()["inbox_unlabeled_first_page_count"] == 100
         assert response.json()["inbox_scan_in_progress"] is False
         mock_threading.Thread.assert_not_called()
 
@@ -1048,13 +1166,12 @@ class TestApiMe:
                 mock_db.get_history_id.return_value = 12345
                 mock_db.get_inbox_scan_status.return_value = "complete"
                 mock_auth.get_service.return_value = self._make_gmail_service(
-                    messages_total=100, filtered_in_total=60, filtered_out_total=40,
-                    unlabeled_total=0,
+                    messages_total=100,
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["unlabeled_count"] == 0
+        assert response.json()["inbox_unlabeled_first_page_count"] == 0
         assert response.json()["inbox_scan_in_progress"] is False
         mock_threading.Thread.assert_not_called()
 
