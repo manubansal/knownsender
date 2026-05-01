@@ -57,8 +57,9 @@ type State =
   | { status: "loaded"; data: MeResponse; labels: LabelConfig[] };
 
 function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled: boolean; onConfirm: () => void }) {
+  const [open, setOpen] = useState(false);
   return (
-    <AlertDialog>
+    <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger
         disabled={disabled}
         className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full truncate")}
@@ -74,7 +75,12 @@ function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>{label}</AlertDialogAction>
+          <button
+            className={cn(buttonVariants())}
+            onClick={() => { setOpen(false); onConfirm(); }}
+          >
+            {label}
+          </button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -267,10 +273,10 @@ export default function DashboardPage() {
   const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
   const archiveHasMore = inbox_labeled_unknown_has_more ?? false;
   const archiveLabel = archiveCount === 0
-    ? "Archive unknown-sender from inbox"
+    ? "Archive unknown-sender"
     : archiveHasMore
-      ? `Archive ${archiveCount}+ unknown-sender from inbox`
-      : `Archive ${archiveCount} unknown-sender from inbox`;
+      ? `Archive ${archiveCount}+ unknown-sender`
+      : `Archive ${archiveCount} unknown-sender`;
   const archiveRunning = archive_job?.status === "in_progress";
 
   return (
