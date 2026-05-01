@@ -204,17 +204,19 @@ export default function DashboardPage() {
     setDisconnecting(false);
   }
 
-  async function handleArchiveUnknown() {
+  function handleArchiveUnknown() {
     setArchiving(true);
-    await fetch(`${API_URL}/api/actions/archive-unknown`, { method: "POST", credentials: "include" });
-    setArchiving(false);
-    // SSE will push progress updates; no need to await loadData
-    loadData();
+    setCancelling(false);
+    fetch(`${API_URL}/api/actions/archive-unknown`, { method: "POST", credentials: "include" })
+      .finally(() => { setArchiving(false); loadData(); });
   }
+
+  const [cancelling, setCancelling] = useState(false);
 
   async function handleCancelArchive() {
     if (state.status !== "loaded" || !state.data.archive_job) return;
-    await fetch(`${API_URL}/api/actions/archive-unknown/cancel`, {
+    setCancelling(true);
+    fetch(`${API_URL}/api/actions/archive-unknown/cancel`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -490,9 +492,10 @@ export default function DashboardPage() {
                               </div>
                               <button
                                 onClick={handleCancelArchive}
+                                disabled={cancelling}
                                 className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
                               >
-                                Cancel
+                                {cancelling ? "Cancelling…" : "Cancel"}
                               </button>
                             </>
                           ) : archive_job?.status === "cancelled" ? (
