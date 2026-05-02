@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,9 @@ type MeResponse = {
   allmail_labeled_total_count: number | null;
   inbox_unlabeled_first_page_count: number | null;
   inbox_unlabeled_deep_count: number | null;
+  inbox_labeled_unknown_shallow_count: number | null;
+  inbox_labeled_unknown_has_more: boolean | null;
+  archive_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
 };
 
 type LabelRule = {
@@ -52,6 +56,37 @@ type State =
   | { status: "unauthenticated" }
   | { status: "loaded"; data: MeResponse; labels: LabelConfig[] };
 
+function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled: boolean; onConfirm: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        disabled={disabled}
+        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full truncate")}
+      >
+        {label}
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Archive unknown-sender messages</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will remove all unknown-sender messages from your inbox. The messages won&apos;t be deleted — they&apos;ll still be in All Mail. This action can take a while for large counts.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <button
+            className={cn(buttonVariants())}
+            onClick={() => { setOpen(false); onConfirm(); }}
+          >
+            {label}
+          </button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [state, setState] = useState<State>({ status: "loading" });
@@ -59,6 +94,7 @@ export default function DashboardPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -174,6 +210,35 @@ export default function DashboardPage() {
     setDisconnecting(false);
   }
 
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+
+  function handleArchiveUnknown() {
+    setArchiving(true);
+    setCancelling(false);
+    setArchiveError(null);
+    fetch(`${API_URL}/api/actions/archive-unknown`, { method: "POST", credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setArchiveError(body.detail || "Failed to start archive");
+        }
+      })
+      .catch(() => setArchiveError("Network error"))
+      .finally(() => { setArchiving(false); loadData(); });
+  }
+
+  async function handleCancelArchive() {
+    if (state.status !== "loaded" || !state.data.archive_job) return;
+    setCancelling(true);
+    fetch(`${API_URL}/api/actions/archive-unknown/cancel`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: state.data.archive_job.job_id }),
+    });
+  }
+
   if (state.status === "loading") {
     return (
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-24">
@@ -202,8 +267,17 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job } = state.data;
   const { labels } = state;
+
+  const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
+  const archiveHasMore = inbox_labeled_unknown_has_more ?? false;
+  const archiveLabel = archiveCount === 0
+    ? "Archive unknown-sender"
+    : archiveHasMore
+      ? `Archive ${archiveCount}+ unknown-sender`
+      : `Archive ${archiveCount} unknown-sender`;
+  const archiveRunning = archive_job?.status === "in_progress";
 
   return (
     <>
@@ -232,7 +306,7 @@ export default function DashboardPage() {
         </button>
       </header>
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-24">
-        <div className="flex flex-col items-center gap-6 text-center max-w-md">
+        <div className="flex flex-col items-center gap-6 text-center w-full max-w-md">
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
 
           <p className="text-lg font-medium">{email}</p>
@@ -410,6 +484,59 @@ export default function DashboardPage() {
                           : "—"}
                       </span>
                     </div>
+                    {isKnownSender && (
+                      <div className="flex flex-col gap-2 mt-4 pt-3 border-t border-border/50">
+                        <button
+                          onClick={connected ? handleDisconnect : handleConnect}
+                          disabled={connecting || disconnecting}
+                          className={cn(buttonVariants(connected ? { variant: "outline", size: "sm" } : { size: "sm" }), "w-full")}
+                        >
+                          {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
+                        </button>
+                        <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-border/30">
+                          {archiving && (
+                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Starting archive…
+                            </span>
+                          )}
+                          {archiveRunning ? (
+                            <>
+                              <div className="flex justify-between items-center">
+                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  Archiving unknown-sender
+                                </span>
+                                <span className="text-xs tabular-nums text-muted-foreground">
+                                  {archive_job?.progress ?? 0} / {archive_job?.total ?? "…"}
+                                </span>
+                              </div>
+                              <button
+                                onClick={handleCancelArchive}
+                                disabled={cancelling}
+                                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                              >
+                                {cancelling ? "Cancelling…" : "Cancel"}
+                              </button>
+                            </>
+                          ) : archive_job?.status === "cancelled" ? (
+                            <>
+                              <span className="text-xs text-muted-foreground">
+                                Cancelled at {archive_job.progress} / {archive_job.total}
+                              </span>
+                              <ArchiveButton label={archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
+                            </>
+                          ) : (
+                            <>
+                              {archiveError && (
+                                <span className="text-xs text-destructive">{archiveError}</span>
+                              )}
+                              <ArchiveButton label={archiving ? "Starting…" : archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -437,13 +564,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <button
-            onClick={connected ? handleDisconnect : handleConnect}
-            disabled={connecting || disconnecting}
-            className={cn(buttonVariants(connected ? { variant: "outline" } : {}))}
-          >
-            {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
-          </button>
+
         </div>
       </main>
     </>

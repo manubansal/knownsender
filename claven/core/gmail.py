@@ -402,3 +402,45 @@ def batch_apply_labels(service, message_label_pairs, max_retries=3):
     if pending:
         logger.warning("Batch apply gave up on %d messages after %d retries", len(pending), max_retries)
     return applied
+
+
+def batch_remove_labels(service, message_ids, label_ids_to_remove, max_retries=3):
+    """Remove labels from up to _BATCH_LIMIT messages in a single batch request.
+
+    Returns the number of successful modifications.
+    """
+    import time as _time
+    modified = 0
+    pending = list(message_ids[:_BATCH_LIMIT])
+
+    for attempt in range(max_retries + 1):
+        if not pending:
+            break
+        if attempt > 0:
+            delay = min(5 * (2 ** (attempt - 1)), 30)
+            logger.info("Retrying %d failed label removals (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
+            _time.sleep(delay)
+
+        failed = []
+
+        def _callback(request_id, response, exception):
+            nonlocal modified
+            if exception:
+                failed.append(request_id)
+                return
+            modified += 1
+
+        batch = service.new_batch_http_request(callback=_callback)
+        for msg_id in pending:
+            batch.add(
+                service.users().messages().modify(
+                    userId="me", id=msg_id, body={"removeLabelIds": label_ids_to_remove},
+                ),
+                request_id=msg_id,
+            )
+        batch.execute()
+        pending = failed
+
+    if pending:
+        logger.warning("Batch remove gave up on %d messages after %d retries", len(pending), max_retries)
+    return modified
