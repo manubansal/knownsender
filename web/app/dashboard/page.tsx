@@ -35,6 +35,7 @@ type MeResponse = {
   inbox_labeled_unknown_shallow_count: number | null;
   inbox_labeled_unknown_has_more: boolean | null;
   archive_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
+  scan_scope: "inbox" | "allmail" | null;
 };
 
 type LabelRule = {
@@ -228,6 +229,16 @@ export default function DashboardPage() {
       .finally(() => { setArchiving(false); loadData(); });
   }
 
+  async function handleScanScope(scope: "inbox" | "allmail") {
+    await fetch(`${API_URL}/api/settings/scan-scope`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope }),
+    });
+    loadData();
+  }
+
   async function handleCancelArchive() {
     if (state.status !== "loaded" || !state.data.archive_job) return;
     setCancelling(true);
@@ -267,7 +278,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job, scan_scope } = state.data;
   const { labels } = state;
 
   const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
@@ -485,7 +496,34 @@ export default function DashboardPage() {
                       </span>
                     </div>
                     {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-4 pt-3 border-t border-border/50">
+                      <div className="flex flex-col gap-3 mt-4 pt-3 border-t border-border/50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">Scan scope</span>
+                          <div className="flex rounded-md border border-border overflow-hidden text-xs">
+                            <button
+                              onClick={() => handleScanScope("inbox")}
+                              className={cn(
+                                "px-3 py-1 transition-colors",
+                                (scan_scope ?? "inbox") === "inbox"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-background text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              Inbox
+                            </button>
+                            <button
+                              onClick={() => handleScanScope("allmail")}
+                              className={cn(
+                                "px-3 py-1 transition-colors border-l border-border",
+                                scan_scope === "allmail"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-background text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              All mail
+                            </button>
+                          </div>
+                        </div>
                         <button
                           onClick={connected ? handleDisconnect : handleConnect}
                           disabled={connecting || disconnecting}
