@@ -229,14 +229,20 @@ export default function DashboardPage() {
       .finally(() => { setArchiving(false); loadData(); });
   }
 
-  async function handleScanScope(scope: "inbox" | "allmail") {
-    await fetch(`${API_URL}/api/settings/scan-scope`, {
+  function handleScanScope(scope: "inbox" | "allmail") {
+    setState((prev) =>
+      prev.status === "loaded"
+        ? { ...prev, data: { ...prev.data, scan_scope: scope } }
+        : prev,
+    );
+    fetch(`${API_URL}/api/settings/scan-scope`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scope }),
-    });
-    loadData();
+    })
+      .then((res) => { if (!res.ok) loadData(); })
+      .catch(() => loadData());
   }
 
   async function handleCancelArchive() {
