@@ -705,13 +705,14 @@ def api_me(request: Request):
         archive_job = db.get_archive_job(conn, session["user_id"])
 
     # Reconciliation: if the inbox scan completed but the first page
-    # finds unlabeled messages, retrigger. Row lock makes this idempotent.
+    # finds unlabeled messages, retrigger via sent scan (which chains into
+    # inbox scan) so known_senders is always complete before labeling.
     if (inbox_unlabeled_first_page_count is not None
             and inbox_unlabeled_first_page_count > 0
             and inbox_scan_status == "complete"
             and history_id is not None):
         inbox_scan_status = "in_progress"
-        threading.Thread(target=_run_inbox_scan, args=(session["user_id"],), daemon=True).start()
+        _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
 
     return {
         "email": user["email"],
@@ -945,11 +946,10 @@ def api_connect(request: Request):
         except Exception as exc:
             logger.exception("Connect failed for %s: %s", session["email"], exc)
             raise HTTPException(status_code=500, detail="Failed to start Gmail watch")
-    # Kick off both scans — sent scan may already be complete (from sign-in),
-    # in which case _run_sent_scan is a no-op and inbox scan starts immediately.
-    # If sent scan is still running, _run_sent_scan chains into inbox scan on completion.
+    # Kick off sent scan only — it chains into inbox scan on completion.
+    # Do NOT spawn a separate inbox scan thread: it races with the sent
+    # scan and can label messages with an incomplete known_senders set.
     _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
-    _spawn_scan_thread(_run_inbox_scan, (session["user_id"],))
     return JSONResponse({"ok": True, "history_id": history_id})
 
 
