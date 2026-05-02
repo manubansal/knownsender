@@ -686,17 +686,21 @@ def api_me(request: Request):
             first_page_messages = unlabeled_data.get("messages", [])
             inbox_unlabeled_first_page_count = len(first_page_messages)
 
-            # Paginate remaining unlabeled (sequential — can't batch pagination)
-            total_unlabeled = inbox_unlabeled_first_page_count
-            page_token = unlabeled_data.get("nextPageToken")
-            while page_token:
-                page = service.users().messages().list(
-                    userId="me", q=unlabeled_q, maxResults=500,
-                    pageToken=page_token,
-                ).execute()
-                total_unlabeled += len(page.get("messages", []))
-                page_token = page.get("nextPageToken")
-            inbox_unlabeled_deep_count = total_unlabeled
+            # Paginate remaining unlabeled (sequential — can't batch pagination).
+            # Skip deep count for allmail scope — too expensive (100k+ messages).
+            if scan_scope == "allmail":
+                inbox_unlabeled_deep_count = inbox_unlabeled_first_page_count
+            else:
+                total_unlabeled = inbox_unlabeled_first_page_count
+                page_token = unlabeled_data.get("nextPageToken")
+                while page_token:
+                    page = service.users().messages().list(
+                        userId="me", q=unlabeled_q, maxResults=500,
+                        pageToken=page_token,
+                    ).execute()
+                    total_unlabeled += len(page.get("messages", []))
+                    page_token = page.get("nextPageToken")
+                inbox_unlabeled_deep_count = total_unlabeled
 
             db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
@@ -708,7 +712,10 @@ def api_me(request: Request):
     # Reconciliation: if the inbox scan completed but the first page
     # finds unlabeled messages, retrigger via sent scan (which chains into
     # inbox scan) so known_senders is always complete before labeling.
-    if (inbox_unlabeled_first_page_count is not None
+    # Skip retrigger for allmail scope — that's an explicit user action,
+    # not something to auto-trigger on every dashboard load.
+    if (scan_scope != "allmail"
+            and inbox_unlabeled_first_page_count is not None
             and inbox_unlabeled_first_page_count > 0
             and inbox_scan_status == "complete"
             and history_id is not None):
