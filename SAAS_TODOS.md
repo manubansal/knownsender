@@ -542,6 +542,16 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
 - [x] Add switch account button
 - [x] Add Pub/Sub notifications for new sent messages (low-latency known senders updates)
 
+## User Documentation
+
+- [ ] Create user-facing documentation (help page or in-app guide) covering the following known behaviors:
+  - **Threads vs. messages**: Gmail labels are applied to individual messages, not threads. A thread can contain messages with different labels (e.g., one message labeled `known-sender` and another `unknown-sender`). A thread appears in inbox as long as any of its messages has the INBOX label.
+  - **Sent scan before inbox scan**: The system scans your Sent mail first to build a known senders list, then labels inbox messages. This ensures anyone you've emailed is recognized as a known sender.
+  - **Inbox-only labeling**: Labels are only applied to messages currently in your inbox. Archived or trashed messages are not labeled, even if they match a rule.
+  - **Noise reduced metric scope**: The "Noise reduced" percentage is based on all messages ever labeled (`allmail_labeled_unknown_count / allmail_labeled_total_count`), including messages that have since been archived or moved out of inbox. This gives a lifetime view, not an inbox-only view.
+  - **Archive action**: "Archive unknown-sender" removes the INBOX label from individual messages, not entire threads. If a thread contains both known and unknown messages, only the unknown ones are archived — the thread stays in inbox.
+  - **Relabeling after known senders change**: If you send an email to someone new, they become a known sender. However, their existing inbox messages that were already labeled `unknown-sender` are not automatically relabeled.
+
 ## Google's App Verification
 
 - [ ] Add a privacy policy and terms of service page (required before submitting for verification)
