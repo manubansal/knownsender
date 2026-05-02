@@ -156,21 +156,15 @@ def _unlabeled_query(label_configs, scope="inbox"):
     """Build a Gmail query for messages missing filter labels.
 
     scope='inbox': only inbox messages (default)
-    scope='allmail': all messages without the known-sender label
+    scope='allmail': all messages, no inbox restriction
     """
-    if scope == "allmail":
-        # All-mail scope: only apply known-sender label
-        exclude = []
-        for lc in label_configs:
-            exclude.append(f"-label:{lc['id']}")
-        return " ".join(exclude)
-    # Inbox scope: exclude both known and unknown labels
     exclude = []
     for lc in label_configs:
         exclude.append(f"-label:{lc['id']}")
         if unknown := lc.get("unknown_label"):
             exclude.append(f"-label:{unknown}")
-    return "in:inbox " + " ".join(exclude)
+    prefix = "in:inbox " if scope != "allmail" else ""
+    return prefix + " ".join(exclude)
 
 
 def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None, shutdown_event=None, scope="inbox"):
@@ -235,11 +229,7 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                 continue
             for lc in label_configs:
                 matched = any(matches_rule(headers, rule, known_senders) for rule in lc["rules"])
-                if scope == "allmail":
-                    # All-mail scope: only apply known-sender label, skip unknown
-                    apply_id = lc["id"] if matched else None
-                else:
-                    apply_id = lc["id"] if matched else lc.get("unknown_label")
+                apply_id = lc["id"] if matched else lc.get("unknown_label")
                 if apply_id:
                     gmail_label_id = label_id_cache.get(apply_id)
                     if gmail_label_id and gmail_label_id not in existing_labels:

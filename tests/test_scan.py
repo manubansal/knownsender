@@ -330,10 +330,11 @@ class TestUnlabeledQuery:
         assert "in:inbox" not in query
         assert "-label:known-sender" in query
 
-    def test_allmail_scope_excludes_only_known_sender(self):
+    def test_allmail_scope_excludes_both_labels(self):
         from claven.core.scan import _unlabeled_query
         query = _unlabeled_query(_LABEL_CONFIGS, scope="allmail")
-        assert "-label:unknown-sender" not in query
+        assert "-label:known-sender" in query
+        assert "-label:unknown-sender" in query
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +349,8 @@ class TestScanInboxScope:
             return messages if calls[0] == 1 else []
         return side_effect
 
-    def test_allmail_scope_applies_known_sender_only(self):
-        """In allmail scope, matched messages get known-sender but unmatched get nothing."""
+    def test_allmail_scope_applies_both_labels(self):
+        """In allmail scope, matched get known-sender, unmatched get unknown-sender."""
         from claven.core.scan import scan_inbox
         conn = MagicMock()
         messages = [{"id": "m1"}, {"id": "m2"}]
@@ -359,16 +360,15 @@ class TestScanInboxScope:
         }
         with patch("claven.core.scan.list_messages", side_effect=self._once_then_empty(messages)), \
              patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
-             patch("claven.core.scan.batch_apply_labels", return_value=1) as mock_apply, \
+             patch("claven.core.scan.batch_apply_labels", return_value=2) as mock_apply, \
              patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
              patch("claven.core.scan.db"), \
              patch("claven.core.scan.time.sleep"):
             scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE,
                        known_senders={"alice@x.com"}, scope="allmail")
-        # Only alice should be labeled (known-sender), stranger gets nothing
         pairs = mock_apply.call_args[0][1]
         assert ("m1", "Label_K") in pairs
-        assert not any(mid == "m2" for mid, _ in pairs)
+        assert ("m2", "Label_U") in pairs
 
     def test_inbox_scope_applies_both_labels(self):
         """In inbox scope, matched get known-sender, unmatched get unknown-sender."""
