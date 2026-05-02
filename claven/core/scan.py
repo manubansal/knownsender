@@ -152,8 +152,19 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
     return total_scanned
 
 
-def _unlabeled_query(label_configs):
-    """Build a Gmail query for inbox messages missing all filter labels."""
+def _unlabeled_query(label_configs, scope="inbox"):
+    """Build a Gmail query for messages missing filter labels.
+
+    scope='inbox': only inbox messages (default)
+    scope='allmail': all messages without the known-sender label
+    """
+    if scope == "allmail":
+        # All-mail scope: only apply known-sender label
+        exclude = []
+        for lc in label_configs:
+            exclude.append(f"-label:{lc['id']}")
+        return " ".join(exclude)
+    # Inbox scope: exclude both known and unknown labels
     exclude = []
     for lc in label_configs:
         exclude.append(f"-label:{lc['id']}")
@@ -162,19 +173,22 @@ def _unlabeled_query(label_configs):
     return "in:inbox " + " ".join(exclude)
 
 
-def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None, shutdown_event=None):
-    """Label unlabeled inbox messages using batch API calls.
+def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None, shutdown_event=None, scope="inbox"):
+    """Label unlabeled messages using batch API calls.
 
-    Queries Gmail for messages that don't have any filter label, processes
-    them in batches, and repeats until none remain. Progress is based
-    entirely on mailbox state — multiple workers naturally converge.
+    scope='inbox': label inbox messages as known-sender or unknown-sender
+    scope='allmail': label all messages as known-sender only (skip unknown)
+
+    Queries Gmail for messages that don't have the relevant label(s),
+    processes them in batches, and repeats until none remain. Progress
+    is based entirely on mailbox state — multiple workers naturally converge.
 
     shutdown_event: threading.Event that, when set, wakes sleeps immediately
     so the thread exits within one loop iteration instead of blocking.
 
     Returns the total number of messages labeled in this run.
     """
-    query = _unlabeled_query(label_configs)
+    query = _unlabeled_query(label_configs, scope=scope)
     logger.info("Inbox scan starting (query=%s, known_senders=%d)",
                 query, len(known_senders or []))
 
@@ -221,7 +235,11 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                 continue
             for lc in label_configs:
                 matched = any(matches_rule(headers, rule, known_senders) for rule in lc["rules"])
-                apply_id = lc["id"] if matched else lc.get("unknown_label")
+                if scope == "allmail":
+                    # All-mail scope: only apply known-sender label, skip unknown
+                    apply_id = lc["id"] if matched else None
+                else:
+                    apply_id = lc["id"] if matched else lc.get("unknown_label")
                 if apply_id:
                     gmail_label_id = label_id_cache.get(apply_id)
                     if gmail_label_id and gmail_label_id not in existing_labels:
