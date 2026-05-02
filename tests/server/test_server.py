@@ -1115,7 +1115,7 @@ class TestApiMe:
         mock_threading.Thread.assert_not_called()
 
     def test_api_me_retriggers_scan_when_unlabeled_remain(self):
-        """If scan is complete but unlabeled messages remain, retrigger inbox scan."""
+        """If scan is complete but unlabeled messages remain, retrigger via sent scan."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -1134,7 +1134,7 @@ class TestApiMe:
         assert response.json()["inbox_unlabeled_first_page_count"] == 3
         assert response.json()["inbox_scan_in_progress"] is True
         mock_threading.Thread.assert_called_once()
-        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_inbox_scan"
+        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
 
     def test_api_me_no_retrigger_when_scan_never_ran(self):
         """Don't retrigger if scan never ran (status=None) — user must click Start."""
@@ -1310,8 +1310,8 @@ class TestApiConnect:
                     client.post("/api/connect")
         mock_db.set_history_id.assert_called_once_with(ANY, "uid-1", 99999)
 
-    def test_triggers_scans_in_background(self):
-        """Connect triggers both sent scan and inbox scan threads."""
+    def test_triggers_sent_scan_in_background(self):
+        """Connect triggers sent scan only — it chains into inbox scan."""
         token = _make_session_token()
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with patch("claven.server.db") as mock_db, \
@@ -1324,9 +1324,8 @@ class TestApiConnect:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     client.post("/api/connect")
-        assert mock_threading.Thread.call_count == 2
-        targets = {c.kwargs["target"].__name__ for c in mock_threading.Thread.call_args_list}
-        assert targets == {"_run_sent_scan", "_run_inbox_scan"}
+        mock_threading.Thread.assert_called_once()
+        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
 
     def test_watch_failure_returns_500(self):
         token = _make_session_token()
