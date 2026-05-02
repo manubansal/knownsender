@@ -992,8 +992,6 @@ async def api_set_scan_scope(request: Request):
         raise HTTPException(status_code=400, detail="scope must be 'inbox' or 'allmail'")
     with db.get_connection() as conn:
         db.set_scan_scope(conn, session["user_id"], scope)
-    # Trigger a rescan with the new scope
-    _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
     return JSONResponse({"ok": True, "scan_scope": scope})
 
 

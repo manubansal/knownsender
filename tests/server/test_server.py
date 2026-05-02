@@ -1809,3 +1809,59 @@ class TestGracefulShutdownIntegration:
                 assert t.is_alive()
         for t in threads:
             assert not t.is_alive()
+
+
+# ── Scan scope settings tests ────────────────────────────────────────────────
+
+class TestApiScanScope:
+    def test_no_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.post("/api/settings/scan-scope",
+                    json={"scope": "allmail"})
+        assert response.status_code == 401
+
+    def test_invalid_scope_returns_400(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db:
+                _fake_db_ctx(mock_db)
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.post("/api/settings/scan-scope",
+                        json={"scope": "invalid"})
+        assert response.status_code == 400
+
+    def test_sets_scope_without_triggering_scan(self):
+        """Changing scope saves the setting but does not auto-trigger a scan."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.post("/api/settings/scan-scope",
+                        json={"scope": "allmail"})
+        assert response.status_code == 200
+        assert response.json()["scan_scope"] == "allmail"
+        mock_db.set_scan_scope.assert_called_once_with(ANY, "uid-1", "allmail")
+        mock_threading.Thread.assert_not_called()
+
+    def test_api_me_returns_scan_scope(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_scan_scope.return_value = "allmail"
+                mock_auth.get_service.return_value = self._make_gmail_service()
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        assert response.json()["scan_scope"] == "allmail"
+
+    def _make_gmail_service(self):
+        """Minimal gmail service mock for /api/me."""
+        return TestApiMe._make_gmail_service(TestApiMe())
