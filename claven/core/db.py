@@ -410,3 +410,55 @@ def bulk_add_known_senders(conn, user_id: str, email_addrs: list[str]) -> None:
             """,
             [(user_id, addr) for addr in email_addrs],
         )
+
+
+# ── Archive job state ────────────────────────────────────────────────────────
+
+def set_archive_job(conn, user_id: str, job_id: str, status: str,
+                    total: int | None = None, progress: int = 0) -> None:
+    """Create or update archive job state."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE scan_state SET
+                archive_job_id = %s,
+                archive_job_status = %s,
+                archive_job_total = %s,
+                archive_job_progress = %s,
+                updated_at = NOW()
+            WHERE user_id = %s""",
+            (job_id, status, total, progress, user_id),
+        )
+
+
+def get_archive_job(conn, user_id: str) -> dict | None:
+    """Return archive job state or None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT archive_job_id, archive_job_status,
+                      archive_job_total, archive_job_progress
+            FROM scan_state WHERE user_id = %s""",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        return {
+            "job_id": row[0],
+            "status": row[1],
+            "total": row[2],
+            "progress": row[3],
+        }
+
+
+def clear_archive_job(conn, user_id: str) -> None:
+    """Clear archive job state."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE scan_state SET
+                archive_job_id = NULL,
+                archive_job_status = NULL,
+                archive_job_total = NULL,
+                archive_job_progress = NULL
+            WHERE user_id = %s""",
+            (user_id,),
+        )

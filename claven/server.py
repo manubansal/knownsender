@@ -555,6 +555,8 @@ def api_me(request: Request):
         allmail_labeled_known_count = None
         allmail_labeled_unknown_count = None
         allmail_labeled_total_count = None
+        inbox_labeled_unknown_shallow_count = None
+        inbox_labeled_unknown_has_more = None
         inbox_unlabeled_first_page_count = None
         inbox_unlabeled_deep_count = None
         try:
@@ -621,6 +623,11 @@ def api_me(request: Request):
             unlabeled_q = _unlabeled_query(label_configs)
             batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
 
+            # Shallow count of inbox unknown-sender messages (for archive action)
+            for lc in label_configs:
+                if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
+                    batch2.add(service.users().messages().list(userId="me", labelIds=["INBOX", uid], maxResults=500), request_id="inbox_unknown_shallow")
+
             batch2.execute()
 
             # ── Extract batch 2 results ──────────────────────────────
@@ -633,6 +640,11 @@ def api_me(request: Request):
                 if unknown := lc.get("unknown_label"):
                     allmail_labeled_unknown_count += b2.get(f"unknown_{unknown}", {}).get("messagesTotal", 0)
             allmail_labeled_total_count = allmail_labeled_known_count + allmail_labeled_unknown_count
+
+            inbox_unknown_data = b2.get("inbox_unknown_shallow", {})
+            inbox_unknown_msgs = inbox_unknown_data.get("messages", [])
+            inbox_labeled_unknown_shallow_count = len(inbox_unknown_msgs)
+            inbox_labeled_unknown_has_more = "nextPageToken" in inbox_unknown_data
 
             newest_detail = b2.get("newest_detail")
             if newest_detail:
@@ -690,6 +702,7 @@ def api_me(request: Request):
             logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
 
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
+        archive_job = db.get_archive_job(conn, session["user_id"])
 
     # Reconciliation: if the inbox scan completed but the first page
     # finds unlabeled messages, retrigger. Row lock makes this idempotent.
@@ -718,6 +731,9 @@ def api_me(request: Request):
         "allmail_labeled_total_count": allmail_labeled_total_count,
         "inbox_unlabeled_first_page_count": inbox_unlabeled_first_page_count,
         "inbox_unlabeled_deep_count": inbox_unlabeled_deep_count,
+        "inbox_labeled_unknown_shallow_count": inbox_labeled_unknown_shallow_count,
+        "inbox_labeled_unknown_has_more": inbox_labeled_unknown_has_more,
+        "archive_job": archive_job,
         "unread_count": unread_count,
         "read_count": read_count,
         "inbox_count": inbox_count,
@@ -961,6 +977,142 @@ def api_logout(request: Request):
     response = JSONResponse({"ok": True})
     response.delete_cookie("session")
     return response
+
+
+# ── Archive unknown-sender action ─────────────────────────────────────────
+
+# Active archive jobs keyed by user_id — cancel by removing the entry.
+_archive_cancel_flags: dict[str, str] = {}  # user_id → job_id
+_archive_cancel_lock = threading.Lock()
+
+
+def _run_archive_unknown(user_id: str, job_id: str):
+    """Background task: archive all inbox messages with unknown-sender label."""
+    logger.info("Archive job %s started for %s", job_id, user_id)
+    try:
+        with db.get_connection() as conn:
+            if not db.try_lock_user_scan(conn, user_id):
+                logger.info("Archive job %s skipped — locked", job_id)
+                return
+
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            label_configs = load_config().get("labels", [])
+            all_labels = service.users().labels().list(userId="me").execute().get("labels", [])
+            label_id_by_name = {l["name"]: l["id"] for l in all_labels}
+
+            unknown_label_id = None
+            for lc in label_configs:
+                if unknown := lc.get("unknown_label"):
+                    unknown_label_id = label_id_by_name.get(unknown)
+            if not unknown_label_id:
+                logger.warning("Archive job %s: no unknown-sender label found", job_id)
+                db.set_archive_job(conn, user_id, job_id, "error")
+                return
+
+            # Deep count — paginate to get all message IDs
+            all_msg_ids = []
+            page_token = None
+            while True:
+                kwargs = {"userId": "me", "labelIds": ["INBOX", unknown_label_id], "maxResults": 500}
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                result = service.users().messages().list(**kwargs).execute()
+                all_msg_ids.extend(m["id"] for m in result.get("messages", []))
+                page_token = result.get("nextPageToken")
+                if not page_token:
+                    break
+
+            total = len(all_msg_ids)
+            db.set_archive_job(conn, user_id, job_id, "in_progress", total=total, progress=0)
+            from claven.core.scan import _notify_progress
+            _notify_progress(conn, user_id, "archive_started", job_id=job_id, total=total)
+            conn.commit()
+            logger.info("Archive job %s: %d messages to archive", job_id, total)
+
+            if total == 0:
+                db.set_archive_job(conn, user_id, job_id, "complete", total=0, progress=0)
+                _notify_progress(conn, user_id, "archive_complete", job_id=job_id, total=0, progress=0)
+                conn.commit()
+                return
+
+            # Archive in batches
+            from claven.core.gmail import batch_remove_labels, _BATCH_LIMIT
+            archived = 0
+            for i in range(0, total, _BATCH_LIMIT):
+                # Check cancel
+                with _archive_cancel_lock:
+                    cancelled = _archive_cancel_flags.get(user_id) == job_id
+                if cancelled or not _is_current_worker():
+                    db.set_archive_job(conn, user_id, job_id, "cancelled", total=total, progress=archived)
+                    _notify_progress(conn, user_id, "archive_cancelled", job_id=job_id, total=total, progress=archived)
+                    conn.commit()
+                    logger.info("Archive job %s cancelled at %d/%d", job_id, archived, total)
+                    with _archive_cancel_lock:
+                        _archive_cancel_flags.pop(user_id, None)
+                    return
+
+                batch_ids = all_msg_ids[i:i + _BATCH_LIMIT]
+                modified = batch_remove_labels(service, batch_ids, ["INBOX"])
+                archived += modified
+                db.set_archive_job(conn, user_id, job_id, "in_progress", total=total, progress=archived)
+                _notify_progress(conn, user_id, "archive_progress", job_id=job_id, total=total, progress=archived)
+                conn.commit()
+
+            db.set_archive_job(conn, user_id, job_id, "complete", total=total, progress=archived)
+            _notify_progress(conn, user_id, "archive_complete", job_id=job_id, total=total, progress=archived)
+            conn.commit()
+            logger.info("Archive job %s complete: %d/%d archived", job_id, archived, total)
+    except Exception as exc:
+        logger.exception("Archive job %s failed: %s", job_id, exc)
+        try:
+            with db.get_connection() as conn:
+                db.set_archive_job(conn, user_id, job_id, "error")
+        except Exception:
+            pass
+
+
+@app.post("/api/actions/archive-unknown")
+def api_archive_unknown(request: Request):
+    """Start archiving all inbox messages with unknown-sender label."""
+    session = _get_session(request)
+    user_id = session["user_id"]
+
+    # Check for existing running job
+    with db.get_connection() as conn:
+        existing = db.get_archive_job(conn, user_id)
+        if existing and existing["status"] == "in_progress":
+            return JSONResponse({"ok": False, "detail": "already running", "archive_job": existing})
+
+    job_id = secrets.token_urlsafe(16)
+    with db.get_connection() as conn:
+        db.set_archive_job(conn, user_id, job_id, "starting")
+
+    _spawn_scan_thread(_run_archive_unknown, (user_id, job_id))
+    return JSONResponse({"ok": True, "job_id": job_id})
+
+
+@app.post("/api/actions/archive-unknown/cancel")
+async def api_archive_unknown_cancel(request: Request):
+    """Cancel a running archive job."""
+    session = _get_session(request)
+    user_id = session["user_id"]
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    job_id = body.get("job_id")
+
+    with db.get_connection() as conn:
+        existing = db.get_archive_job(conn, user_id)
+        if not existing or existing["status"] != "in_progress":
+            return JSONResponse({"ok": False, "detail": "no running job"})
+        if job_id and existing["job_id"] != job_id:
+            return JSONResponse({"ok": False, "detail": "job_id mismatch"})
+
+    with _archive_cancel_lock:
+        _archive_cancel_flags[user_id] = existing["job_id"]
+    return JSONResponse({"ok": True})
 
 
 @app.post("/webhook/gmail")
