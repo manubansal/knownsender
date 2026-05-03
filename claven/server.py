@@ -830,10 +830,11 @@ async def api_events(request: Request):
                     try:
                         listen_conn.close()
                     except Exception:
-                        pass
+                        logger.debug("SSE: failed to close dead LISTEN connection")
                     try:
                         listen_conn = _open_listen_conn()
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning("SSE: failed to reconnect LISTEN connection: %s", exc)
                         break
 
                 # Heartbeat — keeps connection alive through load balancers
@@ -847,7 +848,7 @@ async def api_events(request: Request):
             try:
                 listen_conn.close()
             except Exception:
-                pass
+                logger.debug("SSE: failed to close LISTEN connection on cleanup")
 
     from starlette.responses import StreamingResponse
     return StreamingResponse(
@@ -1104,7 +1105,7 @@ def _run_archive_unknown(user_id: str, job_id: str):
             with db.get_connection() as conn:
                 db.set_archive_job(conn, user_id, job_id, "error")
         except Exception:
-            pass
+            logger.exception("Failed to set archive job error status for %s", user_id)
 
 
 @app.post("/api/actions/archive-unknown")
@@ -1136,7 +1137,7 @@ async def api_archive_unknown_cancel(request: Request):
     try:
         body = await request.json()
     except Exception:
-        pass
+        logger.debug("Cancel request had no JSON body")
     job_id = body.get("job_id")
 
     with db.get_connection() as conn:
