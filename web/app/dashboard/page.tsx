@@ -4,7 +4,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { AlertCircle, CheckCircle, Clock, Loader2, RefreshCw, Zap } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle, Clock, Loader2, RefreshCw, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -19,6 +19,7 @@ type MeResponse = {
   sent_total_count: number | null;
   sent_scan_status: string | null;
   inbox_scan_status: string | null;
+  scan_health: { code: string; label: string; severity: string } | null;
   last_fetched_at: string | null;
   last_labeled_at: string | null;
   newest_mail_at: string | null;
@@ -284,7 +285,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_status, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job, scan_scope } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_status, scan_health, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job, scan_scope } = state.data;
   const { labels } = state;
 
   const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
@@ -405,17 +406,31 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {label.unknown_label !== undefined && (() => {
-                      const scanDone = connected && sent_scan_status === "complete";
-                      const inboxInProgress = inbox_scan_status === "in_progress";
-                      const inboxError = inbox_scan_status === "error";
-                      const filterComplete = scanDone && inbox_scan_status === "complete";
-                      const FilterIcon = inboxInProgress ? Loader2 : inboxError ? AlertCircle : filterComplete ? CheckCircle : Clock;
-                      const iconColor = inboxError ? "text-destructive" : filterComplete ? "text-green-500" : "";
-                      const iconExtra = inboxInProgress ? "animate-spin" : "";
-                      const iconTestId = inboxInProgress ? "filter-labeling-icon" : inboxError ? "filter-error-icon" : filterComplete ? "filter-complete-icon" : "filter-waiting-icon";
+                      const severity = scan_health?.severity;
+                      const FilterIcon = severity === "info" ? Loader2
+                        : severity === "warning" ? AlertTriangle
+                        : severity === "error" ? AlertCircle
+                        : severity === "success" ? CheckCircle
+                        : Clock;
+                      const iconColor = severity === "error" ? "text-destructive"
+                        : severity === "warning" ? "text-yellow-500"
+                        : severity === "success" ? "text-green-500"
+                        : "";
+                      const iconExtra = severity === "info" ? "animate-spin" : "";
+                      const healthCode = scan_health?.code;
+                      const iconTestId = severity === "info" ? "filter-labeling-icon"
+                        : severity === "error" ? "filter-error-icon"
+                        : severity === "warning" ? "filter-warning-icon"
+                        : severity === "success" ? "filter-complete-icon"
+                        : "filter-waiting-icon";
                       return (
                         <div className="flex flex-col gap-2 mt-2">
-                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Inbox scan</span>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Inbox scan</span>
+                            {healthCode && severity !== "success" && severity !== "info" && (
+                              <span className={cn("text-[10px] font-mono", iconColor)} title={scan_health?.label}>{healthCode}</span>
+                            )}
+                          </div>
                           <div className="flex flex-col gap-0.5">
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
