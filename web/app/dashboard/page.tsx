@@ -113,15 +113,21 @@ export default function DashboardPage() {
         fetch(`${API_URL}/api/me`, { credentials: "include", signal: controller.signal }),
         fetch(`${API_URL}/api/config`, { signal: controller.signal }),
       ]);
-      if (!meRes.ok) {
+      if (meRes.status === 401) {
         setState({ status: "unauthenticated" });
+        return;
+      }
+      if (!meRes.ok) {
+        // Server error — keep stale data if available, otherwise show sign-in
+        if (state.status === "loading") setState({ status: "unauthenticated" });
         return;
       }
       const [data, config] = await Promise.all([meRes.json(), configRes.json()]);
       setState({ status: "loaded", data, labels: config.labels ?? [] });
       setLastUpdated(new Date());
     } catch {
-      setState({ status: "unauthenticated" });
+      // Network error or timeout — keep stale data if available
+      if (state.status === "loading") setState({ status: "unauthenticated" });
     } finally {
       clearTimeout(timeout);
     }
