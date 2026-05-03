@@ -309,6 +309,90 @@ class TestScanInbox:
 
 
 # ---------------------------------------------------------------------------
+# _unlabeled_query — scope-aware query builder
+# ---------------------------------------------------------------------------
+
+class TestUnlabeledQuery:
+    def test_inbox_scope_includes_in_inbox(self):
+        from claven.core.scan import _unlabeled_query
+        query = _unlabeled_query(_LABEL_CONFIGS, scope="inbox")
+        assert query.startswith("in:inbox ")
+        assert "-label:known-sender" in query
+        assert "-label:unknown-sender" in query
+
+    def test_inbox_scope_is_default(self):
+        from claven.core.scan import _unlabeled_query
+        assert _unlabeled_query(_LABEL_CONFIGS) == _unlabeled_query(_LABEL_CONFIGS, scope="inbox")
+
+    def test_allmail_scope_no_in_inbox(self):
+        from claven.core.scan import _unlabeled_query
+        query = _unlabeled_query(_LABEL_CONFIGS, scope="allmail")
+        assert "in:inbox" not in query
+        assert "-label:known-sender" in query
+
+    def test_allmail_scope_excludes_both_labels(self):
+        from claven.core.scan import _unlabeled_query
+        query = _unlabeled_query(_LABEL_CONFIGS, scope="allmail")
+        assert "-label:known-sender" in query
+        assert "-label:unknown-sender" in query
+
+
+# ---------------------------------------------------------------------------
+# scan_inbox — allmail scope labels known-sender only
+# ---------------------------------------------------------------------------
+
+class TestScanInboxScope:
+    def _once_then_empty(self, messages):
+        calls = [0]
+        def side_effect(*args, **kwargs):
+            calls[0] += 1
+            return messages if calls[0] == 1 else []
+        return side_effect
+
+    def test_allmail_scope_applies_both_labels(self):
+        """In allmail scope, matched get known-sender, unmatched get unknown-sender."""
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}, {"id": "m2"}]
+        headers_map = {
+            "m1": ({"from": "alice@x.com"}, [], None),  # known
+            "m2": ({"from": "stranger@x.com"}, [], None),  # unknown
+        }
+        with patch("claven.core.scan.list_messages", side_effect=self._once_then_empty(messages)), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=2) as mock_apply, \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE,
+                       known_senders={"alice@x.com"}, scope="allmail")
+        pairs = mock_apply.call_args[0][1]
+        assert ("m1", "Label_K") in pairs
+        assert ("m2", "Label_U") in pairs
+
+    def test_inbox_scope_applies_both_labels(self):
+        """In inbox scope, matched get known-sender, unmatched get unknown-sender."""
+        from claven.core.scan import scan_inbox
+        conn = MagicMock()
+        messages = [{"id": "m1"}, {"id": "m2"}]
+        headers_map = {
+            "m1": ({"from": "alice@x.com"}, [], None),
+            "m2": ({"from": "stranger@x.com"}, [], None),
+        }
+        with patch("claven.core.scan.list_messages", side_effect=self._once_then_empty(messages)), \
+             patch("claven.core.scan.batch_get_message_headers", return_value=headers_map), \
+             patch("claven.core.scan.batch_apply_labels", return_value=2) as mock_apply, \
+             patch("claven.core.scan.get_profile", return_value={"historyId": "99"}), \
+             patch("claven.core.scan.db"), \
+             patch("claven.core.scan.time.sleep"):
+            scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE,
+                       known_senders={"alice@x.com"}, scope="inbox")
+        pairs = mock_apply.call_args[0][1]
+        assert ("m1", "Label_K") in pairs
+        assert ("m2", "Label_U") in pairs
+
+
+# ---------------------------------------------------------------------------
 # _notify_progress — Postgres NOTIFY for SSE
 # ---------------------------------------------------------------------------
 
