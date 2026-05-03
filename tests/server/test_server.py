@@ -71,6 +71,9 @@ def _fake_db_ctx(mock_db, conn=None):
     mock_db.get_sent_scan_progress.return_value = {"messages_scanned": 0, "messages_total": None, "status": "complete", "updated_at": None}
     mock_db.is_inbox_scan_completed.return_value = False
     mock_db.get_inbox_scan_status.return_value = None
+    mock_db.get_last_fetched_at.return_value = None
+    mock_db.get_last_labeled_at.return_value = None
+    mock_db.get_scan_scope.return_value = "inbox"
     return mock_conn
 
 
@@ -1136,8 +1139,8 @@ class TestApiMe:
         mock_threading.Thread.assert_called_once()
         assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
 
-    def test_api_me_no_retrigger_when_scan_never_ran(self):
-        """Don't retrigger if scan never ran (status=None) — user must click Start."""
+    def test_api_me_retriggers_on_error_status(self):
+        """Error status with unlabeled messages retriggers the scan."""
         token = _make_session_token()
         with patch.dict("os.environ", _ENV):
             with patch("claven.server.db") as mock_db, \
@@ -1146,15 +1149,34 @@ class TestApiMe:
                 _fake_db_ctx(mock_db)
                 mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
                 mock_db.get_history_id.return_value = 12345
-                mock_db.get_inbox_scan_status.return_value = None
+                mock_db.get_inbox_scan_status.return_value = "error.db.connection_lost"
                 mock_auth.get_service.return_value = self._make_gmail_service(
                     messages_total=100, unlabeled_ids=[f"m{i}" for i in range(100)],
                 )
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["inbox_unlabeled_first_page_count"] == 100
-        assert response.json()["inbox_scan_status"] is None
+        assert response.json()["inbox_scan_status"] == "in_progress"
+        mock_threading.Thread.assert_called_once()
+        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
+
+    def test_api_me_no_retrigger_when_already_running(self):
+        """Don't retrigger if scan is already in progress."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.get_inbox_scan_status.return_value = "in_progress"
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, unlabeled_ids=[f"m{i}" for i in range(100)],
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
         mock_threading.Thread.assert_not_called()
 
     def test_api_me_no_retrigger_when_all_labeled(self):
