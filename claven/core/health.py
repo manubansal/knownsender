@@ -28,6 +28,7 @@ _REGISTRY = [
     ("I", "info.ok"),
     ("S", "success.complete"),
     ("W", "warning.scan.stalled"),
+    ("E", "error.scan.stalled"),
     ("E", "error.db.connection_lost"),
     ("E", "error.gmail.api"),
     ("E", "error.gmail.rate_limited"),
@@ -49,6 +50,7 @@ for _sev, _label in _REGISTRY:
 OK = HEALTH_CODES["info.ok"]
 COMPLETE = HEALTH_CODES["success.complete"]
 STALLED = HEALTH_CODES["warning.scan.stalled"]
+ERROR_STALLED = HEALTH_CODES["error.scan.stalled"]
 ERROR_DB = HEALTH_CODES["error.db.connection_lost"]
 ERROR_GMAIL = HEALTH_CODES["error.gmail.api"]
 ERROR_GMAIL_RATE_LIMITED = HEALTH_CODES["error.gmail.rate_limited"]

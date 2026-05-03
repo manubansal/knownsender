@@ -718,6 +718,15 @@ def api_me(request: Request):
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
         archive_job = db.get_archive_job(conn, session["user_id"])
 
+        # Auto-reset stalled scans: if in_progress but no activity for 2min,
+        # the scan thread is dead. Reset to error so the retrigger picks it up.
+        scan_health = compute_scan_health(inbox_scan_status, last_fetched_at)
+        if scan_health and scan_health["label"] == "warning.scan.stalled":
+            inbox_scan_status = "error.scan.stalled"
+            db.set_inbox_scan_status(conn, session["user_id"], inbox_scan_status)
+            logger.warning("Reset stalled scan for %s", session["user_id"],
+                           extra={"event": "scan_stalled_reset", "user_id": session["user_id"]})
+
     # Auto-retrigger: if there are unlabeled messages and no scan is
     # currently running, start one. Covers all non-complete states:
     # error (resume), complete + unlabeled (reconcile), None (never ran).
