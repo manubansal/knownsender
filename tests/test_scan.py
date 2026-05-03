@@ -2,7 +2,7 @@
 import threading
 import time as time_mod
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import ANY, MagicMock, patch, call
 
 
 def _make_service():
@@ -271,7 +271,7 @@ class TestScanInbox:
              patch("claven.core.scan.db") as mock_db, \
              patch("claven.core.scan.time.sleep"):
             scan_inbox(MagicMock(), conn, "u1", _LABEL_CONFIGS, _LABEL_ID_CACHE, known_senders=set())
-        mock_db.set_history_id.assert_called_once_with(conn, "u1", 42)
+        mock_db.set_history_id.assert_called_once_with(ANY, "u1", 42)
 
     def test_stops_when_should_continue_returns_false(self):
         from claven.core.scan import scan_inbox

@@ -32,6 +32,7 @@ from google_auth_oauthlib.flow import Flow
 import claven.core.auth as auth
 import claven.core.db as db
 from claven.core.gmail import build_label_id_cache, get_profile
+from claven.core.health import compute_scan_health
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
 from claven.core.scan import build_known_senders, scan_inbox
@@ -709,15 +710,13 @@ def api_me(request: Request):
         inbox_scan_status = db.get_inbox_scan_status(conn, session["user_id"])
         archive_job = db.get_archive_job(conn, session["user_id"])
 
-    # Reconciliation: if the inbox scan completed but the first page
-    # finds unlabeled messages, retrigger via sent scan (which chains into
-    # inbox scan) so known_senders is always complete before labeling.
-    # Skip retrigger for allmail scope — that's an explicit user action,
-    # not something to auto-trigger on every dashboard load.
-    if (scan_scope != "allmail"
-            and inbox_unlabeled_first_page_count is not None
+    # Auto-retrigger: if there are unlabeled messages and no scan is
+    # currently running, start one. Covers all non-complete states:
+    # error (resume), complete + unlabeled (reconcile), None (never ran).
+    # Same behavior for inbox and allmail scope.
+    if (inbox_unlabeled_first_page_count is not None
             and inbox_unlabeled_first_page_count > 0
-            and inbox_scan_status == "complete"
+            and inbox_scan_status != "in_progress"
             and history_id is not None):
         inbox_scan_status = "in_progress"
         _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
@@ -731,6 +730,7 @@ def api_me(request: Request):
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_status": inbox_scan_status,
+        "scan_health": compute_scan_health(inbox_scan_status, last_fetched_at),
         "last_fetched_at": last_fetched_at.isoformat() if last_fetched_at else None,
         "last_labeled_at": last_labeled_at.isoformat() if last_labeled_at else None,
         "newest_mail_at": newest_mail_at.isoformat() if newest_mail_at else None,
@@ -890,9 +890,22 @@ def _run_inbox_scan(user_id: str):
                         extra={"event": "inbox_scan_complete", "user_id": user_id})
     except Exception as exc:
         logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
+        # Classify the error for the health code system
+        error_label = "error.unknown"
+        exc_str = str(exc).lower()
+        if "connection" in exc_str or "closed" in exc_str or "ssl" in exc_str:
+            error_label = "error.db.connection_lost"
+        elif "429" in exc_str or "rate" in exc_str:
+            error_label = "error.gmail.rate_limited"
+        elif "401" in exc_str or "403" in exc_str or "token" in exc_str:
+            error_label = "error.gmail.auth_expired"
+        elif "quota" in exc_str:
+            error_label = "error.gmail.quota_exhausted"
+        elif "HttpError" in str(type(exc).__name__) or "gmail" in exc_str:
+            error_label = "error.gmail.api"
         try:
             with db.get_connection() as conn:
-                db.set_inbox_scan_status(conn, user_id, "error")
+                db.set_inbox_scan_status(conn, user_id, error_label)
         except Exception:
             logger.exception("Failed to set inbox scan error status for %s", user_id)
 

@@ -78,6 +78,9 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
     Progress is mailbox-based — multiple workers converge naturally since
     each queries remaining unlabeled messages and labels what it processes.
 
+    conn is used for the initial setup only. Each batch opens a fresh
+    connection to avoid Neon idle connection timeouts.
+
     shutdown_event: threading.Event that, when set, wakes sleeps immediately
     so the thread exits within one loop iteration instead of blocking.
 
@@ -94,10 +97,6 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
             logger.info("Sent scan stopped by caller after %d scanned", total_scanned)
             return total_scanned
 
-        # Fetch a pool of unscanned messages and randomly sample a batch.
-        # Random sampling desynchronizes concurrent workers (local + cloud)
-        # so they process different messages instead of always grabbing the
-        # same newest-first batch from Gmail.
         pool = list_messages(service, query=query, max_results=_BATCH_SIZE * _SAMPLE_POOL_MULTIPLIER)
         if not pool:
             logger.info("Sent scan complete: %d messages scanned, 0 remaining", total_scanned)
@@ -130,22 +129,24 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
                         recipients.append(addr.lower())
             scanned_ids.append(msg_id)
 
-        # Insert recipients and mark messages as scanned
-        if recipients:
-            db.bulk_add_known_senders(conn, user_id, recipients)
-        if scanned_ids:
-            try:
-                applied = batch_apply_labels(service, [(mid, scanned_label_id) for mid in scanned_ids])
-                total_scanned += applied
-                senders_count = db.count_known_senders(conn, user_id)
-                _notify_progress(conn, user_id, "sent_scan_progress",
-                                 scanned=total_scanned, senders=senders_count)
-                conn.commit()
-                logger.info("Sent scan batch %d: scanned %d messages (%d total, %d senders)",
-                            batch_num, applied, total_scanned, senders_count)
-            except Exception as exc:
-                logger.warning("Batch label apply failed: %s", exc)
-                _interruptible_sleep(5, shutdown_event)
+        # Insert recipients and mark messages as scanned.
+        # Fresh connection per batch to avoid Neon idle timeout.
+        if recipients or scanned_ids:
+            with db.get_connection() as batch_conn:
+                if recipients:
+                    db.bulk_add_known_senders(batch_conn, user_id, recipients)
+                if scanned_ids:
+                    try:
+                        applied = batch_apply_labels(service, [(mid, scanned_label_id) for mid in scanned_ids])
+                        total_scanned += applied
+                        senders_count = db.count_known_senders(batch_conn, user_id)
+                        _notify_progress(batch_conn, user_id, "sent_scan_progress",
+                                         scanned=total_scanned, senders=senders_count)
+                        logger.info("Sent scan batch %d: scanned %d messages (%d total, %d senders)",
+                                    batch_num, applied, total_scanned, senders_count)
+                    except Exception as exc:
+                        logger.warning("Batch label apply failed: %s", exc)
+                        _interruptible_sleep(5, shutdown_event)
 
         _interruptible_sleep(1, shutdown_event)
 
@@ -171,11 +172,14 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
     """Label unlabeled messages using batch API calls.
 
     scope='inbox': label inbox messages as known-sender or unknown-sender
-    scope='allmail': label all messages as known-sender only (skip unknown)
+    scope='allmail': label all messages (same labels, no inbox restriction)
 
     Queries Gmail for messages that don't have the relevant label(s),
     processes them in batches, and repeats until none remain. Progress
     is based entirely on mailbox state — multiple workers naturally converge.
+
+    conn is used for the initial setup only. Each batch opens a fresh
+    connection to avoid Neon idle connection timeouts.
 
     shutdown_event: threading.Event that, when set, wakes sleeps immediately
     so the thread exits within one loop iteration instead of blocking.
@@ -193,13 +197,12 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
             logger.info("Inbox scan stopped by caller after %d labeled", total_labeled)
             return total_labeled
 
-        # Fetch a pool of unlabeled messages and randomly sample a batch.
-        # Random sampling desynchronizes concurrent workers (local + cloud)
-        # so they process different messages instead of always grabbing the
-        # same newest-first batch from Gmail.
         unlabeled_pool = list_messages(service, query=query, max_results=_BATCH_SIZE * _SAMPLE_POOL_MULTIPLIER)
-        db.touch_last_fetched(conn, user_id)
-        conn.commit()
+
+        # Touch last_fetched with a fresh connection
+        with db.get_connection() as batch_conn:
+            db.touch_last_fetched(batch_conn, user_id)
+
         if not unlabeled_pool:
             logger.info("Inbox scan complete: %d messages labeled, 0 remaining", total_labeled)
             break
@@ -237,33 +240,32 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                         if internal_date_ms and (newest_date_ms is None or internal_date_ms > newest_date_ms):
                             newest_date_ms = internal_date_ms
 
-        # Batch apply labels
+        # Batch apply labels, then write progress with a fresh connection
         if to_label:
             try:
                 applied = batch_apply_labels(service, to_label)
                 total_labeled += applied
                 if applied > 0:
-                    db.touch_last_labeled(conn, user_id)
-                    if newest_date_ms:
-                        db.update_newest_labeled(conn, user_id, newest_date_ms)
-                    _notify_progress(conn, user_id, "inbox_scan_progress",
-                                     labeled=total_labeled)
-                    conn.commit()
+                    with db.get_connection() as batch_conn:
+                        db.touch_last_labeled(batch_conn, user_id)
+                        if newest_date_ms:
+                            db.update_newest_labeled(batch_conn, user_id, newest_date_ms)
+                        _notify_progress(batch_conn, user_id, "inbox_scan_progress",
+                                         labeled=total_labeled)
                 logger.info("Inbox scan batch %d: labeled %d messages (%d total)", batch_num, applied, total_labeled)
             except Exception as exc:
                 logger.warning("Batch label apply failed: %s", exc)
                 _interruptible_sleep(5, shutdown_event)
         else:
-            # All messages in this batch were already labeled (race with another worker)
             logger.info("Inbox scan batch %d: all %d already labeled by another worker", batch_num, len(batch_ids))
 
         _interruptible_sleep(1, shutdown_event)
 
     # Update history_id to current point
-    profile = get_profile(service)
-    db.set_history_id(conn, user_id, int(profile["historyId"]))
-    _notify_progress(conn, user_id, "inbox_scan_complete", labeled=total_labeled)
-    conn.commit()
+    with db.get_connection() as batch_conn:
+        profile = get_profile(service)
+        db.set_history_id(batch_conn, user_id, int(profile["historyId"]))
+        _notify_progress(batch_conn, user_id, "inbox_scan_complete", labeled=total_labeled)
     return total_labeled
 
 
