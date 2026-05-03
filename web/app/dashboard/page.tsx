@@ -4,7 +4,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { buttonVariants } from "@/components/ui/button";
 import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { CheckCircle, Clock, Loader2, RefreshCw, Zap } from "lucide-react";
+import { AlertCircle, CheckCircle, Clock, Loader2, RefreshCw, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -18,7 +18,7 @@ type MeResponse = {
   sent_scanned_count: number;
   sent_total_count: number | null;
   sent_scan_status: string | null;
-  inbox_scan_in_progress: boolean;
+  inbox_scan_status: string | null;
   last_fetched_at: string | null;
   last_labeled_at: string | null;
   newest_mail_at: string | null;
@@ -284,7 +284,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_in_progress, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job, scan_scope } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_status, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job, scan_scope } = state.data;
   const { labels } = state;
 
   const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
@@ -406,11 +406,13 @@ export default function DashboardPage() {
                     )}
                     {label.unknown_label !== undefined && (() => {
                       const scanDone = connected && sent_scan_status === "complete";
-                      const filterComplete = scanDone && !inbox_scan_in_progress;
-                      const FilterIcon = inbox_scan_in_progress ? Loader2 : filterComplete ? CheckCircle : Clock;
-                      const iconColor = filterComplete ? "text-green-500" : "";
-                      const iconExtra = inbox_scan_in_progress ? "animate-spin" : "";
-                      const iconTestId = inbox_scan_in_progress ? "filter-labeling-icon" : filterComplete ? "filter-complete-icon" : "filter-waiting-icon";
+                      const inboxInProgress = inbox_scan_status === "in_progress";
+                      const inboxError = inbox_scan_status === "error";
+                      const filterComplete = scanDone && inbox_scan_status === "complete";
+                      const FilterIcon = inboxInProgress ? Loader2 : inboxError ? AlertCircle : filterComplete ? CheckCircle : Clock;
+                      const iconColor = inboxError ? "text-destructive" : filterComplete ? "text-green-500" : "";
+                      const iconExtra = inboxInProgress ? "animate-spin" : "";
+                      const iconTestId = inboxInProgress ? "filter-labeling-icon" : inboxError ? "filter-error-icon" : filterComplete ? "filter-complete-icon" : "filter-waiting-icon";
                       return (
                         <div className="flex flex-col gap-2 mt-2">
                           <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Inbox scan</span>
