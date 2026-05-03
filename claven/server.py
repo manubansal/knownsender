@@ -543,6 +543,7 @@ def api_me(request: Request):
         # processed_count no longer used — progress derived from live Gmail label counts
         last_labeled_at = db.get_last_labeled_at(conn, session["user_id"])
         last_fetched_at = db.get_last_fetched_at(conn, session["user_id"])
+        scan_scope = db.get_scan_scope(conn, session["user_id"])
 
         unread_count = None
         read_count = None
@@ -620,7 +621,7 @@ def api_me(request: Request):
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
                     batch2.add(service.users().messages().list(userId="me", labelIds=[uid], maxResults=1), request_id=f"newest_unknown_{unknown}")
 
-            unlabeled_q = _unlabeled_query(label_configs)
+            unlabeled_q = _unlabeled_query(label_configs, scope=scan_scope)
             batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
 
             # Shallow count of inbox unknown-sender messages (for archive action)
@@ -685,17 +686,21 @@ def api_me(request: Request):
             first_page_messages = unlabeled_data.get("messages", [])
             inbox_unlabeled_first_page_count = len(first_page_messages)
 
-            # Paginate remaining unlabeled (sequential — can't batch pagination)
-            total_unlabeled = inbox_unlabeled_first_page_count
-            page_token = unlabeled_data.get("nextPageToken")
-            while page_token:
-                page = service.users().messages().list(
-                    userId="me", q=unlabeled_q, maxResults=500,
-                    pageToken=page_token,
-                ).execute()
-                total_unlabeled += len(page.get("messages", []))
-                page_token = page.get("nextPageToken")
-            inbox_unlabeled_deep_count = total_unlabeled
+            # Paginate remaining unlabeled (sequential — can't batch pagination).
+            # Skip deep count for allmail scope — too expensive (100k+ messages).
+            if scan_scope == "allmail":
+                inbox_unlabeled_deep_count = inbox_unlabeled_first_page_count
+            else:
+                total_unlabeled = inbox_unlabeled_first_page_count
+                page_token = unlabeled_data.get("nextPageToken")
+                while page_token:
+                    page = service.users().messages().list(
+                        userId="me", q=unlabeled_q, maxResults=500,
+                        pageToken=page_token,
+                    ).execute()
+                    total_unlabeled += len(page.get("messages", []))
+                    page_token = page.get("nextPageToken")
+                inbox_unlabeled_deep_count = total_unlabeled
 
             db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
@@ -707,7 +712,10 @@ def api_me(request: Request):
     # Reconciliation: if the inbox scan completed but the first page
     # finds unlabeled messages, retrigger via sent scan (which chains into
     # inbox scan) so known_senders is always complete before labeling.
-    if (inbox_unlabeled_first_page_count is not None
+    # Skip retrigger for allmail scope — that's an explicit user action,
+    # not something to auto-trigger on every dashboard load.
+    if (scan_scope != "allmail"
+            and inbox_unlabeled_first_page_count is not None
             and inbox_unlabeled_first_page_count > 0
             and inbox_scan_status == "complete"
             and history_id is not None):
@@ -735,6 +743,7 @@ def api_me(request: Request):
         "inbox_labeled_unknown_shallow_count": inbox_labeled_unknown_shallow_count,
         "inbox_labeled_unknown_has_more": inbox_labeled_unknown_has_more,
         "archive_job": archive_job,
+        "scan_scope": scan_scope,
         "unread_count": unread_count,
         "read_count": read_count,
         "inbox_count": inbox_count,
@@ -861,7 +870,7 @@ def _is_current_worker() -> bool:
 
 
 def _run_inbox_scan(user_id: str):
-    """Background task: scan all inbox messages and apply labels."""
+    """Background task: scan messages and apply labels. Respects scan_scope setting."""
     my_pid = os.getpid()
     logger.info("Inbox scan thread started for %s (worker pid=%d)", user_id, my_pid)
     label_configs = load_config().get("labels", [])
@@ -870,11 +879,12 @@ def _run_inbox_scan(user_id: str):
             if not db.try_lock_user_scan(conn, user_id):
                 logger.info("Inbox scan skipped for %s — locked by another instance", user_id)
                 return
+            scope = db.get_scan_scope(conn, user_id)
             db.set_inbox_scan_status(conn, user_id, "in_progress")
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
             label_id_cache = _label_id_cache_for_config(service, label_configs)
-            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders, should_continue=_is_current_worker, shutdown_event=_shutdown_event)
+            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders, should_continue=_is_current_worker, shutdown_event=_shutdown_event, scope=scope)
             db.set_inbox_scan_status(conn, user_id, "complete")
             logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
                         extra={"event": "inbox_scan_complete", "user_id": user_id})
@@ -977,6 +987,19 @@ def api_logout(request: Request):
     response = JSONResponse({"ok": True})
     response.delete_cookie("session")
     return response
+
+
+@app.post("/api/settings/scan-scope")
+async def api_set_scan_scope(request: Request):
+    """Set the scan scope to 'inbox' or 'allmail'."""
+    session = _get_session(request)
+    body = await request.json()
+    scope = body.get("scope")
+    if scope not in ("inbox", "allmail"):
+        raise HTTPException(status_code=400, detail="scope must be 'inbox' or 'allmail'")
+    with db.get_connection() as conn:
+        db.set_scan_scope(conn, session["user_id"], scope)
+    return JSONResponse({"ok": True, "scan_scope": scope})
 
 
 # ── Archive unknown-sender action ─────────────────────────────────────────

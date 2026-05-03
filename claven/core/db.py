@@ -412,6 +412,25 @@ def bulk_add_known_senders(conn, user_id: str, email_addrs: list[str]) -> None:
         )
 
 
+# ── Scan scope ────────────────────────────────────────────────────────────────
+
+def get_scan_scope(conn, user_id: str) -> str:
+    """Return scan_scope ('inbox' or 'allmail'). Defaults to 'inbox'."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT scan_scope FROM scan_state WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        return row[0] if row and row[0] else "inbox"
+
+
+def set_scan_scope(conn, user_id: str, scope: str) -> None:
+    """Set scan_scope to 'inbox' or 'allmail'."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET scan_scope = %s, updated_at = NOW() WHERE user_id = %s",
+            (scope, user_id),
+        )
+
+
 # ── Archive job state ────────────────────────────────────────────────────────
 
 def set_archive_job(conn, user_id: str, job_id: str, status: str,
