@@ -1132,7 +1132,7 @@ class TestApiMe:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["inbox_unlabeled_first_page_count"] == 3
-        assert response.json()["inbox_scan_in_progress"] is True
+        assert response.json()["inbox_scan_status"] == "in_progress"
         mock_threading.Thread.assert_called_once()
         assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
 
@@ -1154,7 +1154,7 @@ class TestApiMe:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["inbox_unlabeled_first_page_count"] == 100
-        assert response.json()["inbox_scan_in_progress"] is False
+        assert response.json()["inbox_scan_status"] is None
         mock_threading.Thread.assert_not_called()
 
     def test_api_me_no_retrigger_when_all_labeled(self):
@@ -1175,7 +1175,7 @@ class TestApiMe:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["inbox_unlabeled_first_page_count"] == 0
-        assert response.json()["inbox_scan_in_progress"] is False
+        assert response.json()["inbox_scan_status"] == "complete"
         mock_threading.Thread.assert_not_called()
 
 

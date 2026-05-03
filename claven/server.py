@@ -730,7 +730,7 @@ def api_me(request: Request):
         "sent_scanned_count": sent_scanned_count,
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
-        "inbox_scan_in_progress": inbox_scan_status == "in_progress",
+        "inbox_scan_status": inbox_scan_status,
         "last_fetched_at": last_fetched_at.isoformat() if last_fetched_at else None,
         "last_labeled_at": last_labeled_at.isoformat() if last_labeled_at else None,
         "newest_mail_at": newest_mail_at.isoformat() if newest_mail_at else None,
