@@ -435,6 +435,14 @@ def _needs_sent_scan(scan_progress: dict) -> bool:
     return True
 
 
+def _log_health(health: dict | None, user_id: str) -> dict | None:
+    """Log non-ok health codes and return the health dict unchanged."""
+    if health and health["severity"] in ("warning", "error"):
+        logger.warning("Scan health %s: %s (user=%s)", health["code"], health["label"], user_id,
+                        extra={"event": "scan_health", "user_id": user_id})
+    return health
+
+
 def _label_id_cache_for_config(service, label_configs: list[dict]) -> dict[str, str]:
     """Build a Gmail label ID cache for all labels referenced in the config."""
     names = []
@@ -730,7 +738,7 @@ def api_me(request: Request):
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
         "inbox_scan_status": inbox_scan_status,
-        "scan_health": compute_scan_health(inbox_scan_status, last_fetched_at),
+        "scan_health": _log_health(compute_scan_health(inbox_scan_status, last_fetched_at), session["user_id"]),
         "last_fetched_at": last_fetched_at.isoformat() if last_fetched_at else None,
         "last_labeled_at": last_labeled_at.isoformat() if last_labeled_at else None,
         "newest_mail_at": newest_mail_at.isoformat() if newest_mail_at else None,
