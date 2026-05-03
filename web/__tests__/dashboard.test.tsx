@@ -41,7 +41,7 @@ const DEFAULT_ME: object = {
   sent_scanned_count: 0,
   sent_total_count: null,
   sent_scan_status: null,
-  inbox_scan_in_progress: false,
+  inbox_scan_status: null,
   unread_count: null,
   read_count: null,
   inbox_count: null,
@@ -484,7 +484,7 @@ describe("Dashboard page", () => {
 
     it("shows complete icon on filter rows when connected and scan is complete", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_count: 50, allmail_labeled_total_count: 40, inbox_unlabeled_deep_count: 10 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_status: "complete", inbox_count: 50, allmail_labeled_total_count: 40, inbox_unlabeled_deep_count: 10 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
@@ -504,7 +504,7 @@ describe("Dashboard page", () => {
 
     it("shows spinner on filter rows during initial labeling", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: true, inbox_count: 50, allmail_labeled_total_count: 0, inbox_unlabeled_deep_count: 50 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_status: "in_progress", inbox_count: 50, allmail_labeled_total_count: 0, inbox_unlabeled_deep_count: 50 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
@@ -514,7 +514,7 @@ describe("Dashboard page", () => {
 
     it("shows complete icon after initial labeling completes", async () => {
       mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_in_progress: false, inbox_count: 50, allmail_labeled_total_count: 40, inbox_unlabeled_deep_count: 10 } },
+        { ok: true, body: { ...DEFAULT_ME, connected: true, sent_scan_status: "complete", inbox_scan_status: "complete", inbox_count: 50, allmail_labeled_total_count: 40, inbox_unlabeled_deep_count: 10 } },
         FILTER_CONFIG,
       );
       render(<DashboardPage />);
