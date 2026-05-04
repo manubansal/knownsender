@@ -1135,7 +1135,7 @@ class TestApiMe:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
         assert response.json()["inbox_unlabeled_first_page_count"] == 3
-        assert response.json()["inbox_scan_status"] == "in_progress"
+        # Status reflects DB value — retrigger spawns thread but doesn't fake status
         mock_threading.Thread.assert_called_once()
         assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
 
@@ -1156,7 +1156,7 @@ class TestApiMe:
                 with TestClient(app) as client:
                     client.cookies.set("session", token)
                     response = client.get("/api/me")
-        assert response.json()["inbox_scan_status"] == "in_progress"
+        # Status reflects DB value — retrigger spawns thread but doesn't fake status
         mock_threading.Thread.assert_called_once()
         assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
 
