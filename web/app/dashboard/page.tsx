@@ -15,6 +15,7 @@ type MeResponse = {
   connected: boolean;
   history_id: number | null;
   known_senders: number;
+  pending_relabel_count: number;
   sent_scanned_count: number;
   sent_total_count: number | null;
   sent_scan_status: string | null;
@@ -381,7 +382,7 @@ export default function DashboardPage() {
                     <span className="font-medium">{label.name}</span>
                     <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-2">
+                      <div className="flex flex-col gap-2 mt-4">
                         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Sent scan</span>
                         <div className="flex flex-col gap-0.5">
                           <div className="flex justify-between gap-4 items-center">
@@ -411,6 +412,22 @@ export default function DashboardPage() {
                         </div>
                       </div>
                     )}
+                    {isKnownSender && (
+                      <div className="flex flex-col gap-2 mt-4">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Relabel scan</span>
+                        <div className="flex justify-between gap-4 items-center">
+                          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            {state.data.pending_relabel_count > 0 ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <CheckCircle className="h-3 w-3 text-green-500" />
+                            )}
+                            Pending senders
+                          </span>
+                          <span className="text-xs tabular-nums text-muted-foreground">{state.data.pending_relabel_count}</span>
+                        </div>
+                      </div>
+                    )}
                     {label.unknown_label !== undefined && (() => {
                       const severity = scan_health?.severity;
                       const FilterIcon = severity === "info" ? Loader2
@@ -430,13 +447,13 @@ export default function DashboardPage() {
                         : severity === "success" ? "filter-complete-icon"
                         : "filter-waiting-icon";
                       return (
-                        <div className="flex flex-col gap-2 mt-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Inbox scan</span>
+                        <div className="flex flex-col gap-2 mt-4">
+                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                            Inbox scan
                             {healthCode && severity !== "success" && severity !== "info" && (
-                              <span className={cn("text-[10px] font-mono", iconColor)} title={scan_health?.label}>{healthCode}</span>
+                              <span className={cn("ml-2 text-[10px] font-mono", iconColor)} title={scan_health?.label}>{healthCode}</span>
                             )}
-                          </div>
+                          </span>
                           <div className="flex flex-col gap-0.5">
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">

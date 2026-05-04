@@ -548,6 +548,7 @@ def api_me(request: Request):
             raise HTTPException(status_code=404, detail="User not found")
         history_id = db.get_history_id(conn, session["user_id"])
         known_senders = db.count_known_senders(conn, session["user_id"])
+        pending_relabel_count = len(db.get_pending_relabel_senders(conn, session["user_id"]))
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         # processed_count no longer used — progress derived from live Gmail label counts
         last_labeled_at = db.get_last_labeled_at(conn, session["user_id"])
@@ -743,7 +744,6 @@ def api_me(request: Request):
             and inbox_unlabeled_first_page_count > 0
             and inbox_scan_status != "in_progress"
             and history_id is not None):
-        inbox_scan_status = "in_progress"
         _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
 
     return {
@@ -751,6 +751,7 @@ def api_me(request: Request):
         "connected": history_id is not None,
         "history_id": history_id,
         "known_senders": known_senders,
+        "pending_relabel_count": pending_relabel_count,
         "sent_scanned_count": sent_scanned_count,
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
