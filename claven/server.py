@@ -725,6 +725,7 @@ def api_me(request: Request):
         archive_job = db.get_archive_job(conn, session["user_id"])
         reset_sent_job = db.get_reset_sent_job(conn, session["user_id"])
         cancel_state = db.get_cancel_state(conn, session["user_id"])
+        recent_events = db.get_recent_events(conn, session["user_id"])
 
     # Priority 1: check cancel_state for pending/incomplete exclusive jobs
     if cancel_state == "cancel_scans":
@@ -785,6 +786,7 @@ def api_me(request: Request):
         "inbox_labeled_unknown_has_more": inbox_labeled_unknown_has_more,
         "archive_job": archive_job,
         "reset_sent_job": reset_sent_job,
+        "recent_events": recent_events,
         "scan_scope": scan_scope,
         "cancel_state": cancel_state,
         "unread_count": unread_count,
@@ -914,7 +916,10 @@ def _is_current_worker() -> bool:
 
 
 def _cancel_scans_and_wait(user_id: str, timeout: float = 10) -> None:
-    """Set cancel_scans state, wait for threads to exit, clear stale statuses."""
+    """Set cancel_scans state and wait for scan threads to exit.
+
+    Scans set their own status to 'cancelled' when they see the cancel flag.
+    """
     with db.get_connection() as conn:
         db.set_cancel_state(conn, user_id, "cancel_scans")
     import time as _time
@@ -925,10 +930,6 @@ def _cancel_scans_and_wait(user_id: str, timeout: float = 10) -> None:
         remaining = deadline - _time.monotonic()
         if remaining > 0:
             t.join(timeout=remaining)
-    # Clear stale scan statuses — scans exited via should_continue without updating
-    with db.get_connection() as conn:
-        db.set_sent_scan_status(conn, user_id, None)
-        db.set_inbox_scan_status(conn, user_id, None)
 
 
 def _should_continue_scan(user_id: str) -> bool:
@@ -962,14 +963,21 @@ def _run_inbox_scan(user_id: str):
                 return
             scope = db.get_scan_scope(conn, user_id)
             db.set_inbox_scan_status(conn, user_id, "in_progress")
+            db.log_event(conn, user_id, "scan", f"Label scan started (scope={scope})")
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
         # Scan: uses per-batch connections internally
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = scan_inbox(service, None, user_id, label_configs, label_id_cache, known_senders, should_continue=lambda: _should_continue_scan(user_id), shutdown_event=_shutdown_event, scope=scope)
-        # Completion: fresh connection
+        # Check why scan returned
+        if not _should_continue_scan(user_id):
+            with db.get_connection() as conn:
+                db.set_inbox_scan_status(conn, user_id, "cancelled")
+                db.log_event(conn, user_id, "scan", f"Label scan cancelled after {count} labeled")
+            return
         with db.get_connection() as conn:
             db.set_inbox_scan_status(conn, user_id, "complete")
+            db.log_event(conn, user_id, "scan", f"Label scan complete — {count} labeled")
         logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
                      extra={"event": "inbox_scan_complete", "user_id": user_id})
     except Exception as exc:
@@ -990,6 +998,7 @@ def _run_inbox_scan(user_id: str):
         try:
             with db.get_connection() as conn:
                 db.set_inbox_scan_status(conn, user_id, error_label)
+                db.log_event(conn, user_id, "error", f"Label scan failed — {error_label}")
         except Exception:
             logger.exception("Failed to set inbox scan error status for %s", user_id)
 
@@ -1003,10 +1012,18 @@ def _run_relabel_scan(user_id: str):
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = relabel_scan(service, user_id, label_configs, label_id_cache,
                              should_continue=lambda: _should_continue_scan(user_id), shutdown_event=_shutdown_event)
+        if count > 0:
+            with db.get_connection() as conn:
+                db.log_event(conn, user_id, "scan", f"Relabel scan complete — {count} relabeled")
         logger.info("Relabel scan for %s: relabeled %d message(s)", user_id, count,
                      extra={"event": "relabel_scan_complete", "user_id": user_id})
     except Exception as exc:
         logger.exception("Relabel scan failed for user %s: %s", user_id, exc)
+        try:
+            with db.get_connection() as conn:
+                db.log_event(conn, user_id, "error", f"Relabel scan failed — {exc}")
+        except Exception:
+            pass
 
 
 def _run_sent_scan(user_id: str):
@@ -1023,6 +1040,7 @@ def _run_sent_scan(user_id: str):
             return
         try:
             db.set_sent_scan_status(conn, user_id, "in_progress")
+            db.log_event(conn, user_id, "scan", "Sent scan started")
         except Exception:
             logger.exception("Failed to set sent scan status for %s", user_id)
             return
@@ -1035,17 +1053,26 @@ def _run_sent_scan(user_id: str):
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
         # Scan: uses per-batch connections internally
         build_known_senders(service, None, user_id, should_continue=lambda: _should_continue_scan(user_id), shutdown_event=_shutdown_event)
+        # Check why scan returned
+        if not _should_continue_scan(user_id):
+            with db.get_connection() as conn:
+                db.set_sent_scan_status(conn, user_id, "cancelled")
+                db.log_event(conn, user_id, "scan", "Sent scan cancelled")
+            return
         if not _is_current_worker():
             logger.info("Sent scan stopped — worker replaced (pid=%d, current=%d)", _worker_id, os.getpid())
+            with db.get_connection() as conn:
+                db.set_sent_scan_status(conn, user_id, "cancelled")
             return
-        # Completion: fresh connection
         with db.get_connection() as conn:
             db.set_sent_scan_status(conn, user_id, "complete")
+            db.log_event(conn, user_id, "scan", "Sent scan complete")
     except Exception as exc:
         logger.exception("Sent scan failed for user %s: %s", user_id, exc)
         try:
             with db.get_connection() as conn:
                 db.set_sent_scan_status(conn, user_id, "error")
+                db.log_event(conn, user_id, "error", f"Sent scan failed — {exc}")
         except Exception:
             logger.exception("Failed to set error status for %s", user_id)
         return

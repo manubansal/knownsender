@@ -56,7 +56,7 @@ def _sample_batch(candidates, batch_size):
 
 
 def _notify_progress(conn, user_id, event, **data):
-    """Send a Postgres NOTIFY with scan progress for SSE clients.
+    """Send a Postgres NOTIFY and write to event log.
 
     NOTIFY fires on the next commit, so call this before conn.commit().
     Payload is JSON with user_id, event type, and any extra data.
@@ -64,6 +64,40 @@ def _notify_progress(conn, user_id, event, **data):
     payload = json.dumps({"user_id": user_id, "event": event, **data})
     with conn.cursor() as cur:
         cur.execute("SELECT pg_notify('scan_progress', %s)", (payload,))
+
+    # Build a human-readable message for the event log
+    msg = _event_message(event, data)
+    if msg:
+        db.log_event(conn, user_id, event, msg)
+
+
+def _event_message(event: str, data: dict) -> str | None:
+    """Convert an event + data dict to a human-readable log message."""
+    match event:
+        case "sent_scan_progress":
+            return f"Sent scan — {data.get('scanned', 0)} scanned, {data.get('senders', 0)} senders"
+        case "inbox_scan_progress":
+            return f"Label scan — {data.get('labeled', 0)} labeled"
+        case "inbox_scan_complete":
+            return f"Label scan complete — {data.get('labeled', 0)} labeled"
+        case "archive_started":
+            return f"Archive started — {data.get('total', 0)} messages"
+        case "archive_progress":
+            return f"Archive — {data.get('progress', 0)}/{data.get('total', 0)}"
+        case "archive_complete":
+            return f"Archive complete — {data.get('progress', 0)}/{data.get('total', 0)}"
+        case "archive_cancelled":
+            return f"Archive cancelled at {data.get('progress', 0)}/{data.get('total', 0)}"
+        case "reset_sent_started":
+            return f"Reset sent scan started — {data.get('total', 0)} messages"
+        case "reset_sent_progress":
+            return f"Reset sent scan — {data.get('progress', 0)}/{data.get('total', 0)}"
+        case "reset_sent_complete":
+            return f"Reset sent scan complete — {data.get('progress', 0)}/{data.get('total', 0)}"
+        case "reset_sent_cancelled":
+            return f"Reset sent scan cancelled at {data.get('progress', 0)}/{data.get('total', 0)}"
+        case _:
+            return None  # Skip noisy per-batch events without a clear message
 
 
 SENT_SCANNED_LABEL = "claven/sent-scanned"

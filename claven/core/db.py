@@ -453,6 +453,41 @@ def set_scan_scope(conn, user_id: str, scope: str) -> None:
         )
 
 
+# ── Event log ─────────────────────────────────────────────────────────────────
+
+def log_event(conn, user_id: str, event_type: str, message: str) -> None:
+    """Write an event to the event log."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO event_log (user_id, event_type, message) VALUES (%s, %s, %s)",
+            (user_id, event_type, message),
+        )
+
+
+def get_recent_events(conn, user_id: str, limit: int = 30) -> list[dict]:
+    """Return the most recent events for a user, newest first."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT timestamp, event_type, message FROM event_log WHERE user_id = %s ORDER BY timestamp DESC LIMIT %s",
+            (user_id, limit),
+        )
+        return [
+            {"timestamp": row[0].isoformat(), "event_type": row[1], "message": row[2]}
+            for row in cur.fetchall()
+        ]
+
+
+def trim_event_log(conn, user_id: str, keep: int = 100) -> None:
+    """Delete old events beyond the keep limit."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """DELETE FROM event_log WHERE user_id = %s AND id NOT IN (
+                SELECT id FROM event_log WHERE user_id = %s ORDER BY timestamp DESC LIMIT %s
+            )""",
+            (user_id, user_id, keep),
+        )
+
+
 # ── Cancel state machine ──────────────────────────────────────────────────────
 # States: NULL (clean), "cancel_scans" (exclusive job pending), "cancel_job" (user cancelled)
 

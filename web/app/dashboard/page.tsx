@@ -37,6 +37,7 @@ type MeResponse = {
   inbox_labeled_unknown_shallow_count: number | null;
   inbox_labeled_unknown_has_more: boolean | null;
   archive_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
+  recent_events: { timestamp: string; event_type: string; message: string }[];
   reset_sent_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
   scan_scope: "inbox" | "allmail" | null;
   cancel_state: string | null;
@@ -425,7 +426,7 @@ export default function DashboardPage() {
                         <div className="flex flex-col gap-0.5">
                           <div className="flex justify-between gap-4 items-center">
                             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" && !state.data.cancel_state ? (
+                              {sent_scan_status === "in_progress" ? (
                                 <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
                               ) : sent_scan_status === "complete" ? (
                                 <CheckCircle className="h-3 w-3 text-green-500" data-testid="sent-scan-complete" />
@@ -438,7 +439,7 @@ export default function DashboardPage() {
                           </div>
                           <div className="flex justify-between gap-4 items-center">
                             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" && !state.data.cancel_state ? (
+                              {sent_scan_status === "in_progress" ? (
                                 <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
                               ) : sent_scan_status === "complete" ? (
                                 <CheckCircle className="h-3 w-3 text-green-500" data-testid="known-senders-complete" />
@@ -489,7 +490,7 @@ export default function DashboardPage() {
                         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Relabel scan</span>
                         <div className="flex justify-between gap-4 items-center">
                           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            {state.data.pending_relabel_count > 0 && !state.data.cancel_state ? (
+                            {state.data.pending_relabel_count > 0 ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
                               <CheckCircle className="h-3 w-3 text-green-500" />
@@ -501,7 +502,7 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {label.unknown_label !== undefined && (() => {
-                      const severity = state.data.cancel_state ? undefined : scan_health?.severity;
+                      const severity = scan_health?.severity;
                       const FilterIcon = severity === "info" ? Loader2
                         : severity === "warning" ? AlertTriangle
                         : severity === "error" ? AlertCircle
@@ -720,6 +721,25 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {state.data.recent_events?.length > 0 && (
+            <details className="w-full text-xs">
+              <summary className="text-muted-foreground cursor-pointer hover:text-foreground">
+                Activity log ({state.data.recent_events.length})
+              </summary>
+              <div className="mt-2 max-h-48 overflow-y-auto rounded border border-border bg-muted/30 px-3 py-2 space-y-1">
+                {state.data.recent_events.map((evt, i) => (
+                  <div key={i} className="flex gap-2">
+                    <span className="text-muted-foreground/50 tabular-nums shrink-0">
+                      {new Date(evt.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className={evt.event_type === "error" ? "text-destructive" : "text-muted-foreground"}>
+                      {evt.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
 
         </div>
       </main>
