@@ -453,6 +453,41 @@ def set_scan_scope(conn, user_id: str, scope: str) -> None:
         )
 
 
+# ── Cancel state machine ──────────────────────────────────────────────────────
+# States: NULL (clean), "cancel_scans" (exclusive job pending), "cancel_job" (user cancelled)
+
+def get_cancel_state(conn, user_id: str) -> str | None:
+    """Return cancel_state or None."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT cancel_state FROM scan_state WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def set_cancel_state(conn, user_id: str, state: str) -> None:
+    """Set cancel_state to 'cancel_scans' or 'cancel_job'."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET cancel_state = %s WHERE user_id = %s",
+            (state, user_id),
+        )
+
+
+def clear_cancel_state(conn, user_id: str) -> None:
+    """Clear cancel_state to NULL."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET cancel_state = NULL WHERE user_id = %s",
+            (user_id,),
+        )
+
+
+def clear_cancel_job_flags(conn) -> None:
+    """Clear cancel_job flags on startup. Preserve cancel_scans (job pending)."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE scan_state SET cancel_state = NULL WHERE cancel_state = 'cancel_job'")
+
+
 # ── Archive job state ────────────────────────────────────────────────────────
 
 def set_archive_job(conn, user_id: str, job_id: str, status: str,
@@ -503,3 +538,41 @@ def clear_archive_job(conn, user_id: str) -> None:
             WHERE user_id = %s""",
             (user_id,),
         )
+
+
+# ── Reset sent scan job state ────────────────────────────────────────────���───
+
+def set_reset_sent_job(conn, user_id: str, job_id: str, status: str,
+                       total: int | None = None, progress: int = 0) -> None:
+    """Create or update reset sent scan job state."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE scan_state SET
+                reset_sent_job_id = %s,
+                reset_sent_job_status = %s,
+                reset_sent_job_total = %s,
+                reset_sent_job_progress = %s,
+                updated_at = NOW()
+            WHERE user_id = %s""",
+            (job_id, status, total, progress, user_id),
+        )
+
+
+def get_reset_sent_job(conn, user_id: str) -> dict | None:
+    """Return reset sent scan job state or None."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT reset_sent_job_id, reset_sent_job_status,
+                      reset_sent_job_total, reset_sent_job_progress
+            FROM scan_state WHERE user_id = %s""",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        return {
+            "job_id": row[0],
+            "status": row[1],
+            "total": row[2],
+            "progress": row[3],
+        }

@@ -74,6 +74,9 @@ def _fake_db_ctx(mock_db, conn=None):
     mock_db.get_last_fetched_at.return_value = None
     mock_db.get_last_labeled_at.return_value = None
     mock_db.get_scan_scope.return_value = "inbox"
+    mock_db.get_cancel_state.return_value = None
+    mock_db.get_archive_job.return_value = None
+    mock_db.get_reset_sent_job.return_value = None
     return mock_conn
 
 
