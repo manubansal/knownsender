@@ -37,7 +37,9 @@ type MeResponse = {
   inbox_labeled_unknown_shallow_count: number | null;
   inbox_labeled_unknown_has_more: boolean | null;
   archive_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
+  reset_sent_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
   scan_scope: "inbox" | "allmail" | null;
+  cancel_state: string | null;
 };
 
 type LabelRule = {
@@ -58,6 +60,37 @@ type State =
   | { status: "loading" }
   | { status: "unauthenticated" }
   | { status: "loaded"; data: MeResponse; labels: LabelConfig[] };
+
+function ResetSentButton({ disabled, onConfirm }: { disabled: boolean; onConfirm: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        disabled={disabled}
+        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full mt-2")}
+      >
+        {disabled ? "Starting…" : "Reset sent scan"}
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Reset sent scan</AlertDialogTitle>
+          <AlertDialogDescription>
+            This will remove all sent-scanned labels and re-scan your entire Sent mail. Your known senders list will be rebuilt from scratch. This can take a while for large mailboxes.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <button
+            className={cn(buttonVariants())}
+            onClick={() => { setOpen(false); onConfirm(); }}
+          >
+            Reset sent scan
+          </button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled: boolean; onConfirm: () => void }) {
   const [open, setOpen] = useState(false);
@@ -253,15 +286,17 @@ export default function DashboardPage() {
       .catch(() => loadData());
   }
 
-  async function handleCancelArchive() {
-    if (state.status !== "loaded" || !state.data.archive_job) return;
+  const [resettingSent, setResettingSent] = useState(false);
+
+  function handleResetSentScan() {
+    setResettingSent(true);
+    fetch(`${API_URL}/api/actions/reset-sent-scan`, { method: "POST", credentials: "include" })
+      .finally(() => { setResettingSent(false); loadData(); });
+  }
+
+  async function handleCancelAction() {
     setCancelling(true);
-    fetch(`${API_URL}/api/actions/archive-unknown/cancel`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job_id: state.data.archive_job.job_id }),
-    });
+    fetch(`${API_URL}/api/actions/cancel`, { method: "POST", credentials: "include" });
   }
 
   if (state.status === "loading") {
@@ -390,7 +425,7 @@ export default function DashboardPage() {
                         <div className="flex flex-col gap-0.5">
                           <div className="flex justify-between gap-4 items-center">
                             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" ? (
+                              {sent_scan_status === "in_progress" && !state.data.cancel_state ? (
                                 <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
                               ) : sent_scan_status === "complete" ? (
                                 <CheckCircle className="h-3 w-3 text-green-500" data-testid="sent-scan-complete" />
@@ -403,7 +438,7 @@ export default function DashboardPage() {
                           </div>
                           <div className="flex justify-between gap-4 items-center">
                             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" ? (
+                              {sent_scan_status === "in_progress" && !state.data.cancel_state ? (
                                 <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
                               ) : sent_scan_status === "complete" ? (
                                 <CheckCircle className="h-3 w-3 text-green-500" data-testid="known-senders-complete" />
@@ -413,6 +448,40 @@ export default function DashboardPage() {
                             <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
                           </div>
                         </div>
+                        {state.data.reset_sent_job?.status === "in_progress" ? (
+                          <div className="flex flex-col gap-1 mt-2">
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Resetting sent scan
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {state.data.reset_sent_job.progress ?? 0} / {state.data.reset_sent_job.total ?? "…"}
+                              </span>
+                            </div>
+                            <button
+                              onClick={handleCancelAction}
+                              disabled={cancelling}
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
+                            >
+                              {cancelling ? "Cancelling…" : "Cancel"}
+                            </button>
+                          </div>
+                        ) : state.data.reset_sent_job?.status === "error" ? (
+                          <div className="flex flex-col gap-1 mt-2">
+                            <span className="text-xs text-destructive">Reset failed — click to retry</span>
+                            <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
+                          </div>
+                        ) : state.data.reset_sent_job?.status === "cancelled" ? (
+                          <div className="flex flex-col gap-1 mt-2">
+                            <span className="text-xs text-muted-foreground">
+                              Cancelled at {state.data.reset_sent_job.progress} / {state.data.reset_sent_job.total}
+                            </span>
+                            <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
+                          </div>
+                        ) : (
+                          <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
+                        )}
                       </div>
                     )}
                     {isKnownSender && (
@@ -420,7 +489,7 @@ export default function DashboardPage() {
                         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Relabel scan</span>
                         <div className="flex justify-between gap-4 items-center">
                           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            {state.data.pending_relabel_count > 0 ? (
+                            {state.data.pending_relabel_count > 0 && !state.data.cancel_state ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
                               <CheckCircle className="h-3 w-3 text-green-500" />
@@ -432,7 +501,7 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {label.unknown_label !== undefined && (() => {
-                      const severity = scan_health?.severity;
+                      const severity = state.data.cancel_state ? undefined : scan_health?.severity;
                       const FilterIcon = severity === "info" ? Loader2
                         : severity === "warning" ? AlertTriangle
                         : severity === "error" ? AlertCircle
@@ -599,7 +668,7 @@ export default function DashboardPage() {
                                 </span>
                               </div>
                               <button
-                                onClick={handleCancelArchive}
+                                onClick={handleCancelAction}
                                 disabled={cancelling}
                                 className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
                               >
