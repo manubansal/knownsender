@@ -727,6 +727,14 @@ def api_me(request: Request):
             logger.warning("Reset stalled scan for %s", session["user_id"],
                            extra={"event": "scan_stalled_reset", "user_id": session["user_id"]})
 
+    # Auto-clear errors when no work remains: scan died after labeling
+    # everything but before setting "complete". Nothing to retry.
+    if (inbox_scan_status and inbox_scan_status.startswith("error")
+            and (inbox_unlabeled_first_page_count is not None and inbox_unlabeled_first_page_count == 0)):
+        with db.get_connection() as conn:
+            db.set_inbox_scan_status(conn, session["user_id"], "complete")
+        inbox_scan_status = "complete"
+
     # Auto-retrigger: if there are unlabeled messages and no scan is
     # currently running, start one. Covers all non-complete states:
     # error (resume), complete + unlabeled (reconcile), None (never ran).
