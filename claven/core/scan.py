@@ -129,24 +129,27 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
                         recipients.append(addr.lower())
             scanned_ids.append(msg_id)
 
-        # Insert recipients and mark messages as scanned.
-        # Fresh connection per batch to avoid Neon idle timeout.
-        if recipients or scanned_ids:
+        # DB first, then Gmail label. If DB commit fails, no label is
+        # applied — next scan picks up the same messages. If label fails
+        # after commit, recipients are saved and messages get re-processed
+        # (idempotent via ON CONFLICT DO NOTHING).
+        if recipients:
             with db.get_connection() as batch_conn:
-                if recipients:
-                    db.bulk_add_known_senders(batch_conn, user_id, recipients)
-                if scanned_ids:
-                    try:
-                        applied = batch_apply_labels(service, [(mid, scanned_label_id) for mid in scanned_ids])
-                        total_scanned += applied
-                        senders_count = db.count_known_senders(batch_conn, user_id)
-                        _notify_progress(batch_conn, user_id, "sent_scan_progress",
-                                         scanned=total_scanned, senders=senders_count)
-                        logger.info("Sent scan batch %d: scanned %d messages (%d total, %d senders)",
-                                    batch_num, applied, total_scanned, senders_count)
-                    except Exception as exc:
-                        logger.warning("Batch label apply failed: %s", exc)
-                        _interruptible_sleep(5, shutdown_event)
+                db.bulk_add_known_senders(batch_conn, user_id, recipients)
+
+        if scanned_ids:
+            try:
+                applied = batch_apply_labels(service, [(mid, scanned_label_id) for mid in scanned_ids])
+                total_scanned += applied
+                with db.get_connection() as batch_conn:
+                    senders_count = db.count_known_senders(batch_conn, user_id)
+                    _notify_progress(batch_conn, user_id, "sent_scan_progress",
+                                     scanned=total_scanned, senders=senders_count)
+                logger.info("Sent scan batch %d: scanned %d messages (%d total, %d senders)",
+                            batch_num, applied, total_scanned, senders_count)
+            except Exception as exc:
+                logger.warning("Batch label apply failed: %s", exc)
+                _interruptible_sleep(5, shutdown_event)
 
         _interruptible_sleep(1, shutdown_event)
 
