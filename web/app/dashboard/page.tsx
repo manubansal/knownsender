@@ -307,6 +307,9 @@ export default function DashboardPage() {
   return (
     <>
       <header className="flex items-center justify-end gap-2 border-b px-6 py-3">
+        <a href="/how-it-works" className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
+          How it works
+        </a>
         {connected && (
           <button
             onClick={handleDisconnect}

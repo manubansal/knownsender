@@ -552,6 +552,31 @@ Manages per-user label rules stored in Neon. Not blocking on initial implementat
   - **Archive action**: "Archive unknown-sender" removes the INBOX label from individual messages, not entire threads. If a thread contains both known and unknown messages, only the unknown ones are archived — the thread stays in inbox.
   - **Relabeling after known senders change**: If you send an email to someone new, they become a known sender. However, their existing inbox messages that were already labeled `unknown-sender` are not automatically relabeled.
 
+## Website & Marketing
+
+### Decision: Option 1 — everything in the existing Next.js app
+
+Marketing pages, docs, and app all in one repo/deployment. Content in markdown, styling in shared components, same shadcn design system across everything.
+
+### Starting point
+
+Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)) as the base. Evaluate and potentially incorporate layout patterns from:
+- **Taxonomy** (shadcn's own SaaS starter)
+- **next-saas-stripe-starter** (landing, pricing, blog, dashboard, auth, billing)
+- **Dub.co** (open source production SaaS, Next.js + shadcn)
+
+### Tasks
+
+- [ ] Set up Next.js route groups: `(marketing)/` for public pages, `(app)/dashboard` for authenticated pages
+- [ ] Create shared marketing layout shell (header with logo + nav, footer)
+- [ ] Adapt a shadcn template for the landing page (hero, features, CTA)
+- [ ] Move `/how-it-works` into the marketing layout
+- [ ] Add pricing page (when ready)
+- [ ] Add privacy policy and terms of service pages
+- [ ] Ensure marketing layout header adapts: public shows nav + "Sign in", authenticated shows account actions
+- [ ] Keep content as markdown, rendering via `react-markdown` + `remark-gfm`
+- [ ] Same Tailwind tokens and shadcn components across marketing and app — one design system
+
 ## Google's App Verification
 
 - [ ] Add a privacy policy and terms of service page (required before submitting for verification)
