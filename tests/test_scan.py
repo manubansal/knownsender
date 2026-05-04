@@ -401,8 +401,8 @@ class TestNotifyProgress:
         import json
         from claven.core.scan import _notify_progress
         conn = MagicMock()
-        _notify_progress(conn, "uid-1", "inbox_scan_progress", labeled=50)
-        conn.cursor.return_value.__enter__.return_value.execute.assert_called_once()
+        with patch("claven.core.scan.db"):
+            _notify_progress(conn, "uid-1", "inbox_scan_progress", labeled=50)
         call_args = conn.cursor.return_value.__enter__.return_value.execute.call_args
         assert call_args[0][0] == "SELECT pg_notify('scan_progress', %s)"
         payload = json.loads(call_args[0][1][0])
@@ -414,7 +414,8 @@ class TestNotifyProgress:
         import json
         from claven.core.scan import _notify_progress
         conn = MagicMock()
-        _notify_progress(conn, "uid-1", "sent_scan_progress", scanned=100, senders=42)
+        with patch("claven.core.scan.db"):
+            _notify_progress(conn, "uid-1", "sent_scan_progress", scanned=100, senders=42)
         call_args = conn.cursor.return_value.__enter__.return_value.execute.call_args
         payload = json.loads(call_args[0][1][0])
         assert payload["scanned"] == 100
