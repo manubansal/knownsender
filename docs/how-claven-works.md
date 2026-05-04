@@ -6,15 +6,31 @@ This lets you focus on mail from people you know and deal with the rest on your 
 
 ## What happens when you connect
 
-1. **Sent scan** runs first. Claven reads your entire Sent mail to build a list of everyone you've ever emailed. This is your known senders list.
+Three scans run in sequence:
 
-2. **Inbox scan** runs after the sent scan completes. Claven goes through every message in your inbox and applies a label:
-   - `known-sender` if the sender is in your known senders list
-   - `unknown-sender` if the sender is not
+### 1. Sent scan
 
-3. **Live labeling** begins. New incoming mail is labeled automatically as it arrives via Gmail push notifications.
+Reads your entire Sent mail to build a list of everyone you've ever emailed. This is your known senders list. Each processed sent message is marked with a `claven/sent-scanned` label so it's not reprocessed on future runs.
 
-The sent scan always finishes before the inbox scan starts. This ensures no one gets mislabeled because the known senders list was incomplete.
+The sent scan always completes before any labeling begins. This ensures the known senders list is complete before any decisions are made.
+
+### 2. Relabel scan
+
+Checks for messages that were previously labeled `unknown-sender` but whose sender is now known (e.g., you replied to them since the last scan). For each newly discovered known sender, finds their `unknown-sender` messages and atomically swaps the label to `known-sender`.
+
+This fixes mislabeled messages without requiring a full rescan. Each sender is processed individually — if the scan is interrupted, remaining senders are picked up on the next run.
+
+### 3. Label scan (inbox scan)
+
+Goes through every unlabeled message and applies a label:
+- `known-sender` if the sender is in your known senders list
+- `unknown-sender` if the sender is not
+
+The scope can be set to **Inbox** (default — only labels inbox messages) or **All mail** (labels every message in your account). The label scan only processes messages that don't already have either label.
+
+### After the initial scans
+
+**Live labeling** begins. New incoming mail is labeled automatically as it arrives via Gmail push notifications. If any scan fails or is interrupted, it automatically resumes on the next dashboard load.
 
 ## Labels are on messages, not threads
 
@@ -26,9 +42,37 @@ Gmail labels are applied to **individual messages**, not threads. A single threa
 
 The thread now has both labels. This is expected behavior. Gmail shows a thread in your inbox as long as any message in it has the INBOX label.
 
+## Gmail labels managed by Claven
+
+Claven creates and manages three Gmail labels. These are visible in your Gmail sidebar and search.
+
+### Labels added
+
+| Label | Added by | When | To which messages |
+|---|---|---|---|
+| `claven/sent-scanned` | Sent scan | After extracting recipients from a sent message | Sent messages, after their recipients are saved to the database |
+| `known-sender` | Label scan | When an unlabeled message's sender is in the known senders list | Unlabeled inbox messages (or all mail, depending on scope) |
+| `unknown-sender` | Label scan | When an unlabeled message's sender is NOT in the known senders list | Unlabeled inbox messages (or all mail, depending on scope) |
+
+### Labels swapped
+
+| From | To | By | When |
+|---|---|---|---|
+| `unknown-sender` | `known-sender` | Relabel scan | When a sender was previously unknown but is now in the known senders list (e.g., you replied to them). Both labels are swapped atomically in a single API call — there is no moment where the message has neither label. |
+
+### Labels removed
+
+| Label | Removed by | When |
+|---|---|---|
+| `INBOX` | Archive action | When the user clicks "Archive unknown-sender" on the dashboard. Removes the INBOX label from individual messages with the `unknown-sender` label, moving them out of the inbox. The `unknown-sender` label itself stays on the message. |
+
+### Labels Claven never modifies
+
+Claven does not add, remove, or modify any Gmail labels other than the three listed above and the INBOX label (via the archive action only). It does not touch UNREAD, STARRED, IMPORTANT, SPAM, TRASH, or any user-created labels.
+
 ## Inbox-only labeling
 
-Claven only labels messages that are currently in your inbox. Archived, trashed, or spam messages are not labeled, even if they match a rule. If you archive a labeled message, the label stays on it but Claven won't re-label it if it returns to the inbox through a different path.
+By default, Claven only labels messages that are currently in your inbox (scope = Inbox). When set to All mail, it labels every message in your account. Archived, trashed, or spam messages are not labeled in Inbox scope. If you archive a labeled message, the label stays on it but Claven won't re-label it if it returns to the inbox through a different path.
 
 ## The known senders list
 

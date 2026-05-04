@@ -398,17 +398,39 @@ def add_known_sender(conn, user_id: str, email_addr: str) -> None:
 
 
 def bulk_add_known_senders(conn, user_id: str, email_addrs: list[str]) -> None:
+    """Insert known senders. New senders get relabel_status='pending'."""
     if not email_addrs:
         return
     with conn.cursor() as cur:
         psycopg2.extras.execute_values(
             cur,
             """
-            INSERT INTO sent_recipients (user_id, email)
+            INSERT INTO sent_recipients (user_id, email, relabel_status)
             VALUES %s
             ON CONFLICT DO NOTHING
             """,
-            [(user_id, addr) for addr in email_addrs],
+            [(user_id, addr, "pending") for addr in email_addrs],
+        )
+
+
+def get_pending_relabel_senders(conn, user_id: str) -> list[str]:
+    """Return email addresses that need relabeling."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT email FROM sent_recipients WHERE user_id = %s AND relabel_status = 'pending'",
+            (user_id,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def mark_relabel_done(conn, user_id: str, email_addrs: list[str]) -> None:
+    """Mark senders as relabeled."""
+    if not email_addrs:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE sent_recipients SET relabel_status = 'done' WHERE user_id = %s AND email = ANY(%s)",
+            (user_id, email_addrs),
         )
 
 
