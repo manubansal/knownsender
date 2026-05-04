@@ -444,3 +444,49 @@ def batch_remove_labels(service, message_ids, label_ids_to_remove, max_retries=3
     if pending:
         logger.warning("Batch remove gave up on %d messages after %d retries", len(pending), max_retries)
     return modified
+
+
+def batch_swap_labels(service, message_ids, remove_label_id, add_label_id, max_retries=3):
+    """Atomically swap labels on up to _BATCH_LIMIT messages.
+
+    Each message gets removeLabelIds + addLabelIds in a single modify call,
+    so there's no window where the message has neither label.
+
+    Returns the number of successful swaps.
+    """
+    import time as _time
+    swapped = 0
+    pending = list(message_ids[:_BATCH_LIMIT])
+
+    for attempt in range(max_retries + 1):
+        if not pending:
+            break
+        if attempt > 0:
+            delay = min(5 * (2 ** (attempt - 1)), 30)
+            logger.info("Retrying %d failed label swaps (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
+            _time.sleep(delay)
+
+        failed = []
+
+        def _callback(request_id, response, exception):
+            nonlocal swapped
+            if exception:
+                failed.append(request_id)
+                return
+            swapped += 1
+
+        batch = service.new_batch_http_request(callback=_callback)
+        for msg_id in pending:
+            batch.add(
+                service.users().messages().modify(
+                    userId="me", id=msg_id,
+                    body={"removeLabelIds": [remove_label_id], "addLabelIds": [add_label_id]},
+                ),
+                request_id=msg_id,
+            )
+        batch.execute()
+        pending = failed
+
+    if pending:
+        logger.warning("Batch swap gave up on %d messages after %d retries", len(pending), max_retries)
+    return swapped

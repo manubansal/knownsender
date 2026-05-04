@@ -35,7 +35,7 @@ from claven.core.gmail import build_label_id_cache, get_profile
 from claven.core.health import compute_scan_health
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
-from claven.core.scan import build_known_senders, scan_inbox
+from claven.core.scan import build_known_senders, relabel_scan, scan_inbox
 from claven.core.watch import start_watch, stop_watch
 
 class _CloudJsonFormatter(logging.Formatter):
@@ -940,8 +940,23 @@ def _run_inbox_scan(user_id: str):
             logger.exception("Failed to set inbox scan error status for %s", user_id)
 
 
+def _run_relabel_scan(user_id: str):
+    """Background task: relabel messages from newly discovered known senders."""
+    label_configs = load_config().get("labels", [])
+    try:
+        with db.get_connection() as conn:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+        label_id_cache = _label_id_cache_for_config(service, label_configs)
+        count = relabel_scan(service, user_id, label_configs, label_id_cache,
+                             should_continue=_is_current_worker, shutdown_event=_shutdown_event)
+        logger.info("Relabel scan for %s: relabeled %d message(s)", user_id, count,
+                     extra={"event": "relabel_scan_complete", "user_id": user_id})
+    except Exception as exc:
+        logger.exception("Relabel scan failed for user %s: %s", user_id, exc)
+
+
 def _run_sent_scan(user_id: str):
-    """Background task: build the known senders list, then scan inbox.
+    """Background task: build the known senders list, then relabel + label.
 
     Acquires a row-level lock on scan_state so only one instance processes
     a user at a time. After the sent scan completes, immediately labels
@@ -981,7 +996,8 @@ def _run_sent_scan(user_id: str):
             logger.exception("Failed to set error status for %s", user_id)
         return
 
-    # Sent scan done — scan the full inbox to apply labels to all existing messages
+    # Sent scan done → relabel mislabeled messages → label remaining
+    _run_relabel_scan(user_id)
     _run_inbox_scan(user_id)
 
 
