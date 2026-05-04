@@ -114,14 +114,37 @@ Only one exclusive job runs at a time.
    - cancel_job → should not occur (cleared on startup), but if it does, clear to NULL
    - NULL → proceed to next steps
 
-2. Check for stalled scans (in_progress + last_fetched_at > 2min)
+2. Clear stale exclusive jobs:
+   - If cancel_state is NULL but archive_job or reset_sent_job is
+     "starting" or "in_progress", the job crashed without cleaning up.
+   - Set job status to "error" and log the event.
+   - This prevents stale spinners on the dashboard.
+
+3. Check for stalled scans (in_progress + last_fetched_at > 2min)
    → Reset to error status
 
-3. Auto-clear error status when unlabeled count is 0
+4. Auto-clear error status when unlabeled count is 0
 
-4. Check for unlabeled messages + scan not running
+5. Check for unlabeled messages + scan not running
    → Retrigger scan chain (sent → relabel → label)
 ```
+
+## Stale state detection
+
+Every status that can get stuck at "in_progress" has a detection and recovery mechanism:
+
+| What | Detection | Recovery | Where |
+|---|---|---|---|
+| Inbox scan stuck in_progress | `last_fetched_at` > 2min old | Reset to `error.scan.stalled` | `/api/me` step 3 |
+| Inbox scan error + no unlabeled | Error status + unlabeled count = 0 | Clear to `complete` | `/api/me` step 4 |
+| Archive job stuck in_progress | `cancel_state` is NULL but job is in_progress | Set to `error` | `/api/me` step 2 |
+| Reset sent job stuck in_progress | `cancel_state` is NULL but job is in_progress | Set to `error` | `/api/me` step 2 |
+| Sent scan stuck in_progress | Scan exits via `should_continue` | Scan sets own status to `cancelled` | `_run_sent_scan` |
+| `cancel_job` after crash | `cancel_state = cancel_job` on boot | Clear to NULL | Lifespan startup |
+
+The principle: if `cancel_state` is NULL, no exclusive job should be running. Any job status claiming "in_progress" in that state is stale and gets cleared to "error".
+
+Scan loops always set their own exit status (`cancelled`, `complete`, or `error`) — they never leave "in_progress" behind. This was a prior bug that caused phantom spinners.
 
 Step 1 blocks step 4 — scan loops never start while cancel_state is non-NULL.
 
