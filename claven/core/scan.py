@@ -7,6 +7,7 @@ from claven.core.gmail import (
     batch_apply_labels,
     batch_get_message_headers,
     batch_get_message_metadata,
+    batch_swap_labels,
     ensure_label_exists,
     get_message,
     get_profile,
@@ -154,6 +155,75 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
         _interruptible_sleep(1, shutdown_event)
 
     return total_scanned
+
+
+def relabel_scan(service, user_id, label_configs, label_id_cache, should_continue=None, shutdown_event=None):
+    """Relabel messages from newly discovered known senders.
+
+    Finds senders with relabel_status='pending' in the DB, queries Gmail
+    for their messages labeled unknown-sender, and swaps the label to
+    known-sender atomically. Marks each sender as 'done' after processing.
+
+    Returns the total number of messages relabeled.
+    """
+    with db.get_connection() as conn:
+        pending_senders = db.get_pending_relabel_senders(conn, user_id)
+
+    if not pending_senders:
+        return 0
+
+    logger.info("Relabel scan starting: %d pending senders", len(pending_senders))
+
+    # Resolve label IDs
+    unknown_label_id = None
+    known_label_id = None
+    for lc in label_configs:
+        if not known_label_id:
+            known_label_id = label_id_cache.get(lc["id"])
+        if unknown := lc.get("unknown_label"):
+            if not unknown_label_id:
+                unknown_label_id = label_id_cache.get(unknown)
+
+    if not unknown_label_id or not known_label_id:
+        logger.warning("Relabel scan: missing label IDs (known=%s, unknown=%s)", known_label_id, unknown_label_id)
+        return 0
+
+    total_relabeled = 0
+    for sender in pending_senders:
+        if should_continue is not None and not should_continue():
+            logger.info("Relabel scan stopped by caller after %d relabeled", total_relabeled)
+            return total_relabeled
+
+        # Find this sender's messages with unknown-sender label
+        query = f"from:{sender} label:unknown-sender"
+        msg_ids = []
+        page_token = None
+        while True:
+            kwargs = {"userId": "me", "q": query, "maxResults": 500}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            result = service.users().messages().list(**kwargs).execute()
+            msg_ids.extend(m["id"] for m in result.get("messages", []))
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+
+        if msg_ids:
+            # Swap labels in batches
+            for i in range(0, len(msg_ids), _BATCH_SIZE):
+                batch = msg_ids[i:i + _BATCH_SIZE]
+                swapped = batch_swap_labels(service, batch, unknown_label_id, known_label_id)
+                total_relabeled += swapped
+                _interruptible_sleep(1, shutdown_event)
+
+            logger.info("Relabel scan: %s → %d messages relabeled", sender, len(msg_ids))
+
+        # Mark sender as done
+        with db.get_connection() as conn:
+            db.mark_relabel_done(conn, user_id, [sender])
+
+    logger.info("Relabel scan complete: %d messages relabeled across %d senders", total_relabeled, len(pending_senders))
+    return total_relabeled
 
 
 def _unlabeled_query(label_configs, scope="inbox"):

@@ -35,7 +35,7 @@ from claven.core.gmail import build_label_id_cache, get_profile
 from claven.core.health import compute_scan_health
 from claven.core.process import poll_new_messages
 from claven.core.rules import load_config
-from claven.core.scan import build_known_senders, scan_inbox
+from claven.core.scan import build_known_senders, relabel_scan, scan_inbox
 from claven.core.watch import start_watch, stop_watch
 
 class _CloudJsonFormatter(logging.Formatter):
@@ -548,6 +548,7 @@ def api_me(request: Request):
             raise HTTPException(status_code=404, detail="User not found")
         history_id = db.get_history_id(conn, session["user_id"])
         known_senders = db.count_known_senders(conn, session["user_id"])
+        pending_relabel_count = len(db.get_pending_relabel_senders(conn, session["user_id"]))
         sent_scan_progress = db.get_sent_scan_progress(conn, session["user_id"])
         # processed_count no longer used — progress derived from live Gmail label counts
         last_labeled_at = db.get_last_labeled_at(conn, session["user_id"])
@@ -743,7 +744,6 @@ def api_me(request: Request):
             and inbox_unlabeled_first_page_count > 0
             and inbox_scan_status != "in_progress"
             and history_id is not None):
-        inbox_scan_status = "in_progress"
         _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
 
     return {
@@ -751,6 +751,7 @@ def api_me(request: Request):
         "connected": history_id is not None,
         "history_id": history_id,
         "known_senders": known_senders,
+        "pending_relabel_count": pending_relabel_count,
         "sent_scanned_count": sent_scanned_count,
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
@@ -940,8 +941,23 @@ def _run_inbox_scan(user_id: str):
             logger.exception("Failed to set inbox scan error status for %s", user_id)
 
 
+def _run_relabel_scan(user_id: str):
+    """Background task: relabel messages from newly discovered known senders."""
+    label_configs = load_config().get("labels", [])
+    try:
+        with db.get_connection() as conn:
+            service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+        label_id_cache = _label_id_cache_for_config(service, label_configs)
+        count = relabel_scan(service, user_id, label_configs, label_id_cache,
+                             should_continue=_is_current_worker, shutdown_event=_shutdown_event)
+        logger.info("Relabel scan for %s: relabeled %d message(s)", user_id, count,
+                     extra={"event": "relabel_scan_complete", "user_id": user_id})
+    except Exception as exc:
+        logger.exception("Relabel scan failed for user %s: %s", user_id, exc)
+
+
 def _run_sent_scan(user_id: str):
-    """Background task: build the known senders list, then scan inbox.
+    """Background task: build the known senders list, then relabel + label.
 
     Acquires a row-level lock on scan_state so only one instance processes
     a user at a time. After the sent scan completes, immediately labels
@@ -981,7 +997,8 @@ def _run_sent_scan(user_id: str):
             logger.exception("Failed to set error status for %s", user_id)
         return
 
-    # Sent scan done — scan the full inbox to apply labels to all existing messages
+    # Sent scan done → relabel mislabeled messages → label remaining
+    _run_relabel_scan(user_id)
     _run_inbox_scan(user_id)
 
 
