@@ -737,7 +737,17 @@ def api_me(request: Request):
         # Don't proceed to scan retrigger — exclusive job takes priority
 
     if cancel_state is None:
-        # No exclusive job active — normal scan logic
+        # No exclusive job active — clear stale job states
+        if archive_job and archive_job["status"] in ("starting", "in_progress"):
+            with db.get_connection() as conn:
+                db.set_archive_job(conn, session["user_id"], archive_job["job_id"], "error")
+                db.log_event(conn, session["user_id"], "error", "Archive job stale — cleared")
+            archive_job["status"] = "error"
+        if reset_sent_job and reset_sent_job["status"] in ("starting", "in_progress"):
+            with db.get_connection() as conn:
+                db.set_reset_sent_job(conn, session["user_id"], reset_sent_job["job_id"], "error")
+                db.log_event(conn, session["user_id"], "error", "Reset sent scan job stale — cleared")
+            reset_sent_job["status"] = "error"
 
         # Auto-reset stalled scans
         scan_health = compute_scan_health(inbox_scan_status, last_fetched_at)
