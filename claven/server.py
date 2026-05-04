@@ -893,6 +893,7 @@ def _run_inbox_scan(user_id: str):
     logger.info("Inbox scan thread started for %s (worker pid=%d)", user_id, my_pid)
     label_configs = load_config().get("labels", [])
     try:
+        # Setup: short-lived connection for lock + config
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
                 logger.info("Inbox scan skipped for %s — locked by another instance", user_id)
@@ -901,11 +902,14 @@ def _run_inbox_scan(user_id: str):
             db.set_inbox_scan_status(conn, user_id, "in_progress")
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
-            label_id_cache = _label_id_cache_for_config(service, label_configs)
-            count = scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders, should_continue=_is_current_worker, shutdown_event=_shutdown_event, scope=scope)
+        # Scan: uses per-batch connections internally
+        label_id_cache = _label_id_cache_for_config(service, label_configs)
+        count = scan_inbox(service, None, user_id, label_configs, label_id_cache, known_senders, should_continue=_is_current_worker, shutdown_event=_shutdown_event, scope=scope)
+        # Completion: fresh connection
+        with db.get_connection() as conn:
             db.set_inbox_scan_status(conn, user_id, "complete")
-            logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
-                        extra={"event": "inbox_scan_complete", "user_id": user_id})
+        logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
+                     extra={"event": "inbox_scan_complete", "user_id": user_id})
     except Exception as exc:
         logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
         # Classify the error for the health code system
@@ -946,15 +950,19 @@ def _run_sent_scan(user_id: str):
             logger.exception("Failed to set sent scan status for %s", user_id)
             return
     try:
+        # Setup: short-lived connection for lock + service
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
                 logger.info("Sent scan skipped for %s — locked by another instance", user_id)
                 return
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
-            build_known_senders(service, conn, user_id, should_continue=_is_current_worker, shutdown_event=_shutdown_event)
-            if not _is_current_worker():
-                logger.info("Sent scan stopped — worker replaced (pid=%d, current=%d)", _worker_id, os.getpid())
-                return
+        # Scan: uses per-batch connections internally
+        build_known_senders(service, None, user_id, should_continue=_is_current_worker, shutdown_event=_shutdown_event)
+        if not _is_current_worker():
+            logger.info("Sent scan stopped — worker replaced (pid=%d, current=%d)", _worker_id, os.getpid())
+            return
+        # Completion: fresh connection
+        with db.get_connection() as conn:
             db.set_sent_scan_status(conn, user_id, "complete")
     except Exception as exc:
         logger.exception("Sent scan failed for user %s: %s", user_id, exc)
