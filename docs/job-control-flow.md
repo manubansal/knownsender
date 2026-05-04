@@ -23,73 +23,113 @@ User-initiated actions that require no scan loops running:
 
 Exclusive jobs and scan loops cannot run concurrently for the same user. An exclusive job must cancel running scans before starting.
 
-## Cancellation
+## Cancel state machine
 
-### Cancel flag
+### State column
 
-`scan_state.cancel_requested_at TIMESTAMPTZ` — per-user, stored in the database.
+`scan_state.cancel_state TEXT` — per-user, stored in the database.
 
-- `NULL` — no cancel, scans run normally
-- Non-NULL — cancel requested, scan loops exit on their next batch boundary
+| State | Meaning |
+|---|---|
+| `NULL` | Clean slate — no cancel active |
+| `cancel_scans` | Exclusive job pending or running — scan loops must exit |
+| `cancel_job` | User cancelled the running exclusive job — everything must exit |
 
-### Who checks it
+### State transitions
 
-Every scan loop checks the cancel flag once per batch via `should_continue()`:
+```
+NULL ──────────→ cancel_scans        User clicks action button (archive, reset, etc.)
+cancel_scans ──→ NULL                Exclusive job completes normally (finally block)
+cancel_scans ──→ cancel_job          User clicks cancel on the running job
+cancel_job ────→ NULL                Job exits (finally block)
+cancel_job ────→ NULL                Lifespan startup after crash
+```
+
+### Who checks what
+
+| Caller | Exits on `cancel_scans` | Exits on `cancel_job` |
+|---|---|---|
+| Scan loops (sent, relabel, label) | Yes | Yes |
+| Exclusive jobs (archive, reset) | No — this state is for them | Yes |
 
 ```python
-def _should_continue(user_id):
-    if not _is_current_worker():       # global: shutdown or worker replaced
+def _should_continue_scan(user_id):
+    """For scan loops: exit on any non-NULL cancel state."""
+    if not _is_current_worker():
         return False
     with db.get_connection() as conn:
-        cancel = db.get_cancel_requested(conn, user_id)
-        return cancel is None           # NULL = keep running
+        state = db.get_cancel_state(conn, user_id)
+        return state is None
+
+def _should_continue_job(user_id):
+    """For exclusive jobs: exit only on cancel_job."""
+    if not _is_current_worker():
+        return False
+    with db.get_connection() as conn:
+        state = db.get_cancel_state(conn, user_id)
+        return state != "cancel_job"
 ```
 
-This covers all cancel reasons with one check — exclusive jobs, disconnect, pause.
+### Lifecycle: starting an exclusive job
 
-### Who sets it
+Same sequence whether triggered by user click or resumed after crash:
 
-| Action | Sets cancel | Clears cancel |
+1. **Set state to `cancel_scans`**: signals scan loops to exit
+2. **Wait**: poll active threads until scan loops exit (short timeout)
+3. **Spawn exclusive job**: job runs, checking `_should_continue_job` per batch
+4. **Job completes**: `finally` block sets state to `NULL`
+
+The state stays at `cancel_scans` for the entire duration of the job. This prevents `/api/me` from retriggering scan loops while the job is running.
+
+### Lifecycle: cancelling an exclusive job
+
+1. User clicks cancel → endpoint sets state to `cancel_job`
+2. Running exclusive job sees `cancel_job` on next batch check → exits
+3. Job's `finally` block sets state to `NULL`
+4. Scan loops can retrigger on next `/api/me`
+
+### Lifecycle: second action while first is running
+
+If a user clicks a second action button while an exclusive job is running:
+- The endpoint checks if any exclusive job has status `in_progress`
+- Returns `{"ok": false, "detail": "another action is running"}`
+- User must cancel the first action before starting the second
+
+Only one exclusive job runs at a time.
+
+## Lifespan startup behavior
+
+| Cancel state on boot | Action | Rationale |
 |---|---|---|
-| Archive unknown-sender | Before starting job | After job completes or is cancelled |
-| Reset sent scan | Before starting job | After job completes or is cancelled |
-| Pause labeling / Disconnect | Before clearing watch state | After watch state cleared |
-| Server restart (lifespan) | N/A | Clears all cancel flags on startup |
+| `NULL` | Nothing | Clean slate |
+| `cancel_scans` | **Keep** | An exclusive job was pending or running. `/api/me` will detect the incomplete job and resume it. Scans stay blocked. |
+| `cancel_job` | **Clear to `NULL`** | User wanted to cancel, process crashed before the job could exit. The job is dead — clear the flag so scans can resume. |
 
-### Cancel lifecycle
-
-Every exclusive job follows the same sequence, whether started by a user click or resumed after a crash:
-
-1. **Set cancel**: `UPDATE scan_state SET cancel_requested_at = NOW() WHERE user_id = %s`
-2. **Wait**: poll active threads or short timeout until scan loops exit
-3. **Run job**: the exclusive operation (archive, reset, etc.)
-4. **Clear cancel**: `UPDATE scan_state SET cancel_requested_at = NULL WHERE user_id = %s`
-
-This is the same code path for fresh starts and crash recovery — no special cases.
-
-## Startup priority order
-
-When `/api/me` runs (every dashboard load), it evaluates work in priority order:
+## `/api/me` priority order
 
 ```
-1. Lifespan startup already cleared stale cancel flags
-2. Check for incomplete exclusive jobs (archive, reset)
-   → If found: set cancel → wait for scans to stop → resume job
-   → Blocks all subsequent steps until complete
-3. Check for stalled scans (in_progress + last_fetched_at > 2min)
+1. Check cancel_state:
+   - cancel_scans → check for incomplete exclusive job → resume it
+     (blocks all subsequent steps)
+   - cancel_job → should not occur (cleared on startup), but if it does, clear to NULL
+   - NULL → proceed to next steps
+
+2. Check for stalled scans (in_progress + last_fetched_at > 2min)
    → Reset to error status
-4. Auto-clear error status when unlabeled count is 0
-5. Check for unlabeled messages + scan not running
+
+3. Auto-clear error status when unlabeled count is 0
+
+4. Check for unlabeled messages + scan not running
    → Retrigger scan chain (sent → relabel → label)
 ```
 
-Step 2 blocks step 5 — scan loops never start while an exclusive job is pending.
+Step 1 blocks step 4 — scan loops never start while cancel_state is non-NULL.
 
 ## Row locking
 
 `try_lock_user_scan()` uses `SELECT ... FOR UPDATE SKIP LOCKED` on `scan_state`. This prevents two processes from running the same user's scans concurrently. If the lock is taken, the second caller skips.
 
-The cancel flag is separate from the row lock — it's a cooperative signal. The lock prevents concurrent execution; the cancel flag requests graceful exit.
+The cancel state is separate from the row lock — it's a cooperative signal. The lock prevents concurrent execution; the cancel state requests graceful exit.
 
 ## Fault tolerance
 
@@ -99,12 +139,21 @@ The cancel flag is separate from the row lock — it's a cooperative signal. The
 - Labels applied to Gmail are permanent; DB progress may lag but catches up on retry
 
 ### Exclusive job crash
-- Job status stuck at `in_progress` in DB → detected on next `/api/me` → resumed
-- Cancel flag may be stale → cleared on server restart (lifespan)
-- Job itself is idempotent — restarting from scratch is safe
+- Job status stuck at `in_progress` in DB
+- `cancel_state` stays at `cancel_scans` → scan loops blocked
+- On restart: lifespan preserves `cancel_scans` state
+- `/api/me` detects incomplete job and resumes it
+- Job is idempotent — restarting from scratch is safe
+
+### Exclusive job crash after user cancelled
+- `cancel_state` is `cancel_job`
+- On restart: lifespan clears to `NULL`
+- Scans can retrigger normally
+- Incomplete job state stays in DB but is not resumed (user wanted it stopped)
 
 ### Server crash
-- Lifespan startup clears cancel flags and thread registry
+- Lifespan startup clears `cancel_job` flags, preserves `cancel_scans` flags
+- Thread registry cleared (in-memory)
 - `/api/me` priority order detects incomplete jobs and resumes them
 - No manual intervention required
 
@@ -113,6 +162,6 @@ The cancel flag is separate from the row lock — it's a cooperative signal. The
 | Scope | Mechanism | When |
 |---|---|---|
 | Global (all users) | `_shutdown_event` (in-memory threading.Event) | SIGTERM, SIGINT, lifespan shutdown |
-| Per-user | `cancel_requested_at` (DB column) | Exclusive jobs, disconnect, pause |
+| Per-user | `cancel_state` (DB column) | Exclusive jobs, disconnect, pause |
 
-Both are checked by `should_continue()`. Global takes precedence (checked first).
+Both are checked by the respective `should_continue` functions. Global takes precedence (checked first).

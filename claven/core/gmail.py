@@ -300,6 +300,21 @@ def apply_label(service, message_id, label_id):
     logger.debug("Applied label %s to message %s", label_id, message_id)
 
 
+def gmail_retry(fn, max_retries=3):
+    """Call fn() with retry on 429/5xx errors. Returns the result."""
+    import time as _time
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as exc:
+            if attempt < max_retries - 1 and ("429" in str(exc) or "5" == str(getattr(getattr(exc, 'resp', None), 'status', '0'))[0:1]):
+                delay = 5 * (attempt + 1)
+                logger.warning("Gmail API call failed (attempt %d, retry in %ds): %s", attempt + 1, delay, exc)
+                _time.sleep(delay)
+            else:
+                raise
+
+
 _BATCH_LIMIT = 50
 
 
