@@ -37,6 +37,7 @@ type MeResponse = {
   inbox_labeled_unknown_shallow_count: number | null;
   inbox_labeled_unknown_has_more: boolean | null;
   archive_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
+  recent_events: { timestamp: string; event_type: string; message: string }[];
   reset_sent_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
   scan_scope: "inbox" | "allmail" | null;
   cancel_state: string | null;
@@ -720,6 +721,25 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {state.data.recent_events?.length > 0 && (
+            <details className="w-full text-xs">
+              <summary className="text-muted-foreground cursor-pointer hover:text-foreground">
+                Activity log ({state.data.recent_events.length})
+              </summary>
+              <div className="mt-2 max-h-48 overflow-y-auto rounded border border-border bg-muted/30 px-3 py-2 space-y-1">
+                {state.data.recent_events.map((evt, i) => (
+                  <div key={i} className="flex gap-2">
+                    <span className="text-muted-foreground/50 tabular-nums shrink-0">
+                      {new Date(evt.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className={evt.event_type === "error" ? "text-destructive" : "text-muted-foreground"}>
+                      {evt.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
 
         </div>
       </main>
