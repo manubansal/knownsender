@@ -737,7 +737,17 @@ def api_me(request: Request):
         # Don't proceed to scan retrigger — exclusive job takes priority
 
     if cancel_state is None:
-        # No exclusive job active — normal scan logic
+        # No exclusive job active — clear stale job states
+        if archive_job and archive_job["status"] in ("starting", "in_progress"):
+            with db.get_connection() as conn:
+                db.set_archive_job(conn, session["user_id"], archive_job["job_id"], "error")
+                db.log_event(conn, session["user_id"], "error", "Archive job stale — cleared")
+            archive_job["status"] = "error"
+        if reset_sent_job and reset_sent_job["status"] in ("starting", "in_progress"):
+            with db.get_connection() as conn:
+                db.set_reset_sent_job(conn, session["user_id"], reset_sent_job["job_id"], "error")
+                db.log_event(conn, session["user_id"], "error", "Reset sent scan job stale — cleared")
+            reset_sent_job["status"] = "error"
 
         # Auto-reset stalled scans
         scan_health = compute_scan_health(inbox_scan_status, last_fetched_at)
@@ -915,6 +925,20 @@ def _is_current_worker() -> bool:
     return os.getpid() == _worker_id
 
 
+def _classify_error(exc: Exception) -> str:
+    """Classify an exception into a health error code label."""
+    exc_str = str(exc).lower()
+    if "connection" in exc_str or "closed" in exc_str or "ssl" in exc_str:
+        return "error.db.connection_lost"
+    elif "429" in exc_str or "rate" in exc_str or "quota" in exc_str:
+        return "error.gmail.rate_limited"
+    elif "401" in exc_str or "403" in exc_str or "token" in exc_str:
+        return "error.gmail.auth_expired"
+    elif "HttpError" in str(type(exc).__name__) or "gmail" in exc_str:
+        return "error.gmail.api"
+    return "error.unknown"
+
+
 def _cancel_scans_and_wait(user_id: str, timeout: float = 10) -> None:
     """Set cancel_scans state and wait for scan threads to exit.
 
@@ -981,24 +1005,14 @@ def _run_inbox_scan(user_id: str):
         logger.info("Inbox scan for %s: processed %d message(s)", user_id, count,
                      extra={"event": "inbox_scan_complete", "user_id": user_id})
     except Exception as exc:
-        logger.exception("Inbox scan failed for user %s: %s", user_id, exc)
-        # Classify the error for the health code system
-        error_label = "error.unknown"
-        exc_str = str(exc).lower()
-        if "connection" in exc_str or "closed" in exc_str or "ssl" in exc_str:
-            error_label = "error.db.connection_lost"
-        elif "429" in exc_str or "rate" in exc_str:
-            error_label = "error.gmail.rate_limited"
-        elif "401" in exc_str or "403" in exc_str or "token" in exc_str:
-            error_label = "error.gmail.auth_expired"
-        elif "quota" in exc_str:
-            error_label = "error.gmail.quota_exhausted"
-        elif "HttpError" in str(type(exc).__name__) or "gmail" in exc_str:
-            error_label = "error.gmail.api"
+        error_label = _classify_error(exc)
+        logger.exception("Inbox scan failed for user %s (%s): %s", user_id, error_label, exc)
         try:
+            from claven.core.health import HEALTH_CODES
+            code = HEALTH_CODES.get(error_label, {}).get("code", "E??????")
             with db.get_connection() as conn:
                 db.set_inbox_scan_status(conn, user_id, error_label)
-                db.log_event(conn, user_id, "error", f"Label scan failed — {error_label}")
+                db.log_event(conn, user_id, "error", f"Label scan failed — {code} {error_label}")
         except Exception:
             logger.exception("Failed to set inbox scan error status for %s", user_id)
 
@@ -1220,10 +1234,14 @@ def _run_archive_unknown(user_id: str, job_id: str):
             conn.commit()
             logger.info("Archive job %s complete: %d/%d archived", job_id, archived, total)
     except Exception as exc:
-        logger.exception("Archive job %s failed: %s", job_id, exc)
+        error_label = _classify_error(exc)
+        logger.exception("Archive job %s failed (%s): %s", job_id, error_label, exc)
         try:
+            from claven.core.health import HEALTH_CODES
+            code = HEALTH_CODES.get(error_label, {}).get("code", "E??????")
             with db.get_connection() as conn:
                 db.set_archive_job(conn, user_id, job_id, "error")
+                db.log_event(conn, user_id, "error", f"Archive failed — {code} {error_label}")
         except Exception:
             logger.exception("Failed to set archive job error status for %s", user_id)
     finally:
@@ -1307,10 +1325,14 @@ def _run_reset_sent_scan(user_id: str, job_id: str):
             _notify_progress(conn, user_id, "reset_sent_complete", job_id=job_id, total=total, progress=removed)
         logger.info("Reset sent scan job %s complete: %d/%d removed", job_id, removed, total)
     except Exception as exc:
-        logger.exception("Reset sent scan job %s failed: %s", job_id, exc)
+        error_label = _classify_error(exc)
+        logger.exception("Reset sent scan job %s failed (%s): %s", job_id, error_label, exc)
         try:
+            from claven.core.health import HEALTH_CODES
+            code = HEALTH_CODES.get(error_label, {}).get("code", "E??????")
             with db.get_connection() as conn:
                 db.set_reset_sent_job(conn, user_id, job_id, "error")
+                db.log_event(conn, user_id, "error", f"Reset sent scan failed — {code} {error_label}")
         except Exception:
             logger.exception("Failed to set reset sent scan job error status for %s", user_id)
     finally:
