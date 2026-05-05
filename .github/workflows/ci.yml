@@ -61,7 +61,7 @@ jobs:
           OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
-        run: pytest --tb=short
+        run: pytest --tb=short -m "not live"
 
       - uses: actions/setup-node@v4
         with:
