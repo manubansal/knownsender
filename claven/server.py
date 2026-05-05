@@ -1161,6 +1161,13 @@ async def api_set_scan_scope(request: Request):
 def _run_archive_unknown(user_id: str, job_id: str):
     """Background task: archive all inbox messages with unknown-sender label."""
     logger.info("Archive job %s started for %s", job_id, user_id)
+
+    # Wait for running scans to exit (cancel_scans was set by the endpoint)
+    with _threads_lock:
+        threads = [t for t in _active_threads if t is not threading.current_thread()]
+    for t in threads:
+        t.join(timeout=10)
+
     try:
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
@@ -1246,6 +1253,14 @@ def _run_archive_unknown(user_id: str, job_id: str):
 def _run_reset_sent_scan(user_id: str, job_id: str):
     """Background task: remove claven/sent-scanned label from all sent messages."""
     logger.info("Reset sent scan job %s started for %s", job_id, user_id)
+
+    # Wait for running scans to exit (cancel_scans was set by the endpoint)
+    import time as _time
+    with _threads_lock:
+        threads = [t for t in _active_threads if t is not threading.current_thread()]
+    for t in threads:
+        t.join(timeout=10)
+
     try:
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
@@ -1339,12 +1354,15 @@ def api_reset_sent_scan(request: Request):
         if existing and existing["status"] == "in_progress":
             return JSONResponse({"ok": False, "detail": "already running", "reset_sent_job": existing})
 
-    _cancel_scans_and_wait(user_id)
+    # Set cancel immediately (fast DB write) so dashboard sees it
+    with db.get_connection() as conn:
+        db.set_cancel_state(conn, user_id, "cancel_scans")
 
     job_id = secrets.token_urlsafe(16)
     with db.get_connection() as conn:
-        db.set_reset_sent_job(conn, user_id, job_id, "starting")
+        db.set_reset_sent_job(conn, user_id, job_id, "in_progress")
 
+    # Spawn thread — it waits for scans to exit, then does the work
     _spawn_scan_thread(_run_reset_sent_scan, (user_id, job_id))
     return JSONResponse({"ok": True, "job_id": job_id})
 
@@ -1361,8 +1379,9 @@ def api_archive_unknown(request: Request):
         if existing and existing["status"] == "in_progress":
             return JSONResponse({"ok": False, "detail": "already running", "archive_job": existing})
 
-    # Cancel running scans, wait for them to exit
-    _cancel_scans_and_wait(user_id)
+    # Set cancel immediately (fast DB write) so dashboard sees it
+    with db.get_connection() as conn:
+        db.set_cancel_state(conn, user_id, "cancel_scans")
 
     job_id = secrets.token_urlsafe(16)
     with db.get_connection() as conn:
