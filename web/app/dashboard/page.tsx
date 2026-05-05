@@ -424,30 +424,38 @@ export default function DashboardPage() {
                       <div className="flex flex-col gap-2 mt-4">
                         <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Sent scan</span>
                         <div className="flex flex-col gap-0.5">
-                          <div className="flex justify-between gap-4 items-center">
-                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" ? (
-                                <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
-                              ) : sent_scan_status === "complete" ? (
-                                <CheckCircle className="h-3 w-3 text-green-500" data-testid="sent-scan-complete" />
-                              ) : null}
-                              Messages scanned
-                            </span>
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                              {sent_scanned_count}{sent_total_count !== null ? ` / ${sent_total_count}` : ""}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-4 items-center">
-                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" ? (
-                                <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
-                              ) : sent_scan_status === "complete" ? (
-                                <CheckCircle className="h-3 w-3 text-green-500" data-testid="known-senders-complete" />
-                              ) : null}
-                              Known senders found
-                            </span>
-                            <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
-                          </div>
+                          {(() => {
+                            const SentIcon = sent_scan_status === "in_progress" ? Loader2
+                              : sent_scan_status === "complete" ? CheckCircle
+                              : sent_scan_status === "error" ? AlertCircle
+                              : sent_scan_status === "cancelled" ? AlertTriangle
+                              : Clock;
+                            const sentIconColor = sent_scan_status === "complete" ? "text-green-500"
+                              : sent_scan_status === "error" ? "text-destructive"
+                              : sent_scan_status === "cancelled" ? "text-yellow-500"
+                              : "";
+                            const sentIconExtra = sent_scan_status === "in_progress" ? "animate-spin" : "";
+                            return (
+                              <>
+                                <div className="flex justify-between gap-4 items-center">
+                                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    <SentIcon className={`h-3 w-3 ${sentIconColor} ${sentIconExtra}`} data-testid="sent-scan-icon" />
+                                    Messages scanned
+                                  </span>
+                                  <span className="text-xs tabular-nums text-muted-foreground">
+                                    {sent_scanned_count}{sent_total_count !== null ? ` / ${sent_total_count}` : ""}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between gap-4 items-center">
+                                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    <SentIcon className={`h-3 w-3 ${sentIconColor} ${sentIconExtra}`} data-testid="known-senders-icon" />
+                                    Known senders found
+                                  </span>
+                                  <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
+                                </div>
+                              </>
+                            );
+                          })()}
                         </div>
                         {state.data.reset_sent_job?.status === "in_progress" ? (
                           <div className="flex flex-col gap-1 mt-2">
