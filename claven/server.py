@@ -590,6 +590,7 @@ def api_me(request: Request):
         inbox_labeled_unknown_has_more = None
         inbox_unlabeled_first_page_count = None
         inbox_unlabeled_deep_count = None
+        scan_unlabeled_first_page_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
 
@@ -651,8 +652,13 @@ def api_me(request: Request):
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
                     batch2.add(service.users().messages().list(userId="me", labelIds=[uid], maxResults=1), request_id=f"newest_unknown_{unknown}")
 
-            unlabeled_q = _unlabeled_query(label_configs, scope=scan_scope)
-            batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
+            # Always query inbox unlabeled for display; also query scan-scope
+            # unlabeled for retrigger logic when scope differs.
+            inbox_unlabeled_q = _unlabeled_query(label_configs, scope="inbox")
+            batch2.add(service.users().messages().list(userId="me", q=inbox_unlabeled_q, maxResults=500), request_id="unlabeled")
+            if scan_scope == "allmail":
+                scan_unlabeled_q = _unlabeled_query(label_configs, scope="allmail")
+                batch2.add(service.users().messages().list(userId="me", q=scan_unlabeled_q, maxResults=500), request_id="scan_unlabeled")
 
             # Shallow count of inbox known/unknown-sender messages
             for lc in label_configs:
@@ -723,21 +729,24 @@ def api_me(request: Request):
             first_page_messages = unlabeled_data.get("messages", [])
             inbox_unlabeled_first_page_count = len(first_page_messages)
 
-            # Paginate remaining unlabeled (sequential — can't batch pagination).
-            # Skip deep count for allmail scope — too expensive (100k+ messages).
+            # Paginate remaining inbox unlabeled for deep count
+            total_unlabeled = inbox_unlabeled_first_page_count
+            page_token = unlabeled_data.get("nextPageToken")
+            while page_token:
+                page = service.users().messages().list(
+                    userId="me", q=inbox_unlabeled_q, maxResults=500,
+                    pageToken=page_token,
+                ).execute()
+                total_unlabeled += len(page.get("messages", []))
+                page_token = page.get("nextPageToken")
+            inbox_unlabeled_deep_count = total_unlabeled
+
+            # Scan-scope unlabeled for retrigger (same as inbox when scope=inbox)
             if scan_scope == "allmail":
-                inbox_unlabeled_deep_count = inbox_unlabeled_first_page_count
+                scan_unlabeled_data = b2.get("scan_unlabeled", {})
+                scan_unlabeled_first_page_count = len(scan_unlabeled_data.get("messages", []))
             else:
-                total_unlabeled = inbox_unlabeled_first_page_count
-                page_token = unlabeled_data.get("nextPageToken")
-                while page_token:
-                    page = service.users().messages().list(
-                        userId="me", q=unlabeled_q, maxResults=500,
-                        pageToken=page_token,
-                    ).execute()
-                    total_unlabeled += len(page.get("messages", []))
-                    page_token = page.get("nextPageToken")
-                inbox_unlabeled_deep_count = total_unlabeled
+                scan_unlabeled_first_page_count = inbox_unlabeled_first_page_count
 
             db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
@@ -805,19 +814,20 @@ def api_me(request: Request):
 
         # Auto-retrigger scan chain — but not if sent scan is actively running
         # (non-stale in_progress). It chains into inbox scan on completion.
+        # Uses scan_unlabeled (scope-aware) to decide if there's work to do.
         sent_running = (sent_scan_progress["status"] == "in_progress"
                         and not _needs_sent_scan(sent_scan_progress))
-        if (inbox_unlabeled_first_page_count is not None
-                and inbox_unlabeled_first_page_count > 0
+        if (scan_unlabeled_first_page_count is not None
+                and scan_unlabeled_first_page_count > 0
                 and inbox_scan_status != "in_progress"
                 and not sent_running
                 and history_id is not None):
-            logger.debug("/api/me: auto-retriggering scan chain (unlabeled=%d, inbox_status=%s, sent_status=%s)",
-                         inbox_unlabeled_first_page_count, inbox_scan_status, sent_scan_progress["status"])
+            logger.debug("/api/me: auto-retriggering scan chain (scan_unlabeled=%d, inbox_status=%s, sent_status=%s)",
+                         scan_unlabeled_first_page_count, inbox_scan_status, sent_scan_progress["status"])
             _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
         else:
-            logger.debug("/api/me: no retrigger (unlabeled=%s, inbox_status=%s, sent_running=%s, history=%s)",
-                         inbox_unlabeled_first_page_count, inbox_scan_status, sent_running, history_id)
+            logger.debug("/api/me: no retrigger (scan_unlabeled=%s, inbox_status=%s, sent_running=%s, history=%s)",
+                         scan_unlabeled_first_page_count, inbox_scan_status, sent_running, history_id)
 
     return {
         "email": user["email"],
@@ -1233,7 +1243,13 @@ async def api_set_scan_scope(request: Request):
     if scope not in ("inbox", "allmail"):
         raise HTTPException(status_code=400, detail="scope must be 'inbox' or 'allmail'")
     with db.get_connection() as conn:
+        old_scope = db.get_scan_scope(conn, session["user_id"])
         db.set_scan_scope(conn, session["user_id"], scope)
+        if old_scope != scope:
+            # Reset inbox scan status so retrigger can fire for the new scope
+            db.set_inbox_scan_status(conn, session["user_id"], None)
+            db.log_event(conn, session["user_id"], "setting", f"Scan scope changed to {scope}")
+            logger.debug("api_set_scan_scope: %s → %s, reset inbox_scan_status", old_scope, scope)
     return JSONResponse({"ok": True, "scan_scope": scope})
 
 

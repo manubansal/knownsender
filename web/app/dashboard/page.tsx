@@ -285,7 +285,7 @@ export default function DashboardPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scope }),
     })
-      .then((res) => { if (!res.ok) loadData(); })
+      .then((res) => { loadData(); })
       .catch(() => loadData());
   }
 
@@ -426,30 +426,6 @@ export default function DashboardPage() {
                       <div className="flex flex-col items-center gap-2 mt-3">
                         <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
                           <button
-                            onClick={() => handleScanScope("inbox")}
-                            className={cn(
-                              "flex-1 px-3 py-0.5 transition-colors text-center",
-                              (scan_scope ?? "inbox") === "inbox"
-                                ? "bg-muted font-medium text-foreground"
-                                : "hover:text-foreground"
-                            )}
-                          >
-                            Inbox
-                          </button>
-                          <button
-                            onClick={() => handleScanScope("allmail")}
-                            className={cn(
-                              "flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
-                              scan_scope === "allmail"
-                                ? "bg-muted font-medium text-foreground"
-                                : "hover:text-foreground"
-                            )}
-                          >
-                            All mail
-                          </button>
-                        </div>
-                        <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
-                          <button
                             onClick={() => { if (!connected) handleConnect(); }}
                             disabled={connecting || disconnecting}
                             className={cn(
@@ -560,10 +536,36 @@ export default function DashboardPage() {
                         : "filter-waiting-icon";
                       return (
                         <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
-                          <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                            <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                            Inbox scan
-                          </span>
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                              <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                              Inbox scan
+                            </span>
+                            <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
+                              <button
+                                onClick={() => handleScanScope("inbox")}
+                                className={cn(
+                                  "flex-1 px-3 py-0.5 transition-colors text-center",
+                                  (scan_scope ?? "inbox") === "inbox"
+                                    ? "bg-muted font-medium text-foreground"
+                                    : "hover:text-foreground"
+                                )}
+                              >
+                                Inbox
+                              </button>
+                              <button
+                                onClick={() => handleScanScope("allmail")}
+                                className={cn(
+                                  "flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
+                                  scan_scope === "allmail"
+                                    ? "bg-muted font-medium text-foreground"
+                                    : "hover:text-foreground"
+                                )}
+                              >
+                                All mail
+                              </button>
+                            </div>
+                          </div>
                           {healthCode && severity !== "success" && severity !== "info" && (
                             <span
                               className={cn("block text-[10px] font-mono cursor-pointer hover:underline", iconColor)}
