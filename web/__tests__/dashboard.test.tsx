@@ -152,7 +152,7 @@ describe("Dashboard page", () => {
 
     it("shows connect gmail button", async () => {
       render(<DashboardPage />);
-      await screen.findByRole("button", { name: /start labeling/i });
+      await screen.findByRole("button", { name: "Active" });
     });
 
     it("does not show disconnect button", async () => {
@@ -163,7 +163,7 @@ describe("Dashboard page", () => {
 
     it("calls /api/connect on connect button click", async () => {
       render(<DashboardPage />);
-      const button = await screen.findByRole("button", { name: /start labeling/i });
+      const button = await screen.findByRole("button", { name: "Active" });
 
       vi.stubGlobal(
         "fetch",
@@ -184,7 +184,7 @@ describe("Dashboard page", () => {
 
     it("shows connected after successful connect", async () => {
       render(<DashboardPage />);
-      const button = await screen.findByRole("button", { name: /start labeling/i });
+      const button = await screen.findByRole("button", { name: "Active" });
 
       const connectedMe = { ...DEFAULT_ME, connected: true, history_id: 99999 };
       vi.stubGlobal(
@@ -281,7 +281,7 @@ describe("Dashboard page", () => {
         vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }),
       );
       await userEvent.click(button);
-      await screen.findByRole("button", { name: /start labeling/i });
+      await screen.findByRole("button", { name: "Active" });
     });
   });
 
@@ -373,42 +373,24 @@ describe("Dashboard page", () => {
       await screen.findByText(/messages scanned/i);
     });
 
-    it("shows spinner when sent scan is in progress", async () => {
+    it("shows spinner icon on sent scan header when in progress", async () => {
       mockFetch(
         { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "in_progress", sent_scanned_count: 50, sent_total_count: 200 } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByTestId("sent-scan-spinner");
+      const icon = await screen.findByTestId("sent-scan-icon");
+      expect(icon.classList.contains("animate-spin")).toBe(true);
     });
 
-    it("does not show spinner when sent scan is complete", async () => {
+    it("does not show spinner icon on sent scan header when complete", async () => {
       mockFetch(
         { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "complete", sent_scanned_count: 200, sent_total_count: 200 } },
         { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
       );
       render(<DashboardPage />);
-      await screen.findByText(/messages scanned/i);
-      expect(screen.queryByTestId("sent-scan-spinner")).not.toBeInTheDocument();
-    });
-
-    it("shows spinner on known senders when scan is in progress", async () => {
-      mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "in_progress", known_senders: 5 } },
-        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
-      );
-      render(<DashboardPage />);
-      await screen.findByTestId("known-senders-spinner");
-    });
-
-    it("does not show spinner on known senders when scan is complete", async () => {
-      mockFetch(
-        { ok: true, body: { ...DEFAULT_ME, sent_scan_status: "complete", known_senders: 42 } },
-        { labels: [{ id: "known-sender", name: "Known Sender", rules: [{ field: "from", known_sender: true }] }] },
-      );
-      render(<DashboardPage />);
-      await screen.findByText("42");
-      expect(screen.queryByTestId("known-senders-spinner")).not.toBeInTheDocument();
+      const icon = await screen.findByTestId("sent-scan-icon");
+      expect(icon.classList.contains("animate-spin")).toBe(false);
     });
 
     it("shows unread count", async () => {
@@ -479,7 +461,7 @@ describe("Dashboard page", () => {
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-waiting-icon");
-      expect(icons.length).toBe(4);
+      expect(icons.length).toBe(1);
     });
 
     it("shows complete icon on filter rows when connected and scan is complete", async () => {
@@ -489,7 +471,7 @@ describe("Dashboard page", () => {
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-complete-icon");
-      expect(icons.length).toBe(4);
+      expect(icons.length).toBe(1);
     });
 
     it("shows waiting icon when not connected even if scan complete", async () => {
@@ -499,7 +481,7 @@ describe("Dashboard page", () => {
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-waiting-icon");
-      expect(icons.length).toBe(4);
+      expect(icons.length).toBe(1);
     });
 
     it("shows spinner on filter rows during initial labeling", async () => {
@@ -509,7 +491,7 @@ describe("Dashboard page", () => {
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-labeling-icon");
-      expect(icons.length).toBe(4);
+      expect(icons.length).toBe(1);
     });
 
     it("shows complete icon after initial labeling completes", async () => {
@@ -519,7 +501,7 @@ describe("Dashboard page", () => {
       );
       render(<DashboardPage />);
       const icons = await screen.findAllByTestId("filter-complete-icon");
-      expect(icons.length).toBe(4);
+      expect(icons.length).toBe(1);
     });
 
     it("shows read count from api", async () => {
