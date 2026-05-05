@@ -305,13 +305,17 @@ def gmail_retry(fn, max_retries=3):
     import time as _time
     for attempt in range(max_retries):
         try:
-            return fn()
+            result = fn()
+            if attempt > 0:
+                logger.debug("gmail_retry: succeeded on attempt %d", attempt + 1)
+            return result
         except Exception as exc:
             if attempt < max_retries - 1 and ("429" in str(exc) or "5" == str(getattr(getattr(exc, 'resp', None), 'status', '0'))[0:1]):
                 delay = 5 * (attempt + 1)
                 logger.warning("Gmail API call failed (attempt %d, retry in %ds): %s", attempt + 1, delay, exc)
                 _time.sleep(delay)
             else:
+                logger.debug("gmail_retry: giving up after attempt %d: %s", attempt + 1, exc)
                 raise
 
 
@@ -332,6 +336,7 @@ def _run_batch_with_retry(service, requests, callback, max_retries=3):
 
     for attempt in range(max_retries + 1):
         if not pending:
+            logger.debug("_run_batch_with_retry: no pending requests, done")
             break
         if attempt > 0:
             delay = min(5 * (2 ** (attempt - 1)), 30)
@@ -351,13 +356,18 @@ def _run_batch_with_retry(service, requests, callback, max_retries=3):
 
         try:
             batch.execute()
+            logger.debug("_run_batch_with_retry: attempt %d — %d succeeded, %d failed",
+                         attempt + 1, len(pending) - len(failed), len(failed))
         except Exception as exc:
             logger.warning("Batch execute failed (attempt %d): %s", attempt + 1, exc)
             failed = [rid for _, rid in pending]
 
         pending = [(req, rid) for req, rid in pending if rid in failed]
 
-    return [rid for _, rid in pending]
+    remaining = [rid for _, rid in pending]
+    if remaining:
+        logger.debug("_run_batch_with_retry: %d requests permanently failed", len(remaining))
+    return remaining
 
 
 def batch_get_message_metadata(service, message_ids, metadata_headers=None, max_retries=3):

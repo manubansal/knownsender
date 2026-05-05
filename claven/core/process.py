@@ -20,6 +20,7 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
     """
     headers, existing_labels = get_message_headers(service, message_id)
     if not headers:
+        logger.debug("process_message: no headers for %s, skipping", message_id)
         return False
 
     applied = False
@@ -40,6 +41,8 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
                     apply_id,
                 )
                 applied = True
+            else:
+                logger.debug("process_message: %s already has label %s or label not in cache", message_id, apply_id)
     return applied
 
 
@@ -55,6 +58,7 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
         if "404" in str(e):
             logger.warning("History ID expired, falling back to inbox scan")
             return None
+        logger.debug("poll_new_messages: list_history raised non-404: %s", e)
         raise
 
     message_ids = set()
@@ -64,6 +68,7 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
             if "INBOX" in msg.get("labelIds", []):
                 message_ids.add(msg["id"])
 
+    logger.debug("poll_new_messages: %d history records, %d new inbox messages", len(records), len(message_ids))
     if message_ids:
         logger.info("Processing %d new message(s)", len(message_ids))
         for message_id in message_ids:
