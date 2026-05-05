@@ -102,6 +102,7 @@ _shutdown_event = threading.Event()
 # so the process exits cleanly instead of leaving orphans.
 _active_threads: list[threading.Thread] = []
 _threads_lock = threading.Lock()
+_resumed_jobs: set[str] = set()  # Guards against duplicate job resumption
 
 
 def _shutdown_handler(signum, frame):
@@ -131,6 +132,7 @@ async def lifespan(app):
     _shutdown_event.clear()
     with _threads_lock:
         _active_threads.clear()
+    _resumed_jobs.clear()
     try:
         with db.get_connection() as conn:
             db.clear_cancel_job_flags(conn)
@@ -727,14 +729,17 @@ def api_me(request: Request):
         cancel_state = db.get_cancel_state(conn, session["user_id"])
         recent_events = db.get_recent_events(conn, session["user_id"])
 
-    # Priority 1: check cancel_state for pending/incomplete exclusive jobs
+    # Priority 1: if cancel_scans is set, an exclusive job owns the session.
+    # Resume it if not already running (crash recovery). Guard with a set
+    # to prevent /api/me from spawning duplicates on every call.
     if cancel_state == "cancel_scans":
-        # An exclusive job was pending or running. Check if it needs resuming.
-        if archive_job and archive_job["status"] in ("starting", "in_progress"):
-            _spawn_scan_thread(_run_archive_unknown, (session["user_id"], archive_job["job_id"]))
-        elif reset_sent_job and reset_sent_job["status"] in ("starting", "in_progress"):
-            _spawn_scan_thread(_run_reset_sent_scan, (session["user_id"], reset_sent_job["job_id"]))
-        # Don't proceed to scan retrigger — exclusive job takes priority
+        _resume_key = f"{session['user_id']}"
+        if _resume_key not in _resumed_jobs:
+            _resumed_jobs.add(_resume_key)
+            if archive_job and archive_job["status"] in ("starting", "in_progress"):
+                _spawn_scan_thread(_run_archive_unknown, (session["user_id"], archive_job["job_id"]))
+            elif reset_sent_job and reset_sent_job["status"] in ("starting", "in_progress"):
+                _spawn_scan_thread(_run_reset_sent_scan, (session["user_id"], reset_sent_job["job_id"]))
 
     if cancel_state is None:
         # No exclusive job active — clear stale job states
@@ -1161,6 +1166,13 @@ async def api_set_scan_scope(request: Request):
 def _run_archive_unknown(user_id: str, job_id: str):
     """Background task: archive all inbox messages with unknown-sender label."""
     logger.info("Archive job %s started for %s", job_id, user_id)
+
+    # Wait for running scans to exit (cancel_scans was set by the endpoint)
+    with _threads_lock:
+        threads = [t for t in _active_threads if t is not threading.current_thread()]
+    for t in threads:
+        t.join(timeout=10)
+
     try:
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
@@ -1239,6 +1251,7 @@ def _run_archive_unknown(user_id: str, job_id: str):
     finally:
         with db.get_connection() as conn:
             db.clear_cancel_state(conn, user_id)
+        _resumed_jobs.discard(user_id)
 
 
 # ── Reset sent scan action ────────────────────────────────────────────────
@@ -1246,6 +1259,14 @@ def _run_archive_unknown(user_id: str, job_id: str):
 def _run_reset_sent_scan(user_id: str, job_id: str):
     """Background task: remove claven/sent-scanned label from all sent messages."""
     logger.info("Reset sent scan job %s started for %s", job_id, user_id)
+
+    # Wait for running scans to exit (cancel_scans was set by the endpoint)
+    import time as _time
+    with _threads_lock:
+        threads = [t for t in _active_threads if t is not threading.current_thread()]
+    for t in threads:
+        t.join(timeout=10)
+
     try:
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
@@ -1326,6 +1347,7 @@ def _run_reset_sent_scan(user_id: str, job_id: str):
     finally:
         with db.get_connection() as conn:
             db.clear_cancel_state(conn, user_id)
+        _resumed_jobs.discard(user_id)
 
 
 @app.post("/api/actions/reset-sent-scan")
@@ -1339,12 +1361,15 @@ def api_reset_sent_scan(request: Request):
         if existing and existing["status"] == "in_progress":
             return JSONResponse({"ok": False, "detail": "already running", "reset_sent_job": existing})
 
-    _cancel_scans_and_wait(user_id)
+    # Set cancel immediately (fast DB write) so dashboard sees it
+    with db.get_connection() as conn:
+        db.set_cancel_state(conn, user_id, "cancel_scans")
 
     job_id = secrets.token_urlsafe(16)
     with db.get_connection() as conn:
-        db.set_reset_sent_job(conn, user_id, job_id, "starting")
+        db.set_reset_sent_job(conn, user_id, job_id, "in_progress")
 
+    # Spawn thread — it waits for scans to exit, then does the work
     _spawn_scan_thread(_run_reset_sent_scan, (user_id, job_id))
     return JSONResponse({"ok": True, "job_id": job_id})
 
@@ -1361,8 +1386,9 @@ def api_archive_unknown(request: Request):
         if existing and existing["status"] == "in_progress":
             return JSONResponse({"ok": False, "detail": "already running", "archive_job": existing})
 
-    # Cancel running scans, wait for them to exit
-    _cancel_scans_and_wait(user_id)
+    # Set cancel immediately (fast DB write) so dashboard sees it
+    with db.get_connection() as conn:
+        db.set_cancel_state(conn, user_id, "cancel_scans")
 
     job_id = secrets.token_urlsafe(16)
     with db.get_connection() as conn:

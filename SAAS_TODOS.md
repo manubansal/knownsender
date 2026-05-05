@@ -237,6 +237,10 @@ See full plan: `docs/graceful-shutdown-test-plan.md`
 - [ ] Optimistic locking: two processes read same `historyId`, first write wins, second detects conflict
 - [x] `SKIP LOCKED`: locked user row is skipped, not blocked indefinitely
 
+### Live e2e test token
+
+- [ ] Refresh `TEST_GMAIL_REFRESH_TOKEN` GitHub secret — current token expired, live e2e test skipped in CI (`-m "not live"` in ci.yml). Re-enable live tests after refreshing.
+
 ### Gmail API call correctness — outgoing query assertions
 
 - [ ] Assert exact parameters on all Gmail API calls issued by `/api/me` (labels.get IDs, messages.list queries, messages.get format)
