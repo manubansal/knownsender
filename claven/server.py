@@ -118,6 +118,9 @@ signal.signal(signal.SIGTERM, _shutdown_handler)
 
 def _spawn_scan_thread(target, args):
     """Start a daemon thread and track it for graceful shutdown."""
+    if _shutdown_event.is_set():
+        logger.debug("_spawn_scan_thread: refusing to start %s — shutdown in progress", target.__name__)
+        return None
     t = threading.Thread(target=target, args=args, daemon=True)
     with _threads_lock:
         _active_threads.append(t)
@@ -136,14 +139,17 @@ async def lifespan(app):
     try:
         with db.get_connection() as conn:
             db.clear_cancel_job_flags(conn)
+            logger.debug("lifespan: cleared cancel_job flags on startup")
     except Exception:
-        logger.debug("Failed to clear cancel flags on startup (DB may be unavailable)")
+        logger.debug("lifespan: failed to clear cancel flags on startup (DB may be unavailable)")
     logger.info("Worker started (pid=%d)", _worker_id)
     yield
     # Shutdown: signal all threads to stop, then wait for them.
+    logger.debug("lifespan: shutdown starting, setting _shutdown_event")
     _shutdown_event.set()
     with _threads_lock:
         threads = list(_active_threads)
+    logger.debug("lifespan: joining %d active threads", len(threads))
     for t in threads:
         t.join(timeout=5)
     still_alive = sum(1 for t in threads if t.is_alive())
@@ -431,14 +437,18 @@ def _needs_sent_scan(scan_progress: dict) -> bool:
     """Return True if the sent scan should be (re-)triggered."""
     status = scan_progress["status"]
     if status == "complete":
+        logger.debug("_needs_sent_scan: False (status=complete)")
         return False
     if status == "in_progress":
         updated_at = scan_progress.get("updated_at")
         if updated_at and datetime.now(timezone.utc) - updated_at < _STALE_SCAN_THRESHOLD:
+            logger.debug("_needs_sent_scan: False (in_progress, updated_at=%s, not stale)", updated_at)
             return False
         # Stale in_progress — treat as failed
+        logger.debug("_needs_sent_scan: True (stale in_progress, updated_at=%s)", scan_progress.get("updated_at"))
         return True
     # None, "error", or anything else
+    logger.debug("_needs_sent_scan: True (status=%s)", status)
     return True
 
 
@@ -486,6 +496,7 @@ def internal_poll(request: Request):
 
                 # Reconcile: if sent scan never completed, run it now
                 scan_progress = db.get_sent_scan_progress(conn, user_id)
+                logger.debug("internal_poll: user %s sent_scan status=%s", user_id, scan_progress["status"])
                 if _needs_sent_scan(scan_progress):
                     logger.info("Reconciling sent scan for user %s (status=%s)", user_id, scan_progress["status"])
                     db.set_sent_scan_status(conn, user_id, "in_progress")
@@ -573,10 +584,13 @@ def api_me(request: Request):
         allmail_labeled_known_count = None
         allmail_labeled_unknown_count = None
         allmail_labeled_total_count = None
+        inbox_labeled_known_shallow_count = None
+        inbox_labeled_known_has_more = None
         inbox_labeled_unknown_shallow_count = None
         inbox_labeled_unknown_has_more = None
         inbox_unlabeled_first_page_count = None
         inbox_unlabeled_deep_count = None
+        scan_unlabeled_first_page_count = None
         try:
             service = auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
 
@@ -589,7 +603,7 @@ def api_me(request: Request):
             batch1.add(service.users().labels().get(userId="me", id="INBOX"), request_id="inbox")
             batch1.add(service.users().labels().get(userId="me", id="SENT"), request_id="sent")
             batch1.add(service.users().labels().list(userId="me"), request_id="labels")
-            batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], q="is:read", maxResults=1), request_id="read")
+            # read_count derived from inbox_count - unread_count (both exact from labels.get)
             batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=1), request_id="newest_msg")
             label_configs = load_config().get("labels", [])
             batch1.add(service.users().getProfile(userId="me"), request_id="profile")
@@ -598,7 +612,7 @@ def api_me(request: Request):
             inbox_data = b1.get("inbox", {})
             unread_count = inbox_data.get("messagesUnread")
             inbox_count = inbox_data.get("messagesTotal")
-            read_count = b1.get("read", {}).get("resultSizeEstimate")
+            read_count = (inbox_count - unread_count) if inbox_count is not None and unread_count is not None else None
             all_mail_count = b1.get("profile", {}).get("messagesTotal")
             sent_total_live = b1.get("sent", {}).get("messagesTotal")
 
@@ -638,11 +652,18 @@ def api_me(request: Request):
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
                     batch2.add(service.users().messages().list(userId="me", labelIds=[uid], maxResults=1), request_id=f"newest_unknown_{unknown}")
 
-            unlabeled_q = _unlabeled_query(label_configs, scope=scan_scope)
-            batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
+            # Always query inbox unlabeled for display; also query scan-scope
+            # unlabeled for retrigger logic when scope differs.
+            inbox_unlabeled_q = _unlabeled_query(label_configs, scope="inbox")
+            batch2.add(service.users().messages().list(userId="me", q=inbox_unlabeled_q, maxResults=500), request_id="unlabeled")
+            if scan_scope == "allmail":
+                scan_unlabeled_q = _unlabeled_query(label_configs, scope="allmail")
+                batch2.add(service.users().messages().list(userId="me", q=scan_unlabeled_q, maxResults=500), request_id="scan_unlabeled")
 
-            # Shallow count of inbox unknown-sender messages (for archive action)
+            # Shallow count of inbox known/unknown-sender messages
             for lc in label_configs:
+                if lid := label_id_by_name.get(lc["id"]):
+                    batch2.add(service.users().messages().list(userId="me", labelIds=["INBOX", lid], maxResults=500), request_id="inbox_known_shallow")
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
                     batch2.add(service.users().messages().list(userId="me", labelIds=["INBOX", uid], maxResults=500), request_id="inbox_unknown_shallow")
 
@@ -658,6 +679,11 @@ def api_me(request: Request):
                 if unknown := lc.get("unknown_label"):
                     allmail_labeled_unknown_count += b2.get(f"unknown_{unknown}", {}).get("messagesTotal", 0)
             allmail_labeled_total_count = allmail_labeled_known_count + allmail_labeled_unknown_count
+
+            inbox_known_data = b2.get("inbox_known_shallow", {})
+            inbox_known_msgs = inbox_known_data.get("messages", [])
+            inbox_labeled_known_shallow_count = len(inbox_known_msgs)
+            inbox_labeled_known_has_more = "nextPageToken" in inbox_known_data
 
             inbox_unknown_data = b2.get("inbox_unknown_shallow", {})
             inbox_unknown_msgs = inbox_unknown_data.get("messages", [])
@@ -703,21 +729,24 @@ def api_me(request: Request):
             first_page_messages = unlabeled_data.get("messages", [])
             inbox_unlabeled_first_page_count = len(first_page_messages)
 
-            # Paginate remaining unlabeled (sequential — can't batch pagination).
-            # Skip deep count for allmail scope — too expensive (100k+ messages).
+            # Paginate remaining inbox unlabeled for deep count
+            total_unlabeled = inbox_unlabeled_first_page_count
+            page_token = unlabeled_data.get("nextPageToken")
+            while page_token:
+                page = service.users().messages().list(
+                    userId="me", q=inbox_unlabeled_q, maxResults=500,
+                    pageToken=page_token,
+                ).execute()
+                total_unlabeled += len(page.get("messages", []))
+                page_token = page.get("nextPageToken")
+            inbox_unlabeled_deep_count = total_unlabeled
+
+            # Scan-scope unlabeled for retrigger (same as inbox when scope=inbox)
             if scan_scope == "allmail":
-                inbox_unlabeled_deep_count = inbox_unlabeled_first_page_count
+                scan_unlabeled_data = b2.get("scan_unlabeled", {})
+                scan_unlabeled_first_page_count = len(scan_unlabeled_data.get("messages", []))
             else:
-                total_unlabeled = inbox_unlabeled_first_page_count
-                page_token = unlabeled_data.get("nextPageToken")
-                while page_token:
-                    page = service.users().messages().list(
-                        userId="me", q=unlabeled_q, maxResults=500,
-                        pageToken=page_token,
-                    ).execute()
-                    total_unlabeled += len(page.get("messages", []))
-                    page_token = page.get("nextPageToken")
-                inbox_unlabeled_deep_count = total_unlabeled
+                scan_unlabeled_first_page_count = inbox_unlabeled_first_page_count
 
             db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
@@ -732,23 +761,34 @@ def api_me(request: Request):
     # Priority 1: if cancel_scans is set, an exclusive job owns the session.
     # Resume it if not already running (crash recovery). Guard with a set
     # to prevent /api/me from spawning duplicates on every call.
+    logger.debug("/api/me: priority logic — cancel_state=%s, inbox_scan_status=%s, unlabeled_first_page=%s",
+                 cancel_state, inbox_scan_status, inbox_unlabeled_first_page_count)
     if cancel_state == "cancel_scans":
         _resume_key = f"{session['user_id']}"
         if _resume_key not in _resumed_jobs:
             _resumed_jobs.add(_resume_key)
             if archive_job and archive_job["status"] in ("starting", "in_progress"):
+                logger.debug("/api/me: resuming archive job %s (status=%s)", archive_job["job_id"], archive_job["status"])
                 _spawn_scan_thread(_run_archive_unknown, (session["user_id"], archive_job["job_id"]))
             elif reset_sent_job and reset_sent_job["status"] in ("starting", "in_progress"):
+                logger.debug("/api/me: resuming reset_sent job %s (status=%s)", reset_sent_job["job_id"], reset_sent_job["status"])
                 _spawn_scan_thread(_run_reset_sent_scan, (session["user_id"], reset_sent_job["job_id"]))
+            else:
+                logger.debug("/api/me: cancel_scans set but no resumable job found (archive=%s, reset=%s)",
+                             archive_job, reset_sent_job)
+        else:
+            logger.debug("/api/me: cancel_scans set but resume_key already in _resumed_jobs")
 
     if cancel_state is None:
         # No exclusive job active — clear stale job states
         if archive_job and archive_job["status"] in ("starting", "in_progress"):
+            logger.debug("/api/me: clearing stale archive job %s (status=%s)", archive_job["job_id"], archive_job["status"])
             with db.get_connection() as conn:
                 db.set_archive_job(conn, session["user_id"], archive_job["job_id"], "error")
                 db.log_event(conn, session["user_id"], "error", "Archive job stale — cleared")
             archive_job["status"] = "error"
         if reset_sent_job and reset_sent_job["status"] in ("starting", "in_progress"):
+            logger.debug("/api/me: clearing stale reset_sent job %s (status=%s)", reset_sent_job["job_id"], reset_sent_job["status"])
             with db.get_connection() as conn:
                 db.set_reset_sent_job(conn, session["user_id"], reset_sent_job["job_id"], "error")
                 db.log_event(conn, session["user_id"], "error", "Reset sent scan job stale — cleared")
@@ -757,6 +797,7 @@ def api_me(request: Request):
         # Auto-reset stalled scans
         scan_health = compute_scan_health(inbox_scan_status, last_fetched_at)
         if scan_health and scan_health["label"] == "warning.scan.stalled":
+            logger.debug("/api/me: resetting stalled scan (was %s, last_fetched=%s)", inbox_scan_status, last_fetched_at)
             inbox_scan_status = "error.scan.stalled"
             with db.get_connection() as conn:
                 db.set_inbox_scan_status(conn, session["user_id"], inbox_scan_status)
@@ -766,16 +807,27 @@ def api_me(request: Request):
         # Auto-clear errors when no work remains
         if (inbox_scan_status and inbox_scan_status.startswith("error")
                 and (inbox_unlabeled_first_page_count is not None and inbox_unlabeled_first_page_count == 0)):
+            logger.debug("/api/me: auto-clearing error (status=%s, unlabeled=0)", inbox_scan_status)
             with db.get_connection() as conn:
                 db.set_inbox_scan_status(conn, session["user_id"], "complete")
             inbox_scan_status = "complete"
 
-        # Auto-retrigger scan chain
-        if (inbox_unlabeled_first_page_count is not None
-                and inbox_unlabeled_first_page_count > 0
+        # Auto-retrigger scan chain — but not if sent scan is actively running
+        # (non-stale in_progress). It chains into inbox scan on completion.
+        # Uses scan_unlabeled (scope-aware) to decide if there's work to do.
+        sent_running = (sent_scan_progress["status"] == "in_progress"
+                        and not _needs_sent_scan(sent_scan_progress))
+        if (scan_unlabeled_first_page_count is not None
+                and scan_unlabeled_first_page_count > 0
                 and inbox_scan_status != "in_progress"
+                and not sent_running
                 and history_id is not None):
+            logger.debug("/api/me: auto-retriggering scan chain (scan_unlabeled=%d, inbox_status=%s, sent_status=%s)",
+                         scan_unlabeled_first_page_count, inbox_scan_status, sent_scan_progress["status"])
             _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
+        else:
+            logger.debug("/api/me: no retrigger (scan_unlabeled=%s, inbox_status=%s, sent_running=%s, history=%s)",
+                         scan_unlabeled_first_page_count, inbox_scan_status, sent_running, history_id)
 
     return {
         "email": user["email"],
@@ -797,6 +849,8 @@ def api_me(request: Request):
         "allmail_labeled_total_count": allmail_labeled_total_count,
         "inbox_unlabeled_first_page_count": inbox_unlabeled_first_page_count,
         "inbox_unlabeled_deep_count": inbox_unlabeled_deep_count,
+        "inbox_labeled_known_shallow_count": inbox_labeled_known_shallow_count,
+        "inbox_labeled_known_has_more": inbox_labeled_known_has_more,
         "inbox_labeled_unknown_shallow_count": inbox_labeled_unknown_shallow_count,
         "inbox_labeled_unknown_has_more": inbox_labeled_unknown_has_more,
         "archive_job": archive_job,
@@ -926,8 +980,12 @@ def _is_current_worker() -> bool:
     - Ctrl+C / SIGTERM received (shutdown event set)
     """
     if _shutdown_event.is_set():
+        logger.debug("_is_current_worker: False (shutdown_event set)")
         return False
-    return os.getpid() == _worker_id
+    pid_match = os.getpid() == _worker_id
+    if not pid_match:
+        logger.debug("_is_current_worker: False (pid=%d, worker_id=%d)", os.getpid(), _worker_id)
+    return pid_match
 
 
 def _cancel_scans_and_wait(user_id: str, timeout: float = 10) -> None:
@@ -935,34 +993,46 @@ def _cancel_scans_and_wait(user_id: str, timeout: float = 10) -> None:
 
     Scans set their own status to 'cancelled' when they see the cancel flag.
     """
+    logger.debug("_cancel_scans_and_wait: setting cancel_scans for user %s", user_id)
     with db.get_connection() as conn:
         db.set_cancel_state(conn, user_id, "cancel_scans")
     import time as _time
     deadline = _time.monotonic() + timeout
     with _threads_lock:
         threads = list(_active_threads)
+    logger.debug("_cancel_scans_and_wait: joining %d threads (timeout=%.1f)", len(threads), timeout)
     for t in threads:
         remaining = deadline - _time.monotonic()
         if remaining > 0:
             t.join(timeout=remaining)
+    logger.debug("_cancel_scans_and_wait: done waiting")
 
 
 def _should_continue_scan(user_id: str) -> bool:
     """For scan loops: exit on any non-NULL cancel state."""
     if not _is_current_worker():
+        logger.debug("should_continue_scan: _is_current_worker=False (shutdown=%s, pid=%d, worker_id=%d)",
+                      _shutdown_event.is_set(), os.getpid(), _worker_id)
         return False
     with db.get_connection() as conn:
         state = db.get_cancel_state(conn, user_id)
+        if state is not None:
+            logger.debug("should_continue_scan: cancel_state=%s", state)
         return state is None
 
 
 def _should_continue_job(user_id: str) -> bool:
     """For exclusive jobs: exit only on cancel_job."""
     if not _is_current_worker():
+        logger.debug("_should_continue_job: False (_is_current_worker=False)")
         return False
     with db.get_connection() as conn:
         state = db.get_cancel_state(conn, user_id)
-        return state != "cancel_job"
+        if state == "cancel_job":
+            logger.debug("_should_continue_job: False (cancel_state=cancel_job)")
+            return False
+        logger.debug("_should_continue_job: True (cancel_state=%s)", state)
+        return True
 
 
 def _run_inbox_scan(user_id: str):
@@ -977,19 +1047,24 @@ def _run_inbox_scan(user_id: str):
                 logger.info("Inbox scan skipped for %s — locked by another instance", user_id)
                 return
             scope = db.get_scan_scope(conn, user_id)
+            logger.debug("_run_inbox_scan: acquired lock, scope=%s", scope)
             db.set_inbox_scan_status(conn, user_id, "in_progress")
             db.log_event(conn, user_id, "scan", f"Label scan started (scope={scope})")
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
             known_senders = db.get_known_senders(conn, user_id)
+            logger.debug("_run_inbox_scan: setup complete, %d known_senders", len(known_senders))
         # Scan: uses per-batch connections internally
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = scan_inbox(service, None, user_id, label_configs, label_id_cache, known_senders, should_continue=lambda: _should_continue_scan(user_id), shutdown_event=_shutdown_event, scope=scope)
+        logger.debug("_run_inbox_scan: scan_inbox returned count=%d", count)
         # Check why scan returned
         if not _should_continue_scan(user_id):
+            logger.debug("_run_inbox_scan: post-scan _should_continue_scan=False, setting cancelled")
             with db.get_connection() as conn:
                 db.set_inbox_scan_status(conn, user_id, "cancelled")
                 db.log_event(conn, user_id, "scan", f"Label scan cancelled after {count} labeled")
             return
+        logger.debug("_run_inbox_scan: scan completed normally, setting complete")
         with db.get_connection() as conn:
             db.set_inbox_scan_status(conn, user_id, "complete")
             db.log_event(conn, user_id, "scan", f"Label scan complete — {count} labeled")
@@ -1010,6 +1085,7 @@ def _run_inbox_scan(user_id: str):
             error_label = "error.gmail.quota_exhausted"
         elif "HttpError" in str(type(exc).__name__) or "gmail" in exc_str:
             error_label = "error.gmail.api"
+        logger.debug("_run_inbox_scan: classified error as %s (exc_str=%s)", error_label, exc_str[:100])
         try:
             with db.get_connection() as conn:
                 db.set_inbox_scan_status(conn, user_id, error_label)
@@ -1020,6 +1096,7 @@ def _run_inbox_scan(user_id: str):
 
 def _run_relabel_scan(user_id: str):
     """Background task: relabel messages from newly discovered known senders."""
+    logger.debug("_run_relabel_scan: starting for user %s", user_id)
     label_configs = load_config().get("labels", [])
     try:
         with db.get_connection() as conn:
@@ -1027,6 +1104,7 @@ def _run_relabel_scan(user_id: str):
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         count = relabel_scan(service, user_id, label_configs, label_id_cache,
                              should_continue=lambda: _should_continue_scan(user_id), shutdown_event=_shutdown_event)
+        logger.debug("_run_relabel_scan: relabel_scan returned count=%d", count)
         if count > 0:
             with db.get_connection() as conn:
                 db.log_event(conn, user_id, "scan", f"Relabel scan complete — {count} relabeled")
@@ -1056,6 +1134,7 @@ def _run_sent_scan(user_id: str):
         try:
             db.set_sent_scan_status(conn, user_id, "in_progress")
             db.log_event(conn, user_id, "scan", "Sent scan started")
+            logger.debug("_run_sent_scan: set status=in_progress")
         except Exception:
             logger.exception("Failed to set sent scan status for %s", user_id)
             return
@@ -1063,13 +1142,17 @@ def _run_sent_scan(user_id: str):
         # Setup: short-lived connection for lock + service
         with db.get_connection() as conn:
             if not db.try_lock_user_scan(conn, user_id):
-                logger.info("Sent scan skipped for %s — locked by another instance", user_id)
+                logger.info("Sent scan skipped for %s — locked by another instance (second lock)", user_id)
                 return
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            logger.debug("_run_sent_scan: acquired second lock, got service")
         # Scan: uses per-batch connections internally
+        logger.debug("_run_sent_scan: calling build_known_senders")
         build_known_senders(service, None, user_id, should_continue=lambda: _should_continue_scan(user_id), shutdown_event=_shutdown_event)
+        logger.debug("_run_sent_scan: build_known_senders returned")
         # Check why scan returned
         if not _should_continue_scan(user_id):
+            logger.debug("_run_sent_scan: post-scan _should_continue_scan=False, setting cancelled")
             with db.get_connection() as conn:
                 db.set_sent_scan_status(conn, user_id, "cancelled")
                 db.log_event(conn, user_id, "scan", "Sent scan cancelled")
@@ -1079,6 +1162,7 @@ def _run_sent_scan(user_id: str):
             with db.get_connection() as conn:
                 db.set_sent_scan_status(conn, user_id, "cancelled")
             return
+        logger.debug("_run_sent_scan: scan completed normally, setting complete")
         with db.get_connection() as conn:
             db.set_sent_scan_status(conn, user_id, "complete")
             db.log_event(conn, user_id, "scan", "Sent scan complete")
@@ -1093,7 +1177,9 @@ def _run_sent_scan(user_id: str):
         return
 
     # Sent scan done → relabel mislabeled messages → label remaining
+    logger.debug("_run_sent_scan: chaining to relabel_scan")
     _run_relabel_scan(user_id)
+    logger.debug("_run_sent_scan: chaining to inbox_scan")
     _run_inbox_scan(user_id)
 
 
@@ -1157,7 +1243,13 @@ async def api_set_scan_scope(request: Request):
     if scope not in ("inbox", "allmail"):
         raise HTTPException(status_code=400, detail="scope must be 'inbox' or 'allmail'")
     with db.get_connection() as conn:
+        old_scope = db.get_scan_scope(conn, session["user_id"])
         db.set_scan_scope(conn, session["user_id"], scope)
+        if old_scope != scope:
+            # Reset inbox scan status so retrigger can fire for the new scope
+            db.set_inbox_scan_status(conn, session["user_id"], None)
+            db.log_event(conn, session["user_id"], "setting", f"Scan scope changed to {scope}")
+            logger.debug("api_set_scan_scope: %s → %s, reset inbox_scan_status", old_scope, scope)
     return JSONResponse({"ok": True, "scan_scope": scope})
 
 
@@ -1170,8 +1262,10 @@ def _run_archive_unknown(user_id: str, job_id: str):
     # Wait for running scans to exit (cancel_scans was set by the endpoint)
     with _threads_lock:
         threads = [t for t in _active_threads if t is not threading.current_thread()]
+    logger.debug("_run_archive_unknown: waiting for %d threads to exit", len(threads))
     for t in threads:
         t.join(timeout=10)
+    logger.debug("_run_archive_unknown: threads joined, proceeding")
 
     try:
         with db.get_connection() as conn:
@@ -1264,8 +1358,10 @@ def _run_reset_sent_scan(user_id: str, job_id: str):
     import time as _time
     with _threads_lock:
         threads = [t for t in _active_threads if t is not threading.current_thread()]
+    logger.debug("_run_reset_sent_scan: waiting for %d threads to exit", len(threads))
     for t in threads:
         t.join(timeout=10)
+    logger.debug("_run_reset_sent_scan: threads joined, proceeding")
 
     try:
         with db.get_connection() as conn:
@@ -1274,6 +1370,7 @@ def _run_reset_sent_scan(user_id: str, job_id: str):
                 return
 
             service = auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+            logger.debug("_run_reset_sent_scan: acquired lock, got service")
 
         from claven.core.scan import SENT_SCANNED_LABEL
         from claven.core.gmail import gmail_retry
@@ -1355,13 +1452,16 @@ def api_reset_sent_scan(request: Request):
     """Start removing claven/sent-scanned labels to force a full re-scan."""
     session = _get_session(request)
     user_id = session["user_id"]
+    logger.debug("api_reset_sent_scan: called for user %s", user_id)
 
     with db.get_connection() as conn:
         existing = db.get_reset_sent_job(conn, user_id)
         if existing and existing["status"] == "in_progress":
+            logger.debug("api_reset_sent_scan: already running (job_id=%s)", existing["job_id"])
             return JSONResponse({"ok": False, "detail": "already running", "reset_sent_job": existing})
 
     # Set cancel immediately (fast DB write) so dashboard sees it
+    logger.debug("api_reset_sent_scan: setting cancel_state=cancel_scans")
     with db.get_connection() as conn:
         db.set_cancel_state(conn, user_id, "cancel_scans")
 
@@ -1379,14 +1479,17 @@ def api_archive_unknown(request: Request):
     """Start archiving all inbox messages with unknown-sender label."""
     session = _get_session(request)
     user_id = session["user_id"]
+    logger.debug("api_archive_unknown: called for user %s", user_id)
 
     # Check for existing running job
     with db.get_connection() as conn:
         existing = db.get_archive_job(conn, user_id)
         if existing and existing["status"] == "in_progress":
+            logger.debug("api_archive_unknown: already running (job_id=%s)", existing["job_id"])
             return JSONResponse({"ok": False, "detail": "already running", "archive_job": existing})
 
     # Set cancel immediately (fast DB write) so dashboard sees it
+    logger.debug("api_archive_unknown: setting cancel_state=cancel_scans")
     with db.get_connection() as conn:
         db.set_cancel_state(conn, user_id, "cancel_scans")
 
@@ -1403,10 +1506,13 @@ def api_cancel_action(request: Request):
     """Cancel whatever exclusive job is running for this user."""
     session = _get_session(request)
     user_id = session["user_id"]
+    logger.debug("api_cancel_action: called for user %s", user_id)
     with db.get_connection() as conn:
         state = db.get_cancel_state(conn, user_id)
         if state != "cancel_scans":
+            logger.debug("api_cancel_action: no running action (cancel_state=%s)", state)
             return JSONResponse({"ok": False, "detail": "no running action"})
+        logger.debug("api_cancel_action: transitioning cancel_state from cancel_scans to cancel_job")
         db.set_cancel_state(conn, user_id, "cancel_job")
     return JSONResponse({"ok": True})
 
@@ -1453,6 +1559,7 @@ async def webhook_gmail(request: Request):
             logger.info("No history_id for %s — skipping", email)
             return {"status": "ok", "detail": "no history_id"}
 
+        logger.debug("webhook_gmail: processing for %s (history_id=%d)", email, stored_history_id)
         service = auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
 
         # Incremental known senders update — cheap with cursor (one list_history call).
@@ -1460,6 +1567,7 @@ async def webhook_gmail(request: Request):
         # build_known_senders falls through to a full scan.
         scan_progress = db.get_sent_scan_progress(conn, user["id"])
         if _needs_sent_scan(scan_progress):
+            logger.debug("webhook_gmail: reconciling sent scan (status=%s)", scan_progress["status"])
             db.set_sent_scan_status(conn, user["id"], "in_progress")
         try:
             build_known_senders(service, conn, user["id"])

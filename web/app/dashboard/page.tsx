@@ -34,6 +34,8 @@ type MeResponse = {
   allmail_labeled_total_count: number | null;
   inbox_unlabeled_first_page_count: number | null;
   inbox_unlabeled_deep_count: number | null;
+  inbox_labeled_known_shallow_count: number | null;
+  inbox_labeled_known_has_more: boolean | null;
   inbox_labeled_unknown_shallow_count: number | null;
   inbox_labeled_unknown_has_more: boolean | null;
   archive_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
@@ -68,9 +70,9 @@ function ResetSentButton({ disabled, onConfirm }: { disabled: boolean; onConfirm
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger
         disabled={disabled}
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full mt-2")}
+        className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
       >
-        {disabled ? "Starting…" : "Reset sent scan"}
+        {disabled ? "Starting…" : "Reset"}
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -99,7 +101,7 @@ function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger
         disabled={disabled}
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full truncate")}
+        className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
       >
         {label}
       </AlertDialogTrigger>
@@ -283,7 +285,7 @@ export default function DashboardPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scope }),
     })
-      .then((res) => { if (!res.ok) loadData(); })
+      .then((res) => { loadData(); })
       .catch(() => loadData());
   }
 
@@ -328,7 +330,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_status, scan_health, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job, scan_scope } = state.data;
+  const { email, connected, known_senders, sent_scanned_count, sent_total_count, sent_scan_status, inbox_scan_status, scan_health, unread_count, read_count, inbox_count, all_mail_count, allmail_labeled_known_count, allmail_labeled_unknown_count, allmail_labeled_total_count, inbox_unlabeled_first_page_count, inbox_unlabeled_deep_count, inbox_labeled_known_shallow_count, inbox_labeled_known_has_more, inbox_labeled_unknown_shallow_count, inbox_labeled_unknown_has_more, archive_job, scan_scope } = state.data;
   const { labels } = state;
 
   const archiveCount = inbox_labeled_unknown_shallow_count ?? 0;
@@ -421,82 +423,95 @@ export default function DashboardPage() {
                     <span className="font-medium">{label.name}</span>
                     <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-4">
-                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Sent scan</span>
+                      <div className="flex flex-col items-center gap-2 mt-3">
+                        <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
+                          <button
+                            onClick={() => { if (!connected) handleConnect(); }}
+                            disabled={connecting || disconnecting}
+                            className={cn(
+                              "flex-1 px-3 py-0.5 transition-colors text-center",
+                              connected
+                                ? "bg-muted font-medium text-foreground"
+                                : "hover:text-foreground"
+                            )}
+                          >
+                            {connecting ? "Starting…" : "Active"}
+                          </button>
+                          <button
+                            onClick={() => { if (connected) handleDisconnect(); }}
+                            disabled={connecting || disconnecting}
+                            className={cn(
+                              "flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
+                              !connected
+                                ? "bg-muted font-medium text-foreground"
+                                : "hover:text-foreground"
+                            )}
+                          >
+                            {disconnecting ? "Pausing…" : "Inactive"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {isKnownSender && (
+                      <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
+                        {(() => {
+                          const SentIcon = sent_scan_status === "in_progress" ? Loader2
+                            : sent_scan_status === "complete" ? CheckCircle
+                            : sent_scan_status === "error" ? AlertCircle
+                            : sent_scan_status === "cancelled" ? AlertTriangle
+                            : Clock;
+                          const sentIconColor = sent_scan_status === "complete" ? "text-green-500"
+                            : sent_scan_status === "error" ? "text-destructive"
+                            : sent_scan_status === "cancelled" ? "text-yellow-500"
+                            : "";
+                          const sentIconExtra = sent_scan_status === "in_progress" ? "animate-spin" : "";
+                          const resetJob = state.data.reset_sent_job;
+                          return (
+                            <div className="flex items-center justify-between">
+                              <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                                <SentIcon className={`h-3 w-3 ${sentIconColor} ${sentIconExtra}`} data-testid="sent-scan-icon" />
+                                Sent scan
+                              </span>
+                              {resetJob?.status === "in_progress" ? (
+                                <button
+                                  onClick={handleCancelAction}
+                                  disabled={cancelling}
+                                  className="text-[10px] text-muted-foreground hover:text-foreground"
+                                >
+                                  {cancelling ? "Cancelling…" : `Resetting ${resetJob.progress ?? 0}/${resetJob.total ?? "…"} — cancel`}
+                                </button>
+                              ) : (
+                                <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div className="flex flex-col gap-0.5">
                           <div className="flex justify-between gap-4 items-center">
-                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" ? (
-                                <Loader2 className="h-3 w-3 animate-spin" data-testid="sent-scan-spinner" />
-                              ) : sent_scan_status === "complete" ? (
-                                <CheckCircle className="h-3 w-3 text-green-500" data-testid="sent-scan-complete" />
-                              ) : null}
-                              Messages scanned
-                            </span>
+                            <span className="text-xs text-muted-foreground">Messages scanned</span>
                             <span className="text-xs tabular-nums text-muted-foreground">
                               {sent_scanned_count}{sent_total_count !== null ? ` / ${sent_total_count}` : ""}
                             </span>
                           </div>
                           <div className="flex justify-between gap-4 items-center">
-                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              {sent_scan_status === "in_progress" ? (
-                                <Loader2 className="h-3 w-3 animate-spin" data-testid="known-senders-spinner" />
-                              ) : sent_scan_status === "complete" ? (
-                                <CheckCircle className="h-3 w-3 text-green-500" data-testid="known-senders-complete" />
-                              ) : null}
-                              Known senders found
-                            </span>
+                            <span className="text-xs text-muted-foreground">Known senders found</span>
                             <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
                           </div>
                         </div>
-                        {state.data.reset_sent_job?.status === "in_progress" ? (
-                          <div className="flex flex-col gap-1 mt-2">
-                            <div className="flex justify-between items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                Resetting sent scan
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {state.data.reset_sent_job.progress ?? 0} / {state.data.reset_sent_job.total ?? "…"}
-                              </span>
-                            </div>
-                            <button
-                              onClick={handleCancelAction}
-                              disabled={cancelling}
-                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                            >
-                              {cancelling ? "Cancelling…" : "Cancel"}
-                            </button>
-                          </div>
-                        ) : state.data.reset_sent_job?.status === "error" ? (
-                          <div className="flex flex-col gap-1 mt-2">
-                            <span className="text-xs text-destructive">Reset failed — click to retry</span>
-                            <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
-                          </div>
-                        ) : state.data.reset_sent_job?.status === "cancelled" ? (
-                          <div className="flex flex-col gap-1 mt-2">
-                            <span className="text-xs text-muted-foreground">
-                              Cancelled at {state.data.reset_sent_job.progress} / {state.data.reset_sent_job.total}
-                            </span>
-                            <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
-                          </div>
-                        ) : (
-                          <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
-                        )}
                       </div>
                     )}
                     {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-4">
-                        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Relabel scan</span>
+                      <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
+                        <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                          {state.data.pending_relabel_count > 0 ? (
+                            <Clock className="h-3 w-3" />
+                          ) : (
+                            <CheckCircle className="h-3 w-3 text-green-500" />
+                          )}
+                          Relabel scan
+                        </span>
                         <div className="flex justify-between gap-4 items-center">
-                          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            {state.data.pending_relabel_count > 0 ? (
-                              <Clock className="h-3 w-3" />
-                            ) : (
-                              <CheckCircle className="h-3 w-3 text-green-500" />
-                            )}
-                            Pending senders
-                          </span>
+                          <span className="text-xs text-muted-foreground">Pending senders</span>
                           <span className="text-xs tabular-nums text-muted-foreground">{state.data.pending_relabel_count}</span>
                         </div>
                       </div>
@@ -520,47 +535,110 @@ export default function DashboardPage() {
                         : severity === "success" ? "filter-complete-icon"
                         : "filter-waiting-icon";
                       return (
-                        <div className="flex flex-col gap-2 mt-4">
-                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                            Inbox scan
-                            {healthCode && severity !== "success" && severity !== "info" && (
-                              <span className={cn("ml-2 text-[10px] font-mono", iconColor)} title={scan_health?.label}>{healthCode}</span>
-                            )}
-                          </span>
+                        <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                              <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
+                              Inbox scan
+                            </span>
+                            <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
+                              <button
+                                onClick={() => handleScanScope("inbox")}
+                                className={cn(
+                                  "flex-1 px-3 py-0.5 transition-colors text-center",
+                                  (scan_scope ?? "inbox") === "inbox"
+                                    ? "bg-muted font-medium text-foreground"
+                                    : "hover:text-foreground"
+                                )}
+                              >
+                                Inbox
+                              </button>
+                              <button
+                                onClick={() => handleScanScope("allmail")}
+                                className={cn(
+                                  "flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
+                                  scan_scope === "allmail"
+                                    ? "bg-muted font-medium text-foreground"
+                                    : "hover:text-foreground"
+                                )}
+                              >
+                                All mail
+                              </button>
+                            </div>
+                          </div>
+                          {healthCode && severity !== "success" && severity !== "info" && (
+                            <span
+                              className={cn("block text-[10px] font-mono cursor-pointer hover:underline", iconColor)}
+                              title={`${scan_health?.label} — click to copy`}
+                              onClick={() => navigator.clipboard.writeText(healthCode)}
+                            >{healthCode}</span>
+                          )}
                           <div className="flex flex-col gap-0.5">
                             <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Allmail labeled
-                              </span>
+                              <span className="text-xs text-muted-foreground">Allmail labeled</span>
                               <span className="text-xs tabular-nums text-muted-foreground">
                                 {allmail_labeled_total_count ?? "—"}
                               </span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Allmail known-sender
-                              </span>
+                              <span className="text-xs text-muted-foreground">Allmail known-sender</span>
                               <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_known_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Allmail unknown-sender
-                              </span>
+                              <span className="text-xs text-muted-foreground">Allmail unknown-sender</span>
                               <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_unknown_count ?? "—"}</span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                                Inbox unlabeled
+                              <span className="text-xs text-muted-foreground">Inbox known-sender</span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {inbox_labeled_known_shallow_count != null
+                                  ? `${inbox_labeled_known_shallow_count}${inbox_labeled_known_has_more ? "+" : ""}`
+                                  : "—"}
                               </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                Inbox unknown-sender
+                                {archiveRunning ? (
+                                  <button
+                                    onClick={handleCancelAction}
+                                    disabled={cancelling}
+                                    className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
+                                  >
+                                    {cancelling ? "Cancelling…" : `Archiving ${archive_job?.progress ?? 0}/${archive_job?.total ?? "…"} — cancel`}
+                                  </button>
+                                ) : (
+                                  <ArchiveButton
+                                    label={archiving ? "Starting…" : "Archive"}
+                                    disabled={!connected || archiveCount === 0 || archiving}
+                                    onConfirm={handleArchiveUnknown}
+                                  />
+                                )}
+                              </span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {inbox_labeled_unknown_shallow_count != null
+                                  ? `${inbox_labeled_unknown_shallow_count}${inbox_labeled_unknown_has_more ? "+" : ""}`
+                                  : "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="text-xs text-muted-foreground">Inbox unlabeled</span>
                               <span className="text-xs tabular-nums text-muted-foreground">{inbox_unlabeled_deep_count ?? "—"}</span>
                             </div>
-                            <div className="flex justify-between gap-4 items-center mt-1 pt-1 border-t border-border/30">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="text-xs text-muted-foreground">Allmail unlabeled</span>
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {all_mail_count !== null && allmail_labeled_total_count !== null
+                                  ? all_mail_count - allmail_labeled_total_count
+                                  : "—"}
+                              </span>
+                            </div>
+                            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60 mt-4 pt-3 border-t border-border/30">
+                              <span className={`inline-block h-2 w-2 rounded-full ${severity === "error" ? "bg-destructive" : severity === "warning" ? "bg-yellow-500" : "bg-green-500"}`} />
+                              System health
+                            </span>
+                            <div className="flex justify-between gap-4 items-center">
+                              <span className="text-xs text-muted-foreground">
                                 Last fetched
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
@@ -570,8 +648,7 @@ export default function DashboardPage() {
                               </span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                              <span className="text-xs text-muted-foreground">
                                 Last labeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
@@ -581,8 +658,7 @@ export default function DashboardPage() {
                               </span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                              <span className="text-xs text-muted-foreground">
                                 Newest email
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
@@ -592,8 +668,7 @@ export default function DashboardPage() {
                               </span>
                             </div>
                             <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <span className="inline-block h-3 w-3 text-center text-[8px] leading-3">●</span>
+                              <span className="text-xs text-muted-foreground">
                                 Newest labeled
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
@@ -614,86 +689,6 @@ export default function DashboardPage() {
                           : "—"}
                       </span>
                     </div>
-                    {isKnownSender && (
-                      <div className="flex flex-col gap-3 mt-4 pt-3 border-t border-border/50">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-muted-foreground">Scan scope</span>
-                          <div className="flex rounded-md border border-border overflow-hidden text-xs">
-                            <button
-                              onClick={() => handleScanScope("inbox")}
-                              className={cn(
-                                "px-3 py-1 transition-colors",
-                                (scan_scope ?? "inbox") === "inbox"
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-background text-muted-foreground hover:text-foreground"
-                              )}
-                            >
-                              Inbox
-                            </button>
-                            <button
-                              onClick={() => handleScanScope("allmail")}
-                              className={cn(
-                                "px-3 py-1 transition-colors border-l border-border",
-                                scan_scope === "allmail"
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-background text-muted-foreground hover:text-foreground"
-                              )}
-                            >
-                              All mail
-                            </button>
-                          </div>
-                        </div>
-                        <button
-                          onClick={connected ? handleDisconnect : handleConnect}
-                          disabled={connecting || disconnecting}
-                          className={cn(buttonVariants(connected ? { variant: "outline", size: "sm" } : { size: "sm" }), "w-full")}
-                        >
-                          {connecting ? "Starting…" : disconnecting ? "Pausing…" : connected ? "Pause labeling" : "Start labeling"}
-                        </button>
-                        <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-border/30">
-                          {archiving && (
-                            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              Starting archive…
-                            </span>
-                          )}
-                          {archiveRunning ? (
-                            <>
-                              <div className="flex justify-between items-center">
-                                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  Archiving unknown-sender
-                                </span>
-                                <span className="text-xs tabular-nums text-muted-foreground">
-                                  {archive_job?.progress ?? 0} / {archive_job?.total ?? "…"}
-                                </span>
-                              </div>
-                              <button
-                                onClick={handleCancelAction}
-                                disabled={cancelling}
-                                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full")}
-                              >
-                                {cancelling ? "Cancelling…" : "Cancel"}
-                              </button>
-                            </>
-                          ) : archive_job?.status === "cancelled" ? (
-                            <>
-                              <span className="text-xs text-muted-foreground">
-                                Cancelled at {archive_job.progress} / {archive_job.total}
-                              </span>
-                              <ArchiveButton label={archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
-                            </>
-                          ) : (
-                            <>
-                              {archiveError && (
-                                <span className="text-xs text-destructive">{archiveError}</span>
-                              )}
-                              <ArchiveButton label={archiving ? "Starting…" : archiveLabel} disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 );
               })}
