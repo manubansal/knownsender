@@ -1203,6 +1203,96 @@ class TestApiMe:
         assert response.json()["inbox_scan_status"] == "complete"
         mock_threading.Thread.assert_not_called()
 
+    def test_api_me_no_retrigger_when_sent_scan_running(self):
+        """Don't retrigger if sent scan is in_progress (it chains to inbox scan)."""
+        token = _make_session_token()
+        from datetime import datetime, timezone
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.get_inbox_scan_status.return_value = "cancelled"
+                mock_db.get_sent_scan_progress.return_value = {
+                    "messages_scanned": 10, "messages_total": 100,
+                    "status": "in_progress", "updated_at": datetime.now(timezone.utc),
+                }
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, unlabeled_ids=[f"m{i}" for i in range(50)],
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        mock_threading.Thread.assert_not_called()
+
+    def test_api_me_retriggers_when_sent_scan_complete(self):
+        """Retrigger when sent scan is complete and unlabeled messages remain."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.get_inbox_scan_status.return_value = "cancelled"
+                # sent_scan_progress defaults to complete in _fake_db_ctx
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, unlabeled_ids=[f"m{i}" for i in range(50)],
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        mock_threading.Thread.assert_called_once()
+        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
+
+    def test_api_me_retriggers_when_sent_scan_stale(self):
+        """Stale in_progress sent scan (>1 min) should not block retrigger."""
+        token = _make_session_token()
+        from datetime import datetime, timezone, timedelta
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.server.threading") as mock_threading:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.get_inbox_scan_status.return_value = "cancelled"
+                mock_db.get_sent_scan_progress.return_value = {
+                    "messages_scanned": 10, "messages_total": 100,
+                    "status": "in_progress",
+                    "updated_at": datetime.now(timezone.utc) - timedelta(minutes=2),
+                }
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_total=100, unlabeled_ids=[f"m{i}" for i in range(50)],
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        mock_threading.Thread.assert_called_once()
+        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
+
+    def test_read_count_derived_from_inbox(self):
+        """Read count is inbox_count - unread_count, not resultSizeEstimate."""
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                mock_db.get_user_by_id.return_value = {"id": "uid-1", "email": "user@example.com"}
+                mock_db.get_history_id.return_value = 12345
+                mock_db.count_known_senders.return_value = 0
+                mock_auth.get_service.return_value = self._make_gmail_service(
+                    messages_unread=30, messages_total=100, read_estimate=999,
+                )
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/me")
+        # Should be 100 - 30 = 70, NOT 999 (the resultSizeEstimate)
+        assert response.json()["read_count"] == 70
+
 
 class TestApiConfig:
     def test_returns_label_rules(self):
@@ -1749,6 +1839,36 @@ class TestSpawnScanThread:
             t.join(timeout=1)
             assert results == [("x", "y")]
         finally:
+            with srv._threads_lock:
+                srv._active_threads.clear()
+
+    def test_refuses_during_shutdown(self):
+        import claven.server as srv
+        srv._shutdown_event.set()
+        try:
+            result = srv._spawn_scan_thread(lambda: None, ())
+            assert result is None
+            with srv._threads_lock:
+                assert len(srv._active_threads) == 0
+        finally:
+            srv._shutdown_event.clear()
+            with srv._threads_lock:
+                srv._active_threads.clear()
+
+    def test_starts_when_shutdown_clear(self):
+        import claven.server as srv
+        srv._shutdown_event.clear()
+        ran = threading.Event()
+        def target():
+            ran.set()
+        with srv._threads_lock:
+            srv._active_threads.clear()
+        try:
+            t = srv._spawn_scan_thread(target, ())
+            assert t is not None
+            assert ran.wait(timeout=1)
+        finally:
+            t.join(timeout=1)
             with srv._threads_lock:
                 srv._active_threads.clear()
 

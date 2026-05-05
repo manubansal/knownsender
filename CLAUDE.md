@@ -38,6 +38,10 @@ Secrets (OAuth client secret, Neon connection string, token encryption key) are 
 
 This project follows test-driven development. **Tests are written before implementation.** Do not write implementation code for a feature or module without a corresponding test written first. The test plan lives in `tests/README.md`.
 
+## Debug logging
+
+Every function with control flow (if/elif/else, loops, early returns) must have a `logger.debug()` call in each basic block after every branch point. This makes it possible to trace the exact code path taken from the log output alone. When adding or modifying control flow, add debug log lines that include the function name, the branch taken, and the key variable values that determined the branch.
+
 ## Active branch
 
 `saas` is the active development branch. `main` is protected — PRs only, no direct pushes.

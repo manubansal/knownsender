@@ -30,8 +30,10 @@ running = True
 def _interruptible_sleep(seconds, shutdown_event=None):
     """Sleep that wakes immediately if shutdown_event is set."""
     if shutdown_event is not None:
+        logger.debug("_interruptible_sleep: event.wait(%.1f) (event_set=%s)", seconds, shutdown_event.is_set())
         shutdown_event.wait(seconds)
     else:
+        logger.debug("_interruptible_sleep: time.sleep(%.1f) (no event)", seconds)
         time.sleep(seconds)
 
 _BATCH_SIZE = 50
@@ -130,11 +132,14 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
     while True:
         if should_continue is not None and not should_continue():
             logger.info("Sent scan stopped by caller after %d scanned", total_scanned)
+            logger.debug("build_known_senders: should_continue returned False")
             return total_scanned
 
+        logger.debug("build_known_senders: querying for unlabeled sent messages (batch_num=%d)", batch_num)
         pool = list_messages(service, query=query, max_results=_BATCH_SIZE * _SAMPLE_POOL_MULTIPLIER)
         if not pool:
             logger.info("Sent scan complete: %d messages scanned, 0 remaining", total_scanned)
+            logger.debug("build_known_senders: no more messages in pool")
             break
 
         batch_num += 1
@@ -169,8 +174,11 @@ def build_known_senders(service, conn, user_id, should_continue=None, shutdown_e
         # after commit, recipients are saved and messages get re-processed
         # (idempotent via ON CONFLICT DO NOTHING).
         if recipients:
+            logger.debug("build_known_senders: batch %d — %d recipients to insert", batch_num, len(recipients))
             with db.get_connection() as batch_conn:
                 db.bulk_add_known_senders(batch_conn, user_id, recipients)
+        else:
+            logger.debug("build_known_senders: batch %d — no recipients extracted", batch_num)
 
         if scanned_ids:
             try:
@@ -204,6 +212,7 @@ def relabel_scan(service, user_id, label_configs, label_id_cache, should_continu
         pending_senders = db.get_pending_relabel_senders(conn, user_id)
 
     if not pending_senders:
+        logger.debug("relabel_scan: no pending senders, returning 0")
         return 0
 
     logger.info("Relabel scan starting: %d pending senders", len(pending_senders))
@@ -221,11 +230,13 @@ def relabel_scan(service, user_id, label_configs, label_id_cache, should_continu
     if not unknown_label_id or not known_label_id:
         logger.warning("Relabel scan: missing label IDs (known=%s, unknown=%s)", known_label_id, unknown_label_id)
         return 0
+    logger.debug("relabel_scan: resolved label IDs — known=%s, unknown=%s", known_label_id, unknown_label_id)
 
     total_relabeled = 0
     for sender in pending_senders:
         if should_continue is not None and not should_continue():
             logger.info("Relabel scan stopped by caller after %d relabeled", total_relabeled)
+            logger.debug("relabel_scan: should_continue returned False")
             return total_relabeled
 
         # Find this sender's messages with unknown-sender label
@@ -243,6 +254,7 @@ def relabel_scan(service, user_id, label_configs, label_id_cache, should_continu
                 break
 
         if msg_ids:
+            logger.debug("relabel_scan: sender=%s — %d messages to relabel", sender, len(msg_ids))
             # Swap labels in batches
             for i in range(0, len(msg_ids), _BATCH_SIZE):
                 batch = msg_ids[i:i + _BATCH_SIZE]
@@ -251,6 +263,8 @@ def relabel_scan(service, user_id, label_configs, label_id_cache, should_continu
                 _interruptible_sleep(1, shutdown_event)
 
             logger.info("Relabel scan: %s → %d messages relabeled", sender, len(msg_ids))
+        else:
+            logger.debug("relabel_scan: sender=%s — no unknown-sender messages found", sender)
 
         # Mark sender as done
         with db.get_connection() as conn:
@@ -302,8 +316,10 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
     while True:
         if should_continue is not None and not should_continue():
             logger.info("Inbox scan stopped by caller after %d labeled", total_labeled)
+            logger.debug("scan_inbox: should_continue returned False")
             return total_labeled
 
+        logger.debug("scan_inbox: querying unlabeled messages (batch_num=%d)", batch_num)
         unlabeled_pool = list_messages(service, query=query, max_results=_BATCH_SIZE * _SAMPLE_POOL_MULTIPLIER)
 
         # Touch last_fetched with a fresh connection
@@ -312,6 +328,7 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
 
         if not unlabeled_pool:
             logger.info("Inbox scan complete: %d messages labeled, 0 remaining", total_labeled)
+            logger.debug("scan_inbox: no more unlabeled messages")
             break
 
         batch_num += 1
@@ -348,6 +365,7 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                             newest_date_ms = internal_date_ms
 
         # Batch apply labels, then write progress with a fresh connection
+        logger.debug("scan_inbox: batch %d — %d messages to label", batch_num, len(to_label))
         if to_label:
             try:
                 applied = batch_apply_labels(service, to_label)
