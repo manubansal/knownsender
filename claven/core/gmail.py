@@ -318,33 +318,60 @@ def gmail_retry(fn, max_retries=3):
 _BATCH_LIMIT = 50
 
 
-def batch_get_message_metadata(service, message_ids, metadata_headers=None, max_retries=3):
-    """Fetch metadata for up to _BATCH_LIMIT messages in a single batch request.
+def _run_batch_with_retry(service, requests, callback, max_retries=3):
+    """Execute a batch of Gmail API requests with retry on failure.
 
-    Retries failed messages (429/503) with exponential backoff up to max_retries.
-    Returns {message_id: (headers_dict, label_ids_list, internal_date_ms)}
-    for successful fetches.  Failed fetches are omitted from the result.
+    requests: list of (request_object, request_id) tuples
+    callback: fn(request_id, response, exception) called per request
+    max_retries: total attempts before giving up
+
+    Returns list of request_ids that permanently failed.
     """
     import time as _time
-    fetch_headers = metadata_headers or ["From", "Subject", "To"]
-    header_names = {h.lower() for h in fetch_headers}
-    results = {}
-    pending = list(message_ids[:_BATCH_LIMIT])
+    pending = list(requests)
 
     for attempt in range(max_retries + 1):
         if not pending:
             break
         if attempt > 0:
             delay = min(5 * (2 ** (attempt - 1)), 30)
-            logger.info("Retrying %d failed messages (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
+            logger.info("Retrying %d failed batch requests (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
             _time.sleep(delay)
 
         failed = []
 
-        def _callback(request_id, response, exception):
-            if exception:
-                failed.append(request_id)
-                return
+        def _wrap_callback(rid, resp, exc, _failed=failed):
+            if exc:
+                _failed.append(rid)
+            callback(rid, resp, exc)
+
+        batch = service.new_batch_http_request(callback=_wrap_callback)
+        for req, rid in pending:
+            batch.add(req, request_id=rid)
+
+        try:
+            batch.execute()
+        except Exception as exc:
+            logger.warning("Batch execute failed (attempt %d): %s", attempt + 1, exc)
+            failed = [rid for _, rid in pending]
+
+        pending = [(req, rid) for req, rid in pending if rid in failed]
+
+    return [rid for _, rid in pending]
+
+
+def batch_get_message_metadata(service, message_ids, metadata_headers=None, max_retries=3):
+    """Fetch metadata for up to _BATCH_LIMIT messages in a single batch request.
+
+    Returns {message_id: (headers_dict, label_ids_list, internal_date_ms)}
+    for successful fetches. Failed fetches are omitted from the result.
+    """
+    fetch_headers = metadata_headers or ["From", "Subject", "To"]
+    header_names = {h.lower() for h in fetch_headers}
+    results = {}
+
+    def _callback(request_id, response, exception):
+        if not exception:
             headers = {}
             for header in response.get("payload", {}).get("headers", []):
                 name = header["name"].lower()
@@ -353,20 +380,11 @@ def batch_get_message_metadata(service, message_ids, metadata_headers=None, max_
             internal_date = response.get("internalDate")
             results[request_id] = (headers, response.get("labelIds", []), int(internal_date) if internal_date else None)
 
-        batch = service.new_batch_http_request(callback=_callback)
-        for msg_id in pending:
-            batch.add(
-                service.users().messages().get(
-                    userId="me", id=msg_id, format="metadata",
-                    metadataHeaders=fetch_headers,
-                ),
-                request_id=msg_id,
-            )
-        batch.execute()
-        pending = failed
-
-    if pending:
-        logger.warning("Batch get gave up on %d messages after %d retries", len(pending), max_retries)
+    requests = [
+        (service.users().messages().get(userId="me", id=mid, format="metadata", metadataHeaders=fetch_headers), mid)
+        for mid in message_ids[:_BATCH_LIMIT]
+    ]
+    _run_batch_with_retry(service, requests, _callback, max_retries)
     return results
 
 
@@ -378,44 +396,21 @@ def batch_get_message_headers(service, message_ids):
 def batch_apply_labels(service, message_label_pairs, max_retries=3):
     """Apply labels to up to _BATCH_LIMIT messages in a single batch request.
 
-    Retries failed messages (429/503) with exponential backoff.
     Returns the number of successful applications.
     """
-    import time as _time
     applied = 0
     pairs_by_id = {msg_id: label_id for msg_id, label_id in message_label_pairs[:_BATCH_LIMIT]}
-    pending = list(pairs_by_id.keys())
 
-    for attempt in range(max_retries + 1):
-        if not pending:
-            break
-        if attempt > 0:
-            delay = min(5 * (2 ** (attempt - 1)), 30)
-            logger.info("Retrying %d failed label applies (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
-            _time.sleep(delay)
-
-        failed = []
-
-        def _callback(request_id, response, exception):
-            nonlocal applied
-            if exception:
-                failed.append(request_id)
-                return
+    def _callback(request_id, response, exception):
+        nonlocal applied
+        if not exception:
             applied += 1
 
-        batch = service.new_batch_http_request(callback=_callback)
-        for msg_id in pending:
-            batch.add(
-                service.users().messages().modify(
-                    userId="me", id=msg_id, body={"addLabelIds": [pairs_by_id[msg_id]]},
-                ),
-                request_id=msg_id,
-            )
-        batch.execute()
-        pending = failed
-
-    if pending:
-        logger.warning("Batch apply gave up on %d messages after %d retries", len(pending), max_retries)
+    requests = [
+        (service.users().messages().modify(userId="me", id=mid, body={"addLabelIds": [pairs_by_id[mid]]}), mid)
+        for mid in pairs_by_id
+    ]
+    _run_batch_with_retry(service, requests, _callback, max_retries)
     return applied
 
 
@@ -424,40 +419,18 @@ def batch_remove_labels(service, message_ids, label_ids_to_remove, max_retries=3
 
     Returns the number of successful modifications.
     """
-    import time as _time
     modified = 0
-    pending = list(message_ids[:_BATCH_LIMIT])
 
-    for attempt in range(max_retries + 1):
-        if not pending:
-            break
-        if attempt > 0:
-            delay = min(5 * (2 ** (attempt - 1)), 30)
-            logger.info("Retrying %d failed label removals (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
-            _time.sleep(delay)
-
-        failed = []
-
-        def _callback(request_id, response, exception):
-            nonlocal modified
-            if exception:
-                failed.append(request_id)
-                return
+    def _callback(request_id, response, exception):
+        nonlocal modified
+        if not exception:
             modified += 1
 
-        batch = service.new_batch_http_request(callback=_callback)
-        for msg_id in pending:
-            batch.add(
-                service.users().messages().modify(
-                    userId="me", id=msg_id, body={"removeLabelIds": label_ids_to_remove},
-                ),
-                request_id=msg_id,
-            )
-        batch.execute()
-        pending = failed
-
-    if pending:
-        logger.warning("Batch remove gave up on %d messages after %d retries", len(pending), max_retries)
+    requests = [
+        (service.users().messages().modify(userId="me", id=mid, body={"removeLabelIds": label_ids_to_remove}), mid)
+        for mid in message_ids[:_BATCH_LIMIT]
+    ]
+    _run_batch_with_retry(service, requests, _callback, max_retries)
     return modified
 
 
@@ -469,39 +442,19 @@ def batch_swap_labels(service, message_ids, remove_label_id, add_label_id, max_r
 
     Returns the number of successful swaps.
     """
-    import time as _time
     swapped = 0
-    pending = list(message_ids[:_BATCH_LIMIT])
 
-    for attempt in range(max_retries + 1):
-        if not pending:
-            break
-        if attempt > 0:
-            delay = min(5 * (2 ** (attempt - 1)), 30)
-            logger.info("Retrying %d failed label swaps (attempt %d, backoff %ds)", len(pending), attempt + 1, delay)
-            _time.sleep(delay)
-
-        failed = []
-
-        def _callback(request_id, response, exception):
-            nonlocal swapped
-            if exception:
-                failed.append(request_id)
-                return
+    def _callback(request_id, response, exception):
+        nonlocal swapped
+        if not exception:
             swapped += 1
 
-        batch = service.new_batch_http_request(callback=_callback)
-        for msg_id in pending:
-            batch.add(
-                service.users().messages().modify(
-                    userId="me", id=msg_id,
-                    body={"removeLabelIds": [remove_label_id], "addLabelIds": [add_label_id]},
-                ),
-                request_id=msg_id,
-            )
-        batch.execute()
-        pending = failed
-
-    if pending:
-        logger.warning("Batch swap gave up on %d messages after %d retries", len(pending), max_retries)
+    requests = [
+        (service.users().messages().modify(
+            userId="me", id=mid,
+            body={"removeLabelIds": [remove_label_id], "addLabelIds": [add_label_id]},
+        ), mid)
+        for mid in message_ids[:_BATCH_LIMIT]
+    ]
+    _run_batch_with_retry(service, requests, _callback, max_retries)
     return swapped
