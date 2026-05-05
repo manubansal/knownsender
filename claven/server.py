@@ -794,19 +794,21 @@ def api_me(request: Request):
                 db.set_inbox_scan_status(conn, session["user_id"], "complete")
             inbox_scan_status = "complete"
 
-        # Auto-retrigger scan chain — but not if sent scan is already running
-        # (it chains into relabel → inbox scan automatically)
+        # Auto-retrigger scan chain — but not if sent scan is actively running.
+        # _needs_sent_scan handles staleness: in_progress older than 1 min is
+        # treated as failed, so orphaned status from a dead worker recovers.
+        sent_scan_active = not _needs_sent_scan(sent_scan_progress)
         if (inbox_unlabeled_first_page_count is not None
                 and inbox_unlabeled_first_page_count > 0
                 and inbox_scan_status != "in_progress"
-                and sent_scan_progress["status"] != "in_progress"
+                and not sent_scan_active
                 and history_id is not None):
             logger.debug("/api/me: auto-retriggering scan chain (unlabeled=%d, inbox_status=%s, sent_status=%s)",
                          inbox_unlabeled_first_page_count, inbox_scan_status, sent_scan_progress["status"])
             _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
         else:
-            logger.debug("/api/me: no retrigger (unlabeled=%s, inbox_status=%s, sent_status=%s, history=%s)",
-                         inbox_unlabeled_first_page_count, inbox_scan_status, sent_scan_progress["status"], history_id)
+            logger.debug("/api/me: no retrigger (unlabeled=%s, inbox_status=%s, sent_active=%s, history=%s)",
+                         inbox_unlabeled_first_page_count, inbox_scan_status, sent_scan_active, history_id)
 
     return {
         "email": user["email"],
