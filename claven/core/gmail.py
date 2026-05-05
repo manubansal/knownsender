@@ -42,7 +42,7 @@ def get_service(data_dir):
 
 def get_profile(service):
     """Get the user's Gmail profile (includes historyId)."""
-    return service.users().getProfile(userId="me").execute()
+    return gmail_retry(lambda: service.users().getProfile(userId="me").execute())
 
 
 def list_messages(service, query="in:inbox", max_results=100):
@@ -54,12 +54,12 @@ def list_messages(service, query="in:inbox", max_results=100):
     page_token = None
     while max_results is None or len(messages) < max_results:
         batch_size = 500 if max_results is None else min(max_results - len(messages), 500)
-        results = (
+        results = gmail_retry(lambda pt=page_token, bs=batch_size: (
             service.users()
             .messages()
-            .list(userId="me", q=query, maxResults=batch_size, pageToken=page_token)
+            .list(userId="me", q=query, maxResults=bs, pageToken=pt)
             .execute()
-        )
+        ))
         messages.extend(results.get("messages", []))
         page_token = results.get("nextPageToken")
         if not page_token:
@@ -76,7 +76,7 @@ def list_history(service, start_history_id, label_id="INBOX"):
         .list(userId="me", startHistoryId=start_history_id, labelId=label_id)
     )
     while request:
-        response = request.execute()
+        response = gmail_retry(lambda r=request: r.execute())
         records.extend(response.get("history", []))
         request = (
             service.users()
@@ -91,7 +91,7 @@ def get_message(service, message_id, format="metadata", metadata_headers=None):
     kwargs = {"userId": "me", "id": message_id, "format": format}
     if metadata_headers:
         kwargs["metadataHeaders"] = metadata_headers
-    return service.users().messages().get(**kwargs).execute()
+    return gmail_retry(lambda: service.users().messages().get(**kwargs).execute())
 
 
 def get_message_headers(service, message_id):
@@ -112,17 +112,17 @@ def get_message_headers(service, message_id):
 
 def build_label_id_cache(service, label_names: list[str]) -> dict[str, str]:
     """Return a {label_name: gmail_label_id} map, creating any labels that don't exist."""
-    all_labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    all_labels = gmail_retry(lambda: service.users().labels().list(userId="me").execute()).get("labels", [])
     existing = {l["name"]: l["id"] for l in all_labels}
     cache = {}
     for name in label_names:
         if name in existing:
             cache[name] = existing[name]
         else:
-            created = service.users().labels().create(
+            created = gmail_retry(lambda n=name: service.users().labels().create(
                 userId="me",
-                body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
-            ).execute()
+                body={"name": n, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+            ).execute())
             logger.info("Created Gmail label: %s (id: %s)", name, created["id"])
             cache[name] = created["id"]
     return cache
@@ -130,12 +130,12 @@ def build_label_id_cache(service, label_names: list[str]) -> dict[str, str]:
 
 def ensure_label_exists(service, label_name):
     """Create a label if it doesn't exist. Returns the label ID."""
-    results = service.users().labels().list(userId="me").execute()
+    results = gmail_retry(lambda: service.users().labels().list(userId="me").execute())
     for label in results.get("labels", []):
         if label["name"].lower() == label_name.lower():
             return label["id"]
 
-    created = (
+    created = gmail_retry(lambda: (
         service.users()
         .labels()
         .create(
@@ -147,7 +147,7 @@ def ensure_label_exists(service, label_name):
             },
         )
         .execute()
-    )
+    ))
     logger.info("Created label: %s (id: %s)", label_name, created["id"])
     return created["id"]
 
@@ -294,9 +294,9 @@ def _parse_addresses(header_value):
 
 def apply_label(service, message_id, label_id):
     """Apply a label to a message."""
-    service.users().messages().modify(
+    gmail_retry(lambda: service.users().messages().modify(
         userId="me", id=message_id, body={"addLabelIds": [label_id]}
-    ).execute()
+    ).execute())
     logger.debug("Applied label %s to message %s", label_id, message_id)
 
 

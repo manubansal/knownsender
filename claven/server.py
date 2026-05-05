@@ -950,9 +950,13 @@ def _cancel_scans_and_wait(user_id: str, timeout: float = 10) -> None:
 def _should_continue_scan(user_id: str) -> bool:
     """For scan loops: exit on any non-NULL cancel state."""
     if not _is_current_worker():
+        logger.debug("should_continue_scan: _is_current_worker=False (shutdown=%s, pid=%d, worker_id=%d)",
+                      _shutdown_event.is_set(), os.getpid(), _worker_id)
         return False
     with db.get_connection() as conn:
         state = db.get_cancel_state(conn, user_id)
+        if state is not None:
+            logger.debug("should_continue_scan: cancel_state=%s", state)
         return state is None
 
 

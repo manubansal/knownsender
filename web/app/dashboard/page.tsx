@@ -521,12 +521,14 @@ export default function DashboardPage() {
                         : "filter-waiting-icon";
                       return (
                         <div className="flex flex-col gap-2 mt-4">
-                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                            Inbox scan
-                            {healthCode && severity !== "success" && severity !== "info" && (
-                              <span className={cn("ml-2 text-[10px] font-mono", iconColor)} title={scan_health?.label}>{healthCode}</span>
-                            )}
-                          </span>
+                          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">Inbox scan</span>
+                          {healthCode && severity !== "success" && severity !== "info" && (
+                            <span
+                              className={cn("block text-[10px] font-mono cursor-pointer hover:underline", iconColor)}
+                              title={`${scan_health?.label} — click to copy`}
+                              onClick={() => navigator.clipboard.writeText(healthCode)}
+                            >{healthCode}</span>
+                          )}
                           <div className="flex flex-col gap-0.5">
                             <div className="flex justify-between gap-4 items-center">
                               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
