@@ -491,7 +491,7 @@ export default function DashboardPage() {
                         <div className="flex justify-between gap-4 items-center">
                           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             {state.data.pending_relabel_count > 0 ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <Clock className="h-3 w-3" />
                             ) : (
                               <CheckCircle className="h-3 w-3 text-green-500" />
                             )}
