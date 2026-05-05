@@ -602,7 +602,7 @@ def api_me(request: Request):
             batch1.add(service.users().labels().get(userId="me", id="INBOX"), request_id="inbox")
             batch1.add(service.users().labels().get(userId="me", id="SENT"), request_id="sent")
             batch1.add(service.users().labels().list(userId="me"), request_id="labels")
-            batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], q="is:read", maxResults=1), request_id="read")
+            # read_count derived from inbox_count - unread_count (both exact from labels.get)
             batch1.add(service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=1), request_id="newest_msg")
             label_configs = load_config().get("labels", [])
             batch1.add(service.users().getProfile(userId="me"), request_id="profile")
@@ -611,7 +611,7 @@ def api_me(request: Request):
             inbox_data = b1.get("inbox", {})
             unread_count = inbox_data.get("messagesUnread")
             inbox_count = inbox_data.get("messagesTotal")
-            read_count = b1.get("read", {}).get("resultSizeEstimate")
+            read_count = (inbox_count - unread_count) if inbox_count is not None and unread_count is not None else None
             all_mail_count = b1.get("profile", {}).get("messagesTotal")
             sent_total_live = b1.get("sent", {}).get("messagesTotal")
 
@@ -803,21 +803,21 @@ def api_me(request: Request):
                 db.set_inbox_scan_status(conn, session["user_id"], "complete")
             inbox_scan_status = "complete"
 
-        # Auto-retrigger scan chain — but not if sent scan is actively running.
-        # _needs_sent_scan handles staleness: in_progress older than 1 min is
-        # treated as failed, so orphaned status from a dead worker recovers.
-        sent_scan_active = not _needs_sent_scan(sent_scan_progress)
+        # Auto-retrigger scan chain — but not if sent scan is actively running
+        # (non-stale in_progress). It chains into inbox scan on completion.
+        sent_running = (sent_scan_progress["status"] == "in_progress"
+                        and not _needs_sent_scan(sent_scan_progress))
         if (inbox_unlabeled_first_page_count is not None
                 and inbox_unlabeled_first_page_count > 0
                 and inbox_scan_status != "in_progress"
-                and not sent_scan_active
+                and not sent_running
                 and history_id is not None):
             logger.debug("/api/me: auto-retriggering scan chain (unlabeled=%d, inbox_status=%s, sent_status=%s)",
                          inbox_unlabeled_first_page_count, inbox_scan_status, sent_scan_progress["status"])
             _spawn_scan_thread(_run_sent_scan, (session["user_id"],))
         else:
-            logger.debug("/api/me: no retrigger (unlabeled=%s, inbox_status=%s, sent_active=%s, history=%s)",
-                         inbox_unlabeled_first_page_count, inbox_scan_status, sent_scan_active, history_id)
+            logger.debug("/api/me: no retrigger (unlabeled=%s, inbox_status=%s, sent_running=%s, history=%s)",
+                         inbox_unlabeled_first_page_count, inbox_scan_status, sent_running, history_id)
 
     return {
         "email": user["email"],

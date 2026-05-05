@@ -424,14 +424,14 @@ export default function DashboardPage() {
                     <span className="text-xs text-muted-foreground">{desc}</span>
                     {isKnownSender && (
                       <div className="flex flex-col items-center gap-2 mt-3">
-                        <div className="flex rounded-md border border-border overflow-hidden text-xs w-40">
+                        <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
                           <button
                             onClick={() => handleScanScope("inbox")}
                             className={cn(
-                              "flex-1 px-3 py-1 transition-colors text-center",
+                              "flex-1 px-3 py-0.5 transition-colors text-center",
                               (scan_scope ?? "inbox") === "inbox"
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-background text-muted-foreground hover:text-foreground"
+                                ? "bg-muted font-medium text-foreground"
+                                : "hover:text-foreground"
                             )}
                           >
                             Inbox
@@ -439,24 +439,24 @@ export default function DashboardPage() {
                           <button
                             onClick={() => handleScanScope("allmail")}
                             className={cn(
-                              "flex-1 px-3 py-1 transition-colors border-l border-border text-center",
+                              "flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
                               scan_scope === "allmail"
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-background text-muted-foreground hover:text-foreground"
+                                ? "bg-muted font-medium text-foreground"
+                                : "hover:text-foreground"
                             )}
                           >
                             All mail
                           </button>
                         </div>
-                        <div className="flex rounded-md border border-border overflow-hidden text-xs w-40">
+                        <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
                           <button
                             onClick={() => { if (!connected) handleConnect(); }}
                             disabled={connecting || disconnecting}
                             className={cn(
-                              "flex-1 px-3 py-1 transition-colors text-center",
+                              "flex-1 px-3 py-0.5 transition-colors text-center",
                               connected
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-background text-muted-foreground hover:text-foreground"
+                                ? "bg-muted font-medium text-foreground"
+                                : "hover:text-foreground"
                             )}
                           >
                             {connecting ? "Starting…" : "Active"}
@@ -465,10 +465,10 @@ export default function DashboardPage() {
                             onClick={() => { if (connected) handleDisconnect(); }}
                             disabled={connecting || disconnecting}
                             className={cn(
-                              "flex-1 px-3 py-1 transition-colors border-l border-border text-center",
+                              "flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
                               !connected
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-background text-muted-foreground hover:text-foreground"
+                                ? "bg-muted font-medium text-foreground"
+                                : "hover:text-foreground"
                             )}
                           >
                             {disconnecting ? "Pausing…" : "Inactive"}
@@ -477,7 +477,7 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-4">
+                      <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
                         {(() => {
                           const SentIcon = sent_scan_status === "in_progress" ? Loader2
                             : sent_scan_status === "complete" ? CheckCircle
@@ -525,7 +525,7 @@ export default function DashboardPage() {
                       </div>
                     )}
                     {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-4">
+                      <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
                         <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
                           {state.data.pending_relabel_count > 0 ? (
                             <Clock className="h-3 w-3" />
@@ -559,7 +559,7 @@ export default function DashboardPage() {
                         : severity === "success" ? "filter-complete-icon"
                         : "filter-waiting-icon";
                       return (
-                        <div className="flex flex-col gap-2 mt-4">
+                        <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
                           <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
                             <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
                             Inbox scan
@@ -589,7 +589,7 @@ export default function DashboardPage() {
                             <div className="flex justify-between gap-4 items-center">
                               <span className="text-xs text-muted-foreground">Inbox known-sender</span>
                               <span className="text-xs tabular-nums text-muted-foreground">
-                                {inbox_labeled_known_shallow_count !== null
+                                {inbox_labeled_known_shallow_count != null
                                   ? `${inbox_labeled_known_shallow_count}${inbox_labeled_known_has_more ? "+" : ""}`
                                   : "—"}
                               </span>
@@ -614,7 +614,7 @@ export default function DashboardPage() {
                                 )}
                               </span>
                               <span className="text-xs tabular-nums text-muted-foreground">
-                                {inbox_labeled_unknown_shallow_count !== null
+                                {inbox_labeled_unknown_shallow_count != null
                                   ? `${inbox_labeled_unknown_shallow_count}${inbox_labeled_unknown_has_more ? "+" : ""}`
                                   : "—"}
                               </span>
@@ -631,7 +631,10 @@ export default function DashboardPage() {
                                   : "—"}
                               </span>
                             </div>
-                            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60 mt-2">System health</span>
+                            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60 mt-4 pt-3 border-t border-border/30">
+                              <span className={`inline-block h-2 w-2 rounded-full ${severity === "error" ? "bg-destructive" : severity === "warning" ? "bg-yellow-500" : "bg-green-500"}`} />
+                              System health
+                            </span>
                             <div className="flex justify-between gap-4 items-center">
                               <span className="text-xs text-muted-foreground">
                                 Last fetched
