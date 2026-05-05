@@ -584,6 +584,8 @@ def api_me(request: Request):
         allmail_labeled_known_count = None
         allmail_labeled_unknown_count = None
         allmail_labeled_total_count = None
+        inbox_labeled_known_shallow_count = None
+        inbox_labeled_known_has_more = None
         inbox_labeled_unknown_shallow_count = None
         inbox_labeled_unknown_has_more = None
         inbox_unlabeled_first_page_count = None
@@ -652,8 +654,10 @@ def api_me(request: Request):
             unlabeled_q = _unlabeled_query(label_configs, scope=scan_scope)
             batch2.add(service.users().messages().list(userId="me", q=unlabeled_q, maxResults=500), request_id="unlabeled")
 
-            # Shallow count of inbox unknown-sender messages (for archive action)
+            # Shallow count of inbox known/unknown-sender messages
             for lc in label_configs:
+                if lid := label_id_by_name.get(lc["id"]):
+                    batch2.add(service.users().messages().list(userId="me", labelIds=["INBOX", lid], maxResults=500), request_id="inbox_known_shallow")
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
                     batch2.add(service.users().messages().list(userId="me", labelIds=["INBOX", uid], maxResults=500), request_id="inbox_unknown_shallow")
 
@@ -669,6 +673,11 @@ def api_me(request: Request):
                 if unknown := lc.get("unknown_label"):
                     allmail_labeled_unknown_count += b2.get(f"unknown_{unknown}", {}).get("messagesTotal", 0)
             allmail_labeled_total_count = allmail_labeled_known_count + allmail_labeled_unknown_count
+
+            inbox_known_data = b2.get("inbox_known_shallow", {})
+            inbox_known_msgs = inbox_known_data.get("messages", [])
+            inbox_labeled_known_shallow_count = len(inbox_known_msgs)
+            inbox_labeled_known_has_more = "nextPageToken" in inbox_known_data
 
             inbox_unknown_data = b2.get("inbox_unknown_shallow", {})
             inbox_unknown_msgs = inbox_unknown_data.get("messages", [])
@@ -830,6 +839,8 @@ def api_me(request: Request):
         "allmail_labeled_total_count": allmail_labeled_total_count,
         "inbox_unlabeled_first_page_count": inbox_unlabeled_first_page_count,
         "inbox_unlabeled_deep_count": inbox_unlabeled_deep_count,
+        "inbox_labeled_known_shallow_count": inbox_labeled_known_shallow_count,
+        "inbox_labeled_known_has_more": inbox_labeled_known_has_more,
         "inbox_labeled_unknown_shallow_count": inbox_labeled_unknown_shallow_count,
         "inbox_labeled_unknown_has_more": inbox_labeled_unknown_has_more,
         "archive_job": archive_job,
