@@ -222,11 +222,10 @@ def api_me(request: Request):
 
             _srv.db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
-            from claven.tasks import _classify_error
-            error_label = _classify_error(exc)
+            from claven.tasks import _handle_error
+            error_label = _handle_error(exc, session["user_id"], "Gmail API", conn)
             health_entry = HEALTH_CODES.get(error_label)
             gmail_error = health_entry if health_entry else {"code": error_label, "label": error_label, "severity": "error"}
-            logger.warning("Gmail API unavailable for /api/me (%s): %s (classified: %s)", session["email"], exc, error_label)
 
         inbox_scan_status = _srv.db.get_inbox_scan_status(conn, session["user_id"])
         archive_job = _srv.db.get_archive_job(conn, session["user_id"])
@@ -277,6 +276,7 @@ def api_me(request: Request):
             inbox_scan_status = "error.scan.stalled"
             with _srv.db.get_connection() as conn:
                 _srv.db.set_inbox_scan_status(conn, session["user_id"], inbox_scan_status)
+                _srv.db.log_event(conn, session["user_id"], "error", "Label scan stalled — reset to error")
             logger.warning("Reset stalled scan for %s", session["user_id"],
                            extra={"event": "scan_stalled_reset", "user_id": session["user_id"]})
 
@@ -286,6 +286,7 @@ def api_me(request: Request):
             logger.debug("/api/me: auto-clearing error (status=%s, unlabeled=0)", inbox_scan_status)
             with _srv.db.get_connection() as conn:
                 _srv.db.set_inbox_scan_status(conn, session["user_id"], "complete")
+                _srv.db.log_event(conn, session["user_id"], "scan", f"Label scan error auto-cleared ({inbox_scan_status}) — no unlabeled remaining")
             inbox_scan_status = "complete"
 
         # Auto-retrigger scan chain — but not if sent scan is actively running

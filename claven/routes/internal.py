@@ -49,8 +49,9 @@ def internal_poll(request: Request):
                         _srv.build_known_senders(service, conn, user_id)
                         _srv.db.set_sent_scan_status(conn, user_id, "complete")
                     except Exception as exc:
-                        logger.exception("Reconcile sent scan failed for %s", user_id)
-                        _srv.db.set_sent_scan_status(conn, user_id, "error")
+                        from claven.tasks import _handle_error
+                        error_label = _handle_error(exc, user_id, "Sent scan reconciliation", conn)
+                        _srv.db.set_sent_scan_status(conn, user_id, error_label)
 
                 known_senders = _srv.db.get_known_senders(conn, user_id)
 
@@ -66,8 +67,9 @@ def internal_poll(request: Request):
                     _srv.db.touch_last_labeled(conn, user_id)
                 results.append({"user_id": user_id, "status": "ok"})
             except Exception as exc:
-                logger.exception("Error processing user %s", user_id, exc_info=exc)
-                results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
+                from claven.tasks import _handle_error
+                error_label = _handle_error(exc, user_id, "Poll processing", conn)
+                results.append({"user_id": user_id, "status": "error", "detail": error_label})
 
     return {"processed": len(results), "results": results}
 
@@ -96,8 +98,9 @@ def internal_build_known_senders(request: Request):
                 result = _srv.build_known_senders(service, conn, user_id)
                 results.append({"user_id": user_id, "status": "ok", **result})
             except Exception as exc:
-                logger.exception("Known senders scan failed for user %s", user_id, exc_info=exc)
-                results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
+                from claven.tasks import _handle_error
+                error_label = _handle_error(exc, user_id, "Known senders scan", conn)
+                results.append({"user_id": user_id, "status": "error", "detail": error_label})
 
     return {"processed": len(results), "results": results}
 
@@ -159,7 +162,8 @@ async def webhook_gmail(request: Request):
             if scan_progress["status"] != "complete":
                 _srv.db.set_sent_scan_status(conn, user["id"], "complete")
         except Exception as exc:
-            logger.warning("Known senders update failed for %s: %s", user["id"], exc)
+            from claven.tasks import _handle_error
+            _handle_error(exc, user["id"], "Webhook sent scan update", conn)
 
         known_senders = _srv.db.get_known_senders(conn, user["id"])
         label_id_cache = _srv._label_id_cache_for_config(service, label_configs)
