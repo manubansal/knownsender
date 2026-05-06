@@ -186,6 +186,7 @@ export default function DashboardPage() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [topSenders, setTopSenders] = useState<{ email: string; count: number }[]>([]);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -198,9 +199,10 @@ export default function DashboardPage() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
-      const [meRes, configRes] = await Promise.all([
+      const [meRes, configRes, topRes] = await Promise.all([
         fetch(`${API_URL}/api/me`, { credentials: "include", signal: controller.signal }),
         fetch(`${API_URL}/api/config`, { signal: controller.signal }),
+        fetch(`${API_URL}/api/top-senders`, { credentials: "include", signal: controller.signal }).catch(() => null),
       ]);
       if (meRes.status === 401) {
         setState({ status: "unauthenticated" });
@@ -212,6 +214,10 @@ export default function DashboardPage() {
         return;
       }
       const [data, config] = await Promise.all([meRes.json(), configRes.json()]);
+      if (topRes?.ok) {
+        const topData = await topRes.json();
+        setTopSenders(topData.top_senders ?? []);
+      }
       setState({ status: "loaded", data, labels: config.labels ?? [] });
       setLastUpdated(new Date());
     } catch {
@@ -642,6 +648,22 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
+
+          {topSenders.length > 0 && (
+            <details className="w-full text-xs" open>
+              <summary className="text-muted-foreground cursor-pointer hover:text-foreground">
+                Top senders — unread inbox ({topSenders.length})
+              </summary>
+              <div className="mt-2 rounded border border-border bg-muted/30 px-3 py-2 space-y-0.5">
+                {topSenders.map((sender, i) => (
+                  <div key={sender.email} className="flex justify-between gap-4">
+                    <span className="text-muted-foreground truncate">{sender.email}</span>
+                    <span className="tabular-nums text-muted-foreground shrink-0">{sender.count}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
 
           {state.data.recent_events?.length > 0 && (
             <details className="w-full text-xs">
