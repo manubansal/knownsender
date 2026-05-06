@@ -90,6 +90,56 @@ _ENV = {
 }
 
 
+class TestClassifyError:
+    def test_connection_error(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("connection refused")) == "error.db.connection_lost"
+
+    def test_closed_connection(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("server closed the connection unexpectedly")) == "error.db.connection_lost"
+
+    def test_ssl_error(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("SSL: WRONG_VERSION_NUMBER")) == "error.db.connection_lost"
+
+    def test_rate_limited_429(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("HttpError 429: Rate Limit Exceeded")) == "error.gmail.rate_limited"
+
+    def test_rate_limited_keyword(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("rate limit hit")) == "error.gmail.rate_limited"
+
+    def test_auth_expired_401(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("HttpError 401: Invalid Credentials")) == "error.gmail.auth_expired"
+
+    def test_auth_expired_403(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("HttpError 403: Forbidden")) == "error.gmail.auth_expired"
+
+    def test_auth_expired_token(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("Token has been expired or revoked")) == "error.gmail.auth_expired"
+
+    def test_auth_expired_invalid_grant(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("invalid_grant: Token has been expired or revoked.")) == "error.gmail.auth_expired"
+
+    def test_quota_exhausted(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("Daily quota exceeded")) == "error.gmail.quota_exhausted"
+
+    def test_gmail_api_error(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("gmail API returned 500")) == "error.gmail.api"
+
+    def test_unknown_error(self):
+        from claven.tasks import _classify_error
+        assert _classify_error(Exception("something unexpected")) == "error.unknown"
+
+
 class TestNeedsSentScan:
     def test_complete_returns_false(self):
         from claven.server import _needs_sent_scan
@@ -843,12 +893,13 @@ class TestApiMe:
         }
 
         # messages.list → paginated unlabeled results
+        # Each query scope (inbox vs allmail) gets its own page index
         _pages = []
         for i in range(0, max(len(unlabeled_ids), 1), 500):
             _pages.append(unlabeled_ids[i:i + 500])
         if not unlabeled_ids:
             _pages = [[]]
-        _page_idx = [0]
+        _page_indices = {}  # keyed by query prefix
 
         def _messages_list(**kwargs):
             q = kwargs.get("q", "")
@@ -857,13 +908,14 @@ class TestApiMe:
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
             elif "-label:" in q:
-                idx = _page_idx[0]
+                scope_key = "inbox" if "in:inbox" in q else "allmail"
+                idx = _page_indices.get(scope_key, 0)
                 page = _pages[idx] if idx < len(_pages) else []
                 has_next = idx + 1 < len(_pages) and _pages[idx + 1]
-                _page_idx[0] = idx + 1
+                _page_indices[scope_key] = idx + 1
                 resp = {"messages": [{"id": mid} for mid in page]}
                 if has_next:
-                    resp["nextPageToken"] = f"page-{idx + 1}"
+                    resp["nextPageToken"] = f"page-{scope_key}-{idx + 1}"
                 result.execute.return_value = resp
             elif not q and "INBOX" in label_ids:
                 # Newest inbox message lookup
