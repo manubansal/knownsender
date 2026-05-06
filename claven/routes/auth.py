@@ -222,7 +222,11 @@ def oauth_callback(
                     response.delete_cookie("oauth_return_to")
                     return response
                 # New user — store credentials only.
-                # Starting the Gmail watch is an explicit user step via /api/connect.
+                _srv.auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
+            elif creds.refresh_token:
+                # Returning user with a fresh refresh token — update stored
+                # credentials. This handles re-auth after token revocation.
+                logger.info("Updating credentials for %s (new refresh token)", email)
                 _srv.auth.store_credentials(conn, user_id, creds, os.environ["TOKEN_ENCRYPTION_KEY"])
     except Exception as exc:
         logger.exception("Signup failed for %s: %s", email, exc)
