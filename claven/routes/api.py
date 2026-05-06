@@ -58,6 +58,7 @@ def api_me(request: Request):
         inbox_labeled_unknown_has_more = None
         inbox_unlabeled_first_page_count = None
         inbox_unlabeled_deep_count = None
+        allmail_unlabeled_first_page_count = None
         scan_unlabeled_first_page_count = None
         gmail_error = None
         try:
@@ -121,13 +122,12 @@ def api_me(request: Request):
                 if (unknown := lc.get("unknown_label")) and (uid := label_id_by_name.get(unknown)):
                     batch2.add(service.users().messages().list(userId="me", labelIds=[uid], maxResults=1), request_id=f"newest_unknown_{unknown}")
 
-            # Always query inbox unlabeled for display; also query scan-scope
-            # unlabeled for retrigger logic when scope differs.
+            # Always query both inbox and allmail unlabeled counts.
+            # Inbox unlabeled for display; allmail unlabeled for display + retrigger (when scope=allmail).
             inbox_unlabeled_q = _unlabeled_query(label_configs, scope="inbox")
+            allmail_unlabeled_q = _unlabeled_query(label_configs, scope="allmail")
             batch2.add(service.users().messages().list(userId="me", q=inbox_unlabeled_q, maxResults=500), request_id="unlabeled")
-            if scan_scope == "allmail":
-                scan_unlabeled_q = _unlabeled_query(label_configs, scope="allmail")
-                batch2.add(service.users().messages().list(userId="me", q=scan_unlabeled_q, maxResults=500), request_id="scan_unlabeled")
+            batch2.add(service.users().messages().list(userId="me", q=allmail_unlabeled_q, maxResults=500), request_id="allmail_unlabeled")
 
             # Shallow count of inbox known/unknown-sender messages
             for lc in label_configs:
@@ -210,10 +210,13 @@ def api_me(request: Request):
                 page_token = page.get("nextPageToken")
             inbox_unlabeled_deep_count = total_unlabeled
 
+            # Allmail unlabeled — direct query (not derived from subtraction)
+            allmail_unlabeled_data = b2.get("allmail_unlabeled", {})
+            allmail_unlabeled_first_page_count = len(allmail_unlabeled_data.get("messages", []))
+
             # Scan-scope unlabeled for retrigger (same as inbox when scope=inbox)
             if scan_scope == "allmail":
-                scan_unlabeled_data = b2.get("scan_unlabeled", {})
-                scan_unlabeled_first_page_count = len(scan_unlabeled_data.get("messages", []))
+                scan_unlabeled_first_page_count = allmail_unlabeled_first_page_count
             else:
                 scan_unlabeled_first_page_count = inbox_unlabeled_first_page_count
 
@@ -336,6 +339,7 @@ def api_me(request: Request):
         "read_count": read_count,
         "inbox_count": inbox_count,
         "all_mail_count": all_mail_count,
+        "allmail_unlabeled_first_page_count": allmail_unlabeled_first_page_count,
         "gmail_error": gmail_error,
     }
 

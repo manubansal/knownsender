@@ -35,6 +35,7 @@ type MeResponse = {
   allmail_labeled_total_count: number | null;
   inbox_unlabeled_first_page_count: number | null;
   inbox_unlabeled_deep_count: number | null;
+  allmail_unlabeled_first_page_count: number | null;
   inbox_labeled_known_shallow_count: number | null;
   inbox_labeled_known_has_more: boolean | null;
   inbox_labeled_unknown_shallow_count: number | null;
@@ -590,7 +591,7 @@ export default function DashboardPage() {
                               { label: "Inbox known-sender", value: inbox_labeled_known_shallow_count != null ? `${inbox_labeled_known_shallow_count}${inbox_labeled_known_has_more ? "+" : ""}` : "—" },
                               { label: unknownCountLabel, value: inbox_labeled_unknown_shallow_count != null ? `${inbox_labeled_unknown_shallow_count}${inbox_labeled_unknown_has_more ? "+" : ""}` : "—" },
                               { label: "Inbox unlabeled", value: inbox_unlabeled_deep_count ?? "—" },
-                              { label: "Allmail unlabeled", value: all_mail_count !== null && allmail_labeled_total_count !== null ? all_mail_count - allmail_labeled_total_count : "—" },
+                              { label: "Allmail unlabeled", value: state.data.allmail_unlabeled_first_page_count != null ? `${state.data.allmail_unlabeled_first_page_count}${state.data.allmail_unlabeled_first_page_count >= 500 ? "+" : ""}` : "—" },
                             ]}
                           />
                           <InfoSection

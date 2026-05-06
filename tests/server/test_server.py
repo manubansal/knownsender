@@ -893,12 +893,13 @@ class TestApiMe:
         }
 
         # messages.list → paginated unlabeled results
+        # Each query scope (inbox vs allmail) gets its own page index
         _pages = []
         for i in range(0, max(len(unlabeled_ids), 1), 500):
             _pages.append(unlabeled_ids[i:i + 500])
         if not unlabeled_ids:
             _pages = [[]]
-        _page_idx = [0]
+        _page_indices = {}  # keyed by query prefix
 
         def _messages_list(**kwargs):
             q = kwargs.get("q", "")
@@ -907,13 +908,14 @@ class TestApiMe:
             if "is:read" in q:
                 result.execute.return_value = {"resultSizeEstimate": read_estimate}
             elif "-label:" in q:
-                idx = _page_idx[0]
+                scope_key = "inbox" if "in:inbox" in q else "allmail"
+                idx = _page_indices.get(scope_key, 0)
                 page = _pages[idx] if idx < len(_pages) else []
                 has_next = idx + 1 < len(_pages) and _pages[idx + 1]
-                _page_idx[0] = idx + 1
+                _page_indices[scope_key] = idx + 1
                 resp = {"messages": [{"id": mid} for mid in page]}
                 if has_next:
-                    resp["nextPageToken"] = f"page-{idx + 1}"
+                    resp["nextPageToken"] = f"page-{scope_key}-{idx + 1}"
                 result.execute.return_value = resp
             elif not q and "INBOX" in label_ids:
                 # Newest inbox message lookup
