@@ -455,35 +455,45 @@ export default function DashboardPage() {
                     {isKnownSender && (
                       <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
                         {(() => {
+                          const sentIsError = sent_scan_status?.startsWith("error");
                           const SentIcon = sent_scan_status === "in_progress" ? Loader2
                             : sent_scan_status === "complete" ? CheckCircle
-                            : sent_scan_status === "error" ? AlertCircle
+                            : sentIsError ? AlertCircle
                             : sent_scan_status === "cancelled" ? AlertTriangle
                             : Clock;
                           const sentIconColor = sent_scan_status === "complete" ? "text-green-500"
-                            : sent_scan_status === "error" ? "text-destructive"
+                            : sentIsError ? "text-destructive"
                             : sent_scan_status === "cancelled" ? "text-yellow-500"
                             : "";
                           const sentIconExtra = sent_scan_status === "in_progress" ? "animate-spin" : "";
                           const resetJob = state.data.reset_sent_job;
                           return (
-                            <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                                <SentIcon className={`h-3 w-3 ${sentIconColor} ${sentIconExtra}`} data-testid="sent-scan-icon" />
-                                Sent scan
-                              </span>
-                              {resetJob?.status === "in_progress" ? (
-                                <button
-                                  onClick={handleCancelAction}
-                                  disabled={cancelling}
-                                  className="text-[10px] text-muted-foreground hover:text-foreground"
-                                >
-                                  {cancelling ? "Cancelling…" : `Resetting ${resetJob.progress ?? 0}/${resetJob.total ?? "…"} — cancel`}
-                                </button>
-                              ) : (
-                                <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                                  <SentIcon className={`h-3 w-3 ${sentIconColor} ${sentIconExtra}`} data-testid="sent-scan-icon" />
+                                  Sent scan
+                                </span>
+                                {resetJob?.status === "in_progress" ? (
+                                  <button
+                                    onClick={handleCancelAction}
+                                    disabled={cancelling}
+                                    className="text-[10px] text-muted-foreground hover:text-foreground"
+                                  >
+                                    {cancelling ? "Cancelling…" : `Resetting ${resetJob.progress ?? 0}/${resetJob.total ?? "…"} — cancel`}
+                                  </button>
+                                ) : (
+                                  <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
+                                )}
+                              </div>
+                              {sentIsError && sent_scan_status && (
+                                <span
+                                  className="block text-[10px] font-mono cursor-pointer hover:underline text-destructive"
+                                  title={`${sent_scan_status} — click to copy`}
+                                  onClick={() => navigator.clipboard.writeText(sent_scan_status)}
+                                >{sent_scan_status}</span>
                               )}
-                            </div>
+                            </>
                           );
                         })()}
                         <div className="flex flex-col gap-0.5">
