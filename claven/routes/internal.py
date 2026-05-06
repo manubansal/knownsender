@@ -1,0 +1,173 @@
+"""Internal + webhook routes (/internal/poll, /internal/build-known-senders, /webhook/gmail)."""
+
+import base64
+import json
+import logging
+import os
+
+from fastapi import APIRouter, HTTPException, Request
+
+import claven.server as _srv
+from claven.routes.auth import _require_internal_auth, _verify_pubsub_token
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.post("/internal/poll")
+def internal_poll(request: Request):
+    _require_internal_auth(request)
+
+    label_configs = _srv.load_config().get("labels", [])
+    results = []
+
+    with _srv.db.get_connection() as conn:
+        users = _srv.db.get_all_users(conn)
+
+    for user in users:
+        user_id = user["id"]
+        with _srv.db.get_connection() as conn:
+            try:
+                if not _srv.db.try_lock_user_scan(conn, user_id):
+                    results.append({"user_id": user_id, "status": "skipped", "detail": "locked"})
+                    continue
+
+                history_id = _srv.db.get_history_id(conn, user_id)
+                if not history_id:
+                    continue
+
+                service = _srv.auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+
+                # Reconcile: if sent scan never completed, run it now
+                scan_progress = _srv.db.get_sent_scan_progress(conn, user_id)
+                logger.debug("internal_poll: user %s sent_scan status=%s", user_id, scan_progress["status"])
+                if _srv._needs_sent_scan(scan_progress):
+                    logger.info("Reconciling sent scan for user %s (status=%s)", user_id, scan_progress["status"])
+                    _srv.db.set_sent_scan_status(conn, user_id, "in_progress")
+                    try:
+                        _srv.build_known_senders(service, conn, user_id)
+                        _srv.db.set_sent_scan_status(conn, user_id, "complete")
+                    except Exception as exc:
+                        logger.exception("Reconcile sent scan failed for %s", user_id)
+                        _srv.db.set_sent_scan_status(conn, user_id, "error")
+
+                known_senders = _srv.db.get_known_senders(conn, user_id)
+
+                profile = _srv.get_profile(service)
+                latest_history_id = int(profile["historyId"])
+
+                label_id_cache = _srv._label_id_cache_for_config(service, label_configs)
+                count = _srv.poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders)
+                _srv.db.touch_last_fetched(conn, user_id)
+                _srv.db.set_history_id(conn, user_id, latest_history_id)
+                if count is not None and count > 0:
+                    _srv.db.increment_processed_count(conn, user_id, count)
+                    _srv.db.touch_last_labeled(conn, user_id)
+                results.append({"user_id": user_id, "status": "ok"})
+            except Exception as exc:
+                logger.exception("Error processing user %s", user_id, exc_info=exc)
+                results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
+
+    return {"processed": len(results), "results": results}
+
+
+@router.post("/internal/build-known-senders")
+def internal_build_known_senders(request: Request):
+    """Build or update the known senders list for all connected users.
+
+    Scans each user's Sent mail and populates their sent_recipients rows.
+    Uses a per-user cursor (sent_scan_cursor) for incremental updates —
+    only new sent messages are processed on subsequent runs.
+
+    Intended to be triggered by a Cloud Scheduler job or by /api/connect.
+    """
+    _require_internal_auth(request)
+    results = []
+
+    with _srv.db.get_connection() as conn:
+        users = _srv.db.get_all_users(conn)
+
+    for user in users:
+        user_id = user["id"]
+        with _srv.db.get_connection() as conn:
+            try:
+                service = _srv.auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+                result = _srv.build_known_senders(service, conn, user_id)
+                results.append({"user_id": user_id, "status": "ok", **result})
+            except Exception as exc:
+                logger.exception("Known senders scan failed for user %s", user_id, exc_info=exc)
+                results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
+
+    return {"processed": len(results), "results": results}
+
+
+@router.post("/webhook/gmail")
+async def webhook_gmail(request: Request):
+    _verify_pubsub_token(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    message = body.get("message")
+    if not message:
+        raise HTTPException(status_code=400, detail="Missing 'message' field")
+
+    try:
+        data = base64.b64decode(message.get("data", ""))
+        notification = json.loads(data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed message data")
+
+    email = notification.get("emailAddress")
+    history_id_str = notification.get("historyId")
+    if not email or not history_id_str:
+        raise HTTPException(status_code=400, detail="Missing emailAddress or historyId")
+
+    notification_history_id = int(history_id_str)
+    label_configs = _srv.load_config().get("labels", [])
+
+    with _srv.db.get_connection() as conn:
+        user = _srv.db.get_user_by_email(conn, email)
+        if not user:
+            logger.info("Webhook for unknown user %s — acknowledging", email)
+            return {"status": "ok", "detail": "unknown user"}
+
+        if not _srv.db.try_lock_user_scan(conn, user["id"]):
+            logger.info("Webhook for %s skipped — locked by another instance", email)
+            return {"status": "ok", "detail": "locked"}
+
+        stored_history_id = _srv.db.get_history_id(conn, user["id"])
+        if not stored_history_id:
+            logger.info("No history_id for %s — skipping", email)
+            return {"status": "ok", "detail": "no history_id"}
+
+        logger.debug("webhook_gmail: processing for %s (history_id=%d)", email, stored_history_id)
+        service = _srv.auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+
+        # Incremental known senders update — cheap with cursor (one list_history call).
+        # Also serves as reconciliation: if the initial scan never completed,
+        # build_known_senders falls through to a full scan.
+        scan_progress = _srv.db.get_sent_scan_progress(conn, user["id"])
+        if _srv._needs_sent_scan(scan_progress):
+            logger.debug("webhook_gmail: reconciling sent scan (status=%s)", scan_progress["status"])
+            _srv.db.set_sent_scan_status(conn, user["id"], "in_progress")
+        try:
+            _srv.build_known_senders(service, conn, user["id"])
+            if scan_progress["status"] != "complete":
+                _srv.db.set_sent_scan_status(conn, user["id"], "complete")
+        except Exception as exc:
+            logger.warning("Known senders update failed for %s: %s", user["id"], exc)
+
+        known_senders = _srv.db.get_known_senders(conn, user["id"])
+        label_id_cache = _srv._label_id_cache_for_config(service, label_configs)
+        count = _srv.poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)
+        _srv.db.touch_last_fetched(conn, user["id"])
+        _srv.db.set_history_id(conn, user["id"], notification_history_id)
+        if count is not None and count > 0:
+            _srv.db.increment_processed_count(conn, user["id"], count)
+            _srv.db.touch_last_labeled(conn, user["id"])
+
+    return {"status": "ok"}
