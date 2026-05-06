@@ -199,10 +199,9 @@ export default function DashboardPage() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
-      const [meRes, configRes, topRes] = await Promise.all([
+      const [meRes, configRes] = await Promise.all([
         fetch(`${API_URL}/api/me`, { credentials: "include", signal: controller.signal }),
         fetch(`${API_URL}/api/config`, { signal: controller.signal }),
-        fetch(`${API_URL}/api/top-senders`, { credentials: "include", signal: controller.signal }).catch(() => null),
       ]);
       if (meRes.status === 401) {
         setState({ status: "unauthenticated" });
@@ -214,10 +213,15 @@ export default function DashboardPage() {
         return;
       }
       const [data, config] = await Promise.all([meRes.json(), configRes.json()]);
-      if (topRes?.ok) {
-        const topData = await topRes.json();
-        setTopSenders(topData.top_senders ?? []);
-      }
+      // Fetch top senders separately — non-blocking, doesn't affect auth flow
+      fetch(`${API_URL}/api/top-senders`, { credentials: "include" })
+        .then(async (res) => {
+          if (res.ok) {
+            const topData = await res.json();
+            setTopSenders(topData.top_senders ?? []);
+          }
+        })
+        .catch(() => {});
       setState({ status: "loaded", data, labels: config.labels ?? [] });
       setLastUpdated(new Date());
     } catch {
@@ -649,21 +653,15 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {topSenders.length > 0 && (
-            <details className="w-full text-xs" open>
-              <summary className="text-muted-foreground cursor-pointer hover:text-foreground">
-                Top senders — unread inbox ({topSenders.length})
-              </summary>
-              <div className="mt-2 rounded border border-border bg-muted/30 px-3 py-2 space-y-0.5">
-                {topSenders.map((sender, i) => (
-                  <div key={sender.email} className="flex justify-between gap-4">
-                    <span className="text-muted-foreground truncate">{sender.email}</span>
-                    <span className="tabular-nums text-muted-foreground shrink-0">{sender.count}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+          <InfoSection
+            icon={topSenders.length > 0 ? Clock : CheckCircle}
+            iconColor={topSenders.length > 0 ? "" : "text-green-500"}
+            title="Top senders — unread inbox"
+            rows={topSenders.length > 0
+              ? topSenders.map((sender) => ({ label: sender.email, value: sender.count }))
+              : [{ label: "No unread known-sender messages", value: "—" }]
+            }
+          />
 
           {state.data.recent_events?.length > 0 && (
             <details className="w-full text-xs">
