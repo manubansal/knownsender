@@ -46,6 +46,22 @@ def _classify_error(exc: Exception) -> str:
     return "error.unknown"
 
 
+def _handle_error(exc: Exception, user_id: str, context: str, conn=None) -> str:
+    """Classify an error, log it, and write to the event log.
+
+    Returns the classified error label for callers that need to set status.
+    conn is optional — if None or DB write fails, event log is skipped.
+    """
+    error_label = _classify_error(exc)
+    logger.exception("%s failed for %s: %s (classified: %s)", context, user_id, exc, error_label)
+    if conn:
+        try:
+            _srv.db.log_event(conn, user_id, "error", f"{context} — {error_label}")
+        except Exception:
+            logger.debug("_handle_error: failed to write event log for %s", user_id)
+    return error_label
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _needs_sent_scan(scan_progress: dict) -> bool:
@@ -223,12 +239,10 @@ def _run_task(
         return
 
     except Exception as exc:
-        error_label = _classify_error(exc)
-        logger.exception("%s failed for %s: %s (classified: %s)", task_name, user_id, exc, error_label)
         try:
             with _srv.db.get_connection() as conn:
+                error_label = _handle_error(exc, user_id, task_name, conn)
                 set_status(conn, user_id, error_label)
-                _srv.db.log_event(conn, user_id, "error", f"{task_name} failed — {error_label}")
         except Exception:
             logger.exception("Failed to set error status for %s", user_id)
         return
