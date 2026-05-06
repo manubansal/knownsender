@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import claven.server as _srv
+from claven.core.health import HEALTH_CODES
 from claven.routes.auth import _get_session
 
 logger = logging.getLogger(__name__)
@@ -219,8 +220,10 @@ def api_me(request: Request):
             _srv.db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
             from claven.tasks import _classify_error
-            gmail_error = _classify_error(exc)
-            logger.warning("Gmail API unavailable for /api/me (%s): %s (classified: %s)", session["email"], exc, gmail_error)
+            error_label = _classify_error(exc)
+            health_entry = HEALTH_CODES.get(error_label)
+            gmail_error = health_entry if health_entry else {"code": error_label, "label": error_label, "severity": "error"}
+            logger.warning("Gmail API unavailable for /api/me (%s): %s (classified: %s)", session["email"], exc, error_label)
 
         inbox_scan_status = _srv.db.get_inbox_scan_status(conn, session["user_id"])
         archive_job = _srv.db.get_archive_job(conn, session["user_id"])
@@ -308,6 +311,7 @@ def api_me(request: Request):
         "sent_scanned_count": sent_scanned_count,
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
+        "sent_scan_health": HEALTH_CODES.get(sent_scan_progress["status"]) if sent_scan_progress["status"] and sent_scan_progress["status"].startswith("error") else None,
         "inbox_scan_status": inbox_scan_status,
         "scan_health": _log_health(_srv.compute_scan_health(inbox_scan_status, last_fetched_at), session["user_id"]),
         "last_fetched_at": last_fetched_at.isoformat() if last_fetched_at else None,

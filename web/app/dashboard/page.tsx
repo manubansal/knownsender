@@ -6,7 +6,7 @@ import { SIGN_IN_LABEL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { AlertCircle, AlertTriangle, CheckCircle, Clock, Loader2, RefreshCw, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api.claven.app";
 
@@ -19,6 +19,7 @@ type MeResponse = {
   sent_scanned_count: number;
   sent_total_count: number | null;
   sent_scan_status: string | null;
+  sent_scan_health: { code: string; label: string; severity: string } | null;
   inbox_scan_status: string | null;
   scan_health: { code: string; label: string; severity: string } | null;
   last_fetched_at: string | null;
@@ -43,7 +44,7 @@ type MeResponse = {
   reset_sent_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
   scan_scope: "inbox" | "allmail" | null;
   cancel_state: string | null;
-  gmail_error: string | null;
+  gmail_error: { code: string; label: string; severity: string } | null;
 };
 
 type LabelRule = {
@@ -124,6 +125,55 @@ function ArchiveButton({ label, disabled, onConfirm }: { label: string; disabled
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function InfoSection({
+  icon: Icon,
+  iconElement,
+  iconColor = "",
+  iconSpin = false,
+  iconTestId,
+  title,
+  errorCode,
+  action,
+  rows,
+}: {
+  icon?: typeof Clock;
+  iconElement?: ReactNode;
+  iconColor?: string;
+  iconSpin?: boolean;
+  iconTestId?: string;
+  title: string;
+  errorCode?: string | null;
+  action?: ReactNode;
+  rows: { label: ReactNode; value: ReactNode }[];
+}) {
+  return (
+    <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
+      <div className="flex items-center justify-between">
+        <span className="inline-flex items-baseline gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+          {iconElement ?? (Icon && <Icon className={cn("h-3 w-3 self-center", iconColor, iconSpin && "animate-spin")} data-testid={iconTestId} />)}
+          <span>{title}</span>
+          {errorCode && (
+            <span
+              className="font-mono cursor-pointer hover:underline text-destructive normal-case tracking-normal"
+              title={`${errorCode} — click to copy`}
+              onClick={() => navigator.clipboard.writeText(errorCode)}
+            >{errorCode}</span>
+          )}
+        </span>
+        {action}
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {rows.map((row, i) => (
+          <div key={i} className="flex justify-between gap-4 items-center">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">{row.label}</span>
+            <span className="text-xs tabular-nums text-muted-foreground">{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -453,253 +503,108 @@ export default function DashboardPage() {
                         </div>
                       </div>
                     )}
-                    {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
-                        {(() => {
-                          const sentIsError = sent_scan_status?.startsWith("error");
-                          const SentIcon = sent_scan_status === "in_progress" ? Loader2
-                            : sent_scan_status === "complete" ? CheckCircle
-                            : sentIsError ? AlertCircle
-                            : sent_scan_status === "cancelled" ? AlertTriangle
-                            : Clock;
-                          const sentIconColor = sent_scan_status === "complete" ? "text-green-500"
-                            : sentIsError ? "text-destructive"
-                            : sent_scan_status === "cancelled" ? "text-yellow-500"
-                            : "";
-                          const sentIconExtra = sent_scan_status === "in_progress" ? "animate-spin" : "";
-                          const resetJob = state.data.reset_sent_job;
-                          return (
-                            <>
-                              <div className="flex items-center justify-between">
-                                <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                                  <SentIcon className={`h-3 w-3 ${sentIconColor} ${sentIconExtra}`} data-testid="sent-scan-icon" />
-                                  Sent scan
-                                </span>
-                                {resetJob?.status === "in_progress" ? (
-                                  <button
-                                    onClick={handleCancelAction}
-                                    disabled={cancelling}
-                                    className="text-[10px] text-muted-foreground hover:text-foreground"
-                                  >
-                                    {cancelling ? "Cancelling…" : `Resetting ${resetJob.progress ?? 0}/${resetJob.total ?? "…"} — cancel`}
-                                  </button>
-                                ) : (
-                                  <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
-                                )}
-                              </div>
-                              {sentIsError && sent_scan_status && (
-                                <span
-                                  className="block text-[10px] font-mono cursor-pointer hover:underline text-destructive"
-                                  title={`${sent_scan_status} — click to copy`}
-                                  onClick={() => navigator.clipboard.writeText(sent_scan_status)}
-                                >{sent_scan_status}</span>
-                              )}
-                            </>
-                          );
-                        })()}
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex justify-between gap-4 items-center">
-                            <span className="text-xs text-muted-foreground">Messages scanned</span>
-                            <span className="text-xs tabular-nums text-muted-foreground">
-                              {sent_scanned_count}{sent_total_count !== null ? ` / ${sent_total_count}` : ""}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-4 items-center">
-                            <span className="text-xs text-muted-foreground">Known senders found</span>
-                            <span className="text-xs tabular-nums text-muted-foreground">{known_senders}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    {isKnownSender && (
-                      <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
-                        <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                          {state.data.pending_relabel_count > 0 ? (
-                            <Clock className="h-3 w-3" />
+                    {isKnownSender && (() => {
+                      const sentIsError = sent_scan_status?.startsWith("error");
+                      const resetJob = state.data.reset_sent_job;
+                      return (
+                        <InfoSection
+                          icon={sent_scan_status === "in_progress" ? Loader2 : sent_scan_status === "complete" ? CheckCircle : sentIsError ? AlertCircle : sent_scan_status === "cancelled" ? AlertTriangle : Clock}
+                          iconColor={sent_scan_status === "complete" ? "text-green-500" : sentIsError ? "text-destructive" : sent_scan_status === "cancelled" ? "text-yellow-500" : ""}
+                          iconSpin={sent_scan_status === "in_progress"}
+                          iconTestId="sent-scan-icon"
+                          title="Sent scan"
+                          errorCode={state.data.sent_scan_health?.code ?? null}
+                          action={resetJob?.status === "in_progress" ? (
+                            <button onClick={handleCancelAction} disabled={cancelling} className="text-[10px] text-muted-foreground hover:text-foreground">
+                              {cancelling ? "Cancelling…" : `Resetting ${resetJob.progress ?? 0}/${resetJob.total ?? "…"} — cancel`}
+                            </button>
                           ) : (
-                            <CheckCircle className="h-3 w-3 text-green-500" />
+                            <ResetSentButton disabled={resettingSent} onConfirm={handleResetSentScan} />
                           )}
-                          Relabel scan
-                        </span>
-                        <div className="flex justify-between gap-4 items-center">
-                          <span className="text-xs text-muted-foreground">Pending senders</span>
-                          <span className="text-xs tabular-nums text-muted-foreground">{state.data.pending_relabel_count}</span>
-                        </div>
-                      </div>
+                          rows={[
+                            { label: "Messages scanned", value: `${sent_scanned_count}${sent_total_count !== null ? ` / ${sent_total_count}` : ""}` },
+                            { label: "Known senders found", value: known_senders },
+                          ]}
+                        />
+                      );
+                    })()}
+                    {isKnownSender && (
+                      <InfoSection
+                        icon={state.data.pending_relabel_count > 0 ? Clock : CheckCircle}
+                        iconColor={state.data.pending_relabel_count > 0 ? "" : "text-green-500"}
+                        title="Relabel scan"
+                        rows={[
+                          { label: "Pending senders", value: state.data.pending_relabel_count },
+                        ]}
+                      />
                     )}
                     {label.unknown_label !== undefined && (() => {
                       const severity = scan_health?.severity;
-                      const FilterIcon = severity === "info" ? Loader2
-                        : severity === "warning" ? AlertTriangle
-                        : severity === "error" ? AlertCircle
-                        : severity === "success" ? CheckCircle
-                        : Clock;
-                      const iconColor = severity === "error" ? "text-destructive"
-                        : severity === "warning" ? "text-yellow-500"
-                        : severity === "success" ? "text-green-500"
-                        : "";
-                      const iconExtra = severity === "info" ? "animate-spin" : "";
-                      const healthCode = scan_health?.code;
+                      const inboxErrorCode = (severity === "error" || severity === "warning") ? scan_health?.code : null;
                       const iconTestId = severity === "info" ? "filter-labeling-icon"
                         : severity === "error" ? "filter-error-icon"
                         : severity === "warning" ? "filter-warning-icon"
                         : severity === "success" ? "filter-complete-icon"
                         : "filter-waiting-icon";
-                      return (
-                        <div className="flex flex-col gap-2 mt-5 pt-3 border-t border-border/30">
-                          <div className="flex items-center justify-between">
-                            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
-                              <FilterIcon className={`h-3 w-3 ${iconColor} ${iconExtra}`} data-testid={iconTestId} />
-                              Inbox scan
-                            </span>
-                            <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
-                              <button
-                                onClick={() => handleScanScope("inbox")}
-                                className={cn(
-                                  "flex-1 px-3 py-0.5 transition-colors text-center",
-                                  (scan_scope ?? "inbox") === "inbox"
-                                    ? "bg-muted font-medium text-foreground"
-                                    : "hover:text-foreground"
-                                )}
-                              >
-                                Inbox
-                              </button>
-                              <button
-                                onClick={() => handleScanScope("allmail")}
-                                className={cn(
-                                  "flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
-                                  scan_scope === "allmail"
-                                    ? "bg-muted font-medium text-foreground"
-                                    : "hover:text-foreground"
-                                )}
-                              >
-                                All mail
-                              </button>
-                            </div>
-                          </div>
-                          {healthCode && severity !== "success" && severity !== "info" && (
-                            <span
-                              className={cn("block text-[10px] font-mono cursor-pointer hover:underline", iconColor)}
-                              title={`${scan_health?.label} — click to copy`}
-                              onClick={() => navigator.clipboard.writeText(healthCode)}
-                            >{healthCode}</span>
+                      const unknownCountLabel = (
+                        <>
+                          Inbox unknown-sender
+                          {archiveRunning ? (
+                            <button onClick={handleCancelAction} disabled={cancelling}
+                              className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors">
+                              {cancelling ? "Cancelling…" : `Archiving ${archive_job?.progress ?? 0}/${archive_job?.total ?? "…"} — cancel`}
+                            </button>
+                          ) : (
+                            <ArchiveButton label={archiving ? "Starting…" : "Archive"}
+                              disabled={!connected || archiveCount === 0 || archiving} onConfirm={handleArchiveUnknown} />
                           )}
-                          <div className="flex flex-col gap-0.5">
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">Allmail labeled</span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {allmail_labeled_total_count ?? "—"}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">Allmail known-sender</span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_known_count ?? "—"}</span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">Allmail unknown-sender</span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{allmail_labeled_unknown_count ?? "—"}</span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">Inbox known-sender</span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {inbox_labeled_known_shallow_count != null
-                                  ? `${inbox_labeled_known_shallow_count}${inbox_labeled_known_has_more ? "+" : ""}`
-                                  : "—"}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                Inbox unknown-sender
-                                {archiveRunning ? (
-                                  <button
-                                    onClick={handleCancelAction}
-                                    disabled={cancelling}
-                                    className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
-                                  >
-                                    {cancelling ? "Cancelling…" : `Archiving ${archive_job?.progress ?? 0}/${archive_job?.total ?? "…"} — cancel`}
-                                  </button>
-                                ) : (
-                                  <ArchiveButton
-                                    label={archiving ? "Starting…" : "Archive"}
-                                    disabled={!connected || archiveCount === 0 || archiving}
-                                    onConfirm={handleArchiveUnknown}
-                                  />
-                                )}
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {inbox_labeled_unknown_shallow_count != null
-                                  ? `${inbox_labeled_unknown_shallow_count}${inbox_labeled_unknown_has_more ? "+" : ""}`
-                                  : "—"}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">Inbox unlabeled</span>
-                              <span className="text-xs tabular-nums text-muted-foreground">{inbox_unlabeled_deep_count ?? "—"}</span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">Allmail unlabeled</span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {all_mail_count !== null && allmail_labeled_total_count !== null
-                                  ? all_mail_count - allmail_labeled_total_count
-                                  : "—"}
-                              </span>
-                            </div>
-                            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60 mt-4 pt-3 border-t border-border/30">
-                              <span className={`inline-block h-2 w-2 rounded-full ${severity === "error" || state.data.gmail_error ? "bg-destructive" : severity === "warning" ? "bg-yellow-500" : "bg-green-500"}`} />
-                              System health
-                            </span>
-                            {state.data.gmail_error && (
-                              <div className="flex justify-between gap-4 items-center">
-                                <span className="text-xs text-destructive">Gmail API error</span>
-                                <span
-                                  className="text-[10px] font-mono text-destructive cursor-pointer hover:underline"
-                                  title={`${state.data.gmail_error} — click to copy`}
-                                  onClick={() => navigator.clipboard.writeText(state.data.gmail_error!)}
-                                >{state.data.gmail_error}</span>
+                        </>
+                      );
+                      return (
+                        <>
+                          <InfoSection
+                            icon={severity === "info" ? Loader2 : severity === "warning" ? AlertTriangle : severity === "error" ? AlertCircle : severity === "success" ? CheckCircle : Clock}
+                            iconColor={severity === "error" ? "text-destructive" : severity === "warning" ? "text-yellow-500" : severity === "success" ? "text-green-500" : ""}
+                            iconSpin={severity === "info"}
+                            iconTestId={iconTestId}
+                            title="Inbox scan"
+                            errorCode={inboxErrorCode}
+                            action={
+                              <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
+                                <button onClick={() => handleScanScope("inbox")}
+                                  className={cn("flex-1 px-3 py-0.5 transition-colors text-center",
+                                    (scan_scope ?? "inbox") === "inbox" ? "bg-muted font-medium text-foreground" : "hover:text-foreground")}>
+                                  Inbox
+                                </button>
+                                <button onClick={() => handleScanScope("allmail")}
+                                  className={cn("flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
+                                    scan_scope === "allmail" ? "bg-muted font-medium text-foreground" : "hover:text-foreground")}>
+                                  All mail
+                                </button>
                               </div>
-                            )}
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">
-                                Last fetched
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {state.data.last_fetched_at
-                                  ? formatRelativeTime(new Date(state.data.last_fetched_at))
-                                  : "—"}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">
-                                Last labeled
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {state.data.last_labeled_at
-                                  ? formatRelativeTime(new Date(state.data.last_labeled_at))
-                                  : "—"}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">
-                                Newest email
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {state.data.newest_mail_at
-                                  ? formatRelativeTime(new Date(state.data.newest_mail_at), "old")
-                                  : "—"}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-4 items-center">
-                              <span className="text-xs text-muted-foreground">
-                                Newest labeled
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {state.data.newest_labeled_at
-                                  ? formatRelativeTime(new Date(state.data.newest_labeled_at), "old")
-                                  : "—"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
+                            }
+                            rows={[
+                              { label: "Allmail labeled", value: allmail_labeled_total_count ?? "—" },
+                              { label: "Allmail known-sender", value: allmail_labeled_known_count ?? "—" },
+                              { label: "Allmail unknown-sender", value: allmail_labeled_unknown_count ?? "—" },
+                              { label: "Inbox known-sender", value: inbox_labeled_known_shallow_count != null ? `${inbox_labeled_known_shallow_count}${inbox_labeled_known_has_more ? "+" : ""}` : "—" },
+                              { label: unknownCountLabel, value: inbox_labeled_unknown_shallow_count != null ? `${inbox_labeled_unknown_shallow_count}${inbox_labeled_unknown_has_more ? "+" : ""}` : "—" },
+                              { label: "Inbox unlabeled", value: inbox_unlabeled_deep_count ?? "—" },
+                              { label: "Allmail unlabeled", value: all_mail_count !== null && allmail_labeled_total_count !== null ? all_mail_count - allmail_labeled_total_count : "—" },
+                            ]}
+                          />
+                          <InfoSection
+                            iconElement={<span className={cn("inline-block h-2 w-2 rounded-full", severity === "error" || state.data.gmail_error ? "bg-destructive" : severity === "warning" ? "bg-yellow-500" : "bg-green-500")} />}
+                            title="System health"
+                            errorCode={state.data.gmail_error?.code}
+                            rows={[
+                              { label: "Last fetched", value: state.data.last_fetched_at ? formatRelativeTime(new Date(state.data.last_fetched_at)) : "—" },
+                              { label: "Last labeled", value: state.data.last_labeled_at ? formatRelativeTime(new Date(state.data.last_labeled_at)) : "—" },
+                              { label: "Newest email", value: state.data.newest_mail_at ? formatRelativeTime(new Date(state.data.newest_mail_at), "old") : "—" },
+                              { label: "Newest labeled", value: state.data.newest_labeled_at ? formatRelativeTime(new Date(state.data.newest_labeled_at), "old") : "—" },
+                            ]}
+                          />
+                        </>
                       );
                     })()}
                     <div className="flex justify-between gap-4 items-center mt-3 pt-2 border-t border-border/50">
