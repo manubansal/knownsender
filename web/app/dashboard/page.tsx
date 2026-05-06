@@ -43,6 +43,7 @@ type MeResponse = {
   reset_sent_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
   scan_scope: "inbox" | "allmail" | null;
   cancel_state: string | null;
+  gmail_error: string | null;
 };
 
 type LabelRule = {
@@ -644,9 +645,19 @@ export default function DashboardPage() {
                               </span>
                             </div>
                             <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60 mt-4 pt-3 border-t border-border/30">
-                              <span className={`inline-block h-2 w-2 rounded-full ${severity === "error" ? "bg-destructive" : severity === "warning" ? "bg-yellow-500" : "bg-green-500"}`} />
+                              <span className={`inline-block h-2 w-2 rounded-full ${severity === "error" || state.data.gmail_error ? "bg-destructive" : severity === "warning" ? "bg-yellow-500" : "bg-green-500"}`} />
                               System health
                             </span>
+                            {state.data.gmail_error && (
+                              <div className="flex justify-between gap-4 items-center">
+                                <span className="text-xs text-destructive">Gmail API error</span>
+                                <span
+                                  className="text-[10px] font-mono text-destructive cursor-pointer hover:underline"
+                                  title={`${state.data.gmail_error} — click to copy`}
+                                  onClick={() => navigator.clipboard.writeText(state.data.gmail_error!)}
+                                >{state.data.gmail_error}</span>
+                              </div>
+                            )}
                             <div className="flex justify-between gap-4 items-center">
                               <span className="text-xs text-muted-foreground">
                                 Last fetched

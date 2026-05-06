@@ -58,6 +58,7 @@ def api_me(request: Request):
         inbox_unlabeled_first_page_count = None
         inbox_unlabeled_deep_count = None
         scan_unlabeled_first_page_count = None
+        gmail_error = None
         try:
             service = _srv.auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
 
@@ -217,7 +218,9 @@ def api_me(request: Request):
 
             _srv.db.touch_last_fetched(conn, session["user_id"])
         except Exception as exc:
-            logger.warning("Gmail API unavailable for /api/me (%s): %s", session["email"], exc)
+            from claven.tasks import _classify_error
+            gmail_error = _classify_error(exc)
+            logger.warning("Gmail API unavailable for /api/me (%s): %s (classified: %s)", session["email"], exc, gmail_error)
 
         inbox_scan_status = _srv.db.get_inbox_scan_status(conn, session["user_id"])
         archive_job = _srv.db.get_archive_job(conn, session["user_id"])
@@ -329,6 +332,7 @@ def api_me(request: Request):
         "read_count": read_count,
         "inbox_count": inbox_count,
         "all_mail_count": all_mail_count,
+        "gmail_error": gmail_error,
     }
 
 
