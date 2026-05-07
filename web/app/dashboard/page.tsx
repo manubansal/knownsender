@@ -186,6 +186,8 @@ export default function DashboardPage() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [topSenders, setTopSenders] = useState<{ email: string; count: number }[]>([]);
+  const [topSendersLoading, setTopSendersLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -212,6 +214,17 @@ export default function DashboardPage() {
         return;
       }
       const [data, config] = await Promise.all([meRes.json(), configRes.json()]);
+      // Fetch top senders separately — non-blocking, doesn't affect auth flow
+      setTopSendersLoading(true);
+      fetch(`${API_URL}/api/top-senders`, { credentials: "include" })
+        .then(async (res) => {
+          if (res.ok) {
+            const topData = await res.json();
+            setTopSenders(topData.top_senders ?? []);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setTopSendersLoading(false));
       setState({ status: "loaded", data, labels: config.labels ?? [] });
       setLastUpdated(new Date());
     } catch {
@@ -616,6 +629,21 @@ export default function DashboardPage() {
                           : "—"}
                       </span>
                     </div>
+                    {isKnownSender && (
+                      <InfoSection
+                        icon={topSendersLoading ? Loader2 : CheckCircle}
+                        iconColor={topSendersLoading ? "" : "text-green-500"}
+                        iconSpin={topSendersLoading}
+                        title="Top known senders — unread inbox"
+                        rows={topSenders.length > 0
+                          ? topSenders.map((sender) => ({
+                              label: <span className="cursor-pointer hover:underline" title="Click to copy" onClick={() => navigator.clipboard.writeText(sender.email)}>{sender.email}</span>,
+                              value: sender.count,
+                            }))
+                          : [{ label: "No unread known-sender messages", value: "—" }]
+                        }
+                      />
+                    )}
                   </div>
                 );
               })}

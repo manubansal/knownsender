@@ -512,3 +512,53 @@ async def api_set_scan_scope(request: Request):
             _srv.db.log_event(conn, session["user_id"], "setting", f"Scan scope changed to {scope}")
             logger.debug("api_set_scan_scope: %s → %s, reset inbox_scan_status", old_scope, scope)
     return JSONResponse({"ok": True, "scan_scope": scope})
+
+
+@router.get("/api/top-senders")
+def api_top_senders(request: Request):
+    """Return top known senders by unread inbox message count (descending).
+
+    Fetches up to 500 unread known-sender inbox messages, extracts From headers
+    via batch API, counts by sender, returns top 10.
+    """
+    session = _get_session(request)
+    with _srv.db.get_connection() as conn:
+        service = _srv.auth.get_service(conn, session["user_id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+
+    from claven.core.gmail import gmail_retry, batch_get_message_metadata
+    from claven.core.scan import _parse_addresses
+
+    # Query unread known-sender inbox messages
+    label_configs = _srv.load_config().get("labels", [])
+    known_label = label_configs[0]["id"] if label_configs else "known-sender"
+
+    query = f"in:inbox is:unread label:{known_label}"
+    result = gmail_retry(lambda: service.users().messages().list(
+        userId="me", q=query, maxResults=500,
+    ).execute())
+    messages = result.get("messages", [])
+
+    if not messages:
+        return {"top_senders": [], "total_unread_known": 0}
+
+    # Batch-fetch From headers (50 at a time)
+    from collections import Counter
+    sender_counts: Counter = Counter()
+    batch_size = 50
+
+    for i in range(0, len(messages), batch_size):
+        batch_ids = [m["id"] for m in messages[i:i + batch_size]]
+        metadata = batch_get_message_metadata(service, batch_ids, ["From"])
+        for msg_id, (headers, _, _) in metadata.items():
+            from_value = headers.get("from", "")
+            if from_value:
+                # Extract email address from "Name <email>" format
+                addrs = _parse_addresses(from_value)
+                if addrs:
+                    sender_counts[addrs[0].lower()] += 1
+
+    top_10 = sender_counts.most_common(10)
+    return {
+        "top_senders": [{"email": email, "count": count} for email, count in top_10],
+        "total_unread_known": len(messages),
+    }
