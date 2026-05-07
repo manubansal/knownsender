@@ -635,6 +635,12 @@ Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)
 - [ ] Define a versioning policy for the CLI ↔ server API contract (e.g. `/v1/` prefix, or a version header)
 - [ ] Add a version handshake: CLI sends its version on every request; server rejects incompatible versions with a clear error message rather than silent breakage
 
+### Frontend error instrumentation
+- [ ] Build a consistent error code map shared between backend and frontend
+- [ ] Instrument the dashboard with fine-grained error reporting: network errors, auth failures, API timeouts, CORS issues
+- [ ] Show visible error states for each failure mode instead of silent fallback to "unauthenticated" page
+- [ ] Context: debugging the prod sign-in failure (2026-05-06) was difficult because the frontend gave no indication of what was failing
+
 ### CI/CD
 - [ ] Set up a GitHub Actions workflow: on push to `main`, run tests, build the Docker image, push to Artifact Registry, and deploy to Cloud Run (`gcloud run deploy`)
 - [ ] Run database migrations as part of the deploy step, before the new container starts serving traffic
