@@ -4,6 +4,34 @@ Claven automatically labels your Gmail inbox messages as **known-sender** or **u
 
 This lets you focus on mail from people you know and deal with the rest on your own schedule.
 
+## Why Claven
+
+Your inbox is a chronological stream — newest on top, oldest buried. If you process it that way, you spend your attention on whatever arrived most recently, not on what matters most. A marketing email from five minutes ago sits above a question from your manager sent an hour ago.
+
+**Your attention is your most precious resource.** Claven is designed around this principle. Instead of processing email in the order it arrived, Claven gives you the tools to process it **semantically** — by who sent it, what kind of attention it needs, and how you naturally think about your relationships.
+
+### People, not messages
+
+Email is a conversation with people, but your inbox treats it as a list of messages. Claven flips this: it organizes your inbox around **senders**. Known senders are people you have a relationship with. Unknown senders are everyone else. This single distinction lets you immediately separate mail that deserves your attention from mail that can wait.
+
+### Triage by trust, not by time
+
+When you sit down with your inbox, the first question isn't "what arrived most recently?" — it's "who needs something from me?" Claven's known/unknown split answers the first-order triage question automatically. Auto-archive takes it further by keeping unknown-sender messages out of your inbox entirely, so you only see mail from people you know.
+
+### Service by sender
+
+The top known senders list shows who has the most unread messages waiting for you. Processing email sender-by-sender is more effective than processing chronologically because you have the full context for that person in your head — their project, their communication style, what you owe them. You also cut your unread count the fastest by servicing the sender with the most messages first.
+
+### Don't get DDoS'd
+
+Every email in your inbox demands a slice of your attention — even if it's just to decide it doesn't matter. Unknown senders, marketing blasts, cold outreach, automated notifications: they all compete for the same finite resource as a message from your team or your most important client. At scale, this is a denial-of-service attack on your attention. The noise drowns out the signal, and the cost isn't spam — it's the important email you missed, the request you forgot to respond to, the relationship you let slip.
+
+No solution to this problem exists in Gmail. Spam filters catch the obvious junk, but everything else lands in one undifferentiated stream. Claven puts guards in place so you **cannot be overwhelmed**. Known-sender separation ensures that the people who matter to you are never buried under noise. Auto-archive keeps the noise out of sight entirely. You process it on your schedule, in batches, without the risk of missing something that matters.
+
+### Your sent mail is the signal
+
+Most email tools ask you to configure rules, maintain lists, or train a classifier. Claven doesn't. Your Sent mail is the ground truth for who matters to you. If you've emailed someone, they're known. This requires no configuration, no maintenance, and no training data. The signal is already in your mailbox.
+
 ## What happens when you connect
 
 Three scans run in sequence:
