@@ -621,6 +621,12 @@ Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)
 - [ ] Write a `docker-compose.yml` that runs the server and a local Postgres instance — single command to get the full stack running locally
 - [ ] Document the local dev setup in README: how to set required env vars, run the server, point the CLI at it
 
+### Chrome extension for Gmail integration
+- [ ] Chrome extension that adds a "Top Senders" panel inside Gmail UI
+- [ ] Calls `/api/top-senders` using the user's session cookie
+- [ ] Each sender is a clickable link that filters Gmail to their unread inbox messages
+- [ ] Context: users shouldn't need to switch to the Claven dashboard to prioritize their inbox — the information should be available where they read email
+
 ### CLI scan trigger
 - [ ] Add `POST /api/scan` endpoint that triggers the sent→relabel→label scan chain
 - [ ] Respects cancel state and exclusive job ownership (same logic as /api/me retrigger)
