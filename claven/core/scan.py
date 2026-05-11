@@ -289,7 +289,7 @@ def _unlabeled_query(label_configs, scope="inbox"):
     return prefix + " ".join(exclude)
 
 
-def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None, shutdown_event=None, scope="inbox"):
+def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_senders=None, should_continue=None, shutdown_event=None, scope="inbox", auto_archive_unknown=False):
     """Label unlabeled messages using batch API calls.
 
     scope='inbox': label inbox messages as known-sender or unknown-sender
@@ -346,6 +346,7 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
 
         # Evaluate rules and collect label applications
         to_label = []
+        to_archive = []  # unknown-sender message IDs to auto-archive
         newest_date_ms = None
         for msg_id in batch_ids:
             result = headers_map.get(msg_id)
@@ -361,6 +362,8 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                     gmail_label_id = label_id_cache.get(apply_id)
                     if gmail_label_id and gmail_label_id not in existing_labels:
                         to_label.append((msg_id, gmail_label_id))
+                        if not matched and auto_archive_unknown and "INBOX" in existing_labels:
+                            to_archive.append(msg_id)
                         if internal_date_ms and (newest_date_ms is None or internal_date_ms > newest_date_ms):
                             newest_date_ms = internal_date_ms
 
@@ -383,6 +386,15 @@ def scan_inbox(service, conn, user_id, label_configs, label_id_cache, known_send
                 _interruptible_sleep(5, shutdown_event)
         else:
             logger.info("Inbox scan batch %d: all %d already labeled by another worker", batch_num, len(batch_ids))
+
+        # Auto-archive unknown-sender messages (remove from inbox)
+        if to_archive:
+            try:
+                from claven.core.gmail import batch_remove_labels
+                archived = batch_remove_labels(service, to_archive, ["INBOX"])
+                logger.info("Inbox scan batch %d: auto-archived %d unknown-sender messages", batch_num, archived)
+            except Exception as exc:
+                logger.warning("Auto-archive failed: %s", exc)
 
         _interruptible_sleep(1, shutdown_event)
 

@@ -235,10 +235,8 @@ def oauth_callback(
     logger.info("OAuth complete for %s (user_id=%s)", email, user_id,
                 extra={"event": "oauth_complete", "user_id": user_id, "email": email})
 
-    # Kick off sent scan immediately — user is now eligible (has tokens).
-    # Don't wait for dashboard load. The scan runs in a background thread
-    # and the dashboard will show progress when the user arrives.
-    _srv._spawn_scan_thread(_srv._run_sent_scan, (user_id,))
+    # No scan triggered here — /api/me handles retrigger logic on first
+    # dashboard load, respecting cancel state and exclusive job ownership.
 
     session_token = _issue_session(user_id, email)
     response = RedirectResponse(url=f"{base}/dashboard", status_code=302)
