@@ -453,6 +453,25 @@ def set_scan_scope(conn, user_id: str, scope: str) -> None:
         )
 
 
+# ── Auto-archive setting ─────────────────────────────────────────────────────
+
+def get_auto_archive_unknown(conn, user_id: str) -> bool:
+    """Return auto_archive_unknown setting. Defaults to False."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT auto_archive_unknown FROM scan_state WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        return bool(row[0]) if row else False
+
+
+def set_auto_archive_unknown(conn, user_id: str, enabled: bool) -> None:
+    """Set auto_archive_unknown setting."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE scan_state SET auto_archive_unknown = %s, updated_at = NOW() WHERE user_id = %s",
+            (enabled, user_id),
+        )
+
+
 # ── Event log ─────────────────────────────────────────────────────────────────
 
 def log_event(conn, user_id: str, event_type: str, message: str) -> None:

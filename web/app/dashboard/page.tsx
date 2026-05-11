@@ -44,6 +44,7 @@ type MeResponse = {
   recent_events: { timestamp: string; event_type: string; message: string }[];
   reset_sent_job: { job_id: string; status: string; total: number | null; progress: number | null } | null;
   scan_scope: "inbox" | "allmail" | null;
+  auto_archive_unknown: boolean;
   cancel_state: string | null;
   gmail_error: { code: string; label: string; severity: string } | null;
 };
@@ -354,6 +355,22 @@ export default function DashboardPage() {
       .catch(() => loadData());
   }
 
+  function handleAutoArchive(enabled: boolean) {
+    setState((prev) =>
+      prev.status === "loaded"
+        ? { ...prev, data: { ...prev.data, auto_archive_unknown: enabled } }
+        : prev,
+    );
+    fetch(`${API_URL}/api/settings/auto-archive`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    })
+      .then(() => { loadData(); })
+      .catch(() => loadData());
+  }
+
   const [resettingSent, setResettingSent] = useState(false);
 
   function handleResetSentScan() {
@@ -584,16 +601,28 @@ export default function DashboardPage() {
                             title="Inbox scan"
                             errorCode={inboxErrorCode}
                             action={
-                              <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
-                                <button onClick={() => handleScanScope("inbox")}
-                                  className={cn("flex-1 px-3 py-0.5 transition-colors text-center",
-                                    (scan_scope ?? "inbox") === "inbox" ? "bg-muted font-medium text-foreground" : "hover:text-foreground")}>
-                                  Inbox
-                                </button>
-                                <button onClick={() => handleScanScope("allmail")}
-                                  className={cn("flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
-                                    scan_scope === "allmail" ? "bg-muted font-medium text-foreground" : "hover:text-foreground")}>
-                                  All mail
+                              <div className="flex gap-2">
+                                <div className="flex rounded-md border border-border/50 overflow-hidden text-[10px] text-muted-foreground w-36">
+                                  <button onClick={() => handleScanScope("inbox")}
+                                    className={cn("flex-1 px-3 py-0.5 transition-colors text-center",
+                                      (scan_scope ?? "inbox") === "inbox" ? "bg-muted font-medium text-foreground" : "hover:text-foreground")}>
+                                    Inbox
+                                  </button>
+                                  <button onClick={() => handleScanScope("allmail")}
+                                    className={cn("flex-1 px-3 py-0.5 transition-colors border-l border-border/50 text-center",
+                                      scan_scope === "allmail" ? "bg-muted font-medium text-foreground" : "hover:text-foreground")}>
+                                    All mail
+                                  </button>
+                                </div>
+                                <button
+                                  onClick={() => handleAutoArchive(!state.data.auto_archive_unknown)}
+                                  className={cn("text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+                                    state.data.auto_archive_unknown
+                                      ? "border-primary bg-muted font-medium text-foreground"
+                                      : "border-border/50 text-muted-foreground hover:text-foreground"
+                                  )}
+                                >
+                                  Auto-archive
                                 </button>
                               </div>
                             }

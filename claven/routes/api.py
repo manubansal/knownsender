@@ -40,6 +40,7 @@ def api_me(request: Request):
         last_labeled_at = _srv.db.get_last_labeled_at(conn, session["user_id"])
         last_fetched_at = _srv.db.get_last_fetched_at(conn, session["user_id"])
         scan_scope = _srv.db.get_scan_scope(conn, session["user_id"])
+        auto_archive_unknown = _srv.db.get_auto_archive_unknown(conn, session["user_id"])
 
         unread_count = None
         read_count = None
@@ -335,6 +336,7 @@ def api_me(request: Request):
         "reset_sent_job": reset_sent_job,
         "recent_events": recent_events,
         "scan_scope": scan_scope,
+        "auto_archive_unknown": auto_archive_unknown,
         "cancel_state": cancel_state,
         "unread_count": unread_count,
         "read_count": read_count,
@@ -512,6 +514,20 @@ async def api_set_scan_scope(request: Request):
             _srv.db.log_event(conn, session["user_id"], "setting", f"Scan scope changed to {scope}")
             logger.debug("api_set_scan_scope: %s → %s, reset inbox_scan_status", old_scope, scope)
     return JSONResponse({"ok": True, "scan_scope": scope})
+
+
+@router.post("/api/settings/auto-archive")
+async def api_set_auto_archive(request: Request):
+    """Enable or disable auto-archive for unknown-sender messages."""
+    session = _get_session(request)
+    body = await request.json()
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="enabled must be true or false")
+    with _srv.db.get_connection() as conn:
+        _srv.db.set_auto_archive_unknown(conn, session["user_id"], enabled)
+        _srv.db.log_event(conn, session["user_id"], "setting", f"Auto-archive unknown-sender {'enabled' if enabled else 'disabled'}")
+    return JSONResponse({"ok": True, "auto_archive_unknown": enabled})
 
 
 @router.get("/api/top-senders")

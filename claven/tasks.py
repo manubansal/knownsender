@@ -298,13 +298,15 @@ def _run_inbox_scan(user_id: str):
         with _srv.db.get_connection() as conn:
             scope = _srv.db.get_scan_scope(conn, user_id)
             known_senders = _srv.db.get_known_senders(conn, user_id)
-        logger.debug("_run_inbox_scan: scope=%s, %d known_senders", scope, len(known_senders))
+            auto_archive = _srv.db.get_auto_archive_unknown(conn, user_id)
+        logger.debug("_run_inbox_scan: scope=%s, %d known_senders, auto_archive=%s", scope, len(known_senders), auto_archive)
         label_id_cache = _label_id_cache_for_config(service, label_configs)
         return _srv.scan_inbox(
             service, None, user_id, label_configs, label_id_cache, known_senders,
             should_continue=lambda: _should_continue_scan(user_id),
             shutdown_event=_srv._shutdown_event,
             scope=scope,
+            auto_archive_unknown=auto_archive,
         )
     _run_task(user_id, "Label scan", task_fn,
               set_status=_srv.db.set_inbox_scan_status)
