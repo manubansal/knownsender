@@ -158,6 +158,13 @@ If you've migrated email accounts, merged mailboxes, or sent a large batch of em
 - **Inbox** (default): only labels messages currently in your inbox. Best for most users — fast, focused.
 - **All Mail**: labels every message in your account. Use this for a one-time cleanup of your entire mailbox. Switch back to Inbox afterwards to keep scans fast.
 
+### Use top known senders to prioritize
+
+The "Top known senders" section shows which known senders have the most unread messages in your inbox right now. Use it to:
+- Spot senders you're falling behind on — a high count means you owe them attention
+- Identify senders whose volume is noise even though they're "known" (e.g., automated notifications from a service you once emailed) — consider demoting them or filtering in Gmail
+- Quickly jump to the sender with the most unread by copying their email and searching in Gmail: `from:alice@example.com is:unread in:inbox`. Servicing the top sender first cuts your unread known-sender count the fastest. Processing by sender is also more efficient than processing by recency — you have the full context for that sender in your head while you work through their messages
+
 ### Check the activity log
 
 The activity log at the bottom of the dashboard shows what Claven has been doing. If something looks wrong (repeated errors, unexpected cancellations), the log will tell you what happened. Error codes are clickable — copy them for support.
