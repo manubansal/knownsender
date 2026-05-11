@@ -2,11 +2,12 @@ import fs from "fs";
 import path from "path";
 import { MarkdownContent } from "./markdown-content";
 
-// Read at build time (static page). Try repo root first, then web-relative.
+// Read at build time (static page). The deploy workflow copies docs/ into web/
+// before build. Local dev reads from the repo root.
 function loadMarkdown(): string {
   const candidates = [
-    path.join(process.cwd(), "..", "docs", "how-claven-works.md"),
     path.join(process.cwd(), "docs", "how-claven-works.md"),
+    path.join(process.cwd(), "..", "docs", "how-claven-works.md"),
   ];
   for (const p of candidates) {
     try {
