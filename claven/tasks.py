@@ -193,6 +193,11 @@ def _run_task(
 
     logger.info("%s started for %s (pid=%d)", task_name, user_id, os.getpid())
 
+    # Exclusive jobs register in _resumed_jobs to prevent /api/me from
+    # spawning duplicates. The cleanup callback clears this on exit.
+    if wait_for_threads:
+        _srv._resumed_jobs.add(user_id)
+
     # Jobs wait for running scans to drain (cancel_scans was set by endpoint)
     if wait_for_threads:
         with _srv._threads_lock:
