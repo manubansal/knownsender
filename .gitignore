@@ -8,5 +8,6 @@ __pycache__/
 *.swo
 *.duckdb
 .DS_Store
+certs/
 web/.open-next/
 .env.local

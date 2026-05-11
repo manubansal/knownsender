@@ -18,7 +18,13 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
 
     Returns True if at least one label was newly applied, False otherwise.
     """
-    headers, existing_labels = get_message_headers(service, message_id)
+    try:
+        headers, existing_labels = get_message_headers(service, message_id)
+    except Exception as exc:
+        if "404" in str(exc) or "notFound" in str(exc):
+            logger.debug("process_message: message %s not found (deleted?), skipping", message_id)
+            return False
+        raise
     if not headers:
         logger.debug("process_message: no headers for %s, skipping", message_id)
         return False

@@ -635,6 +635,13 @@ Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)
 - [ ] Define a versioning policy for the CLI ↔ server API contract (e.g. `/v1/` prefix, or a version header)
 - [ ] Add a version handshake: CLI sends its version on every request; server rejects incompatible versions with a clear error message rather than silent breakage
 
+### Demote sender endpoint
+- [ ] `POST /api/actions/demote-sender` — remove a sender from the known senders list (delete from `sent_recipients`)
+- [ ] Relabel their messages from known-sender to unknown-sender (batch_swap_labels)
+- [ ] Add a demote button/action to the top known senders list on the dashboard
+- [ ] Run as an exclusive job through `_run_task` with progress tracking
+- [ ] Context: user discovers a known sender they want to treat as unknown (e.g. marketing emails from a vendor they once emailed)
+
 ### Frontend error instrumentation
 - [ ] Build a consistent error code map shared between backend and frontend
 - [ ] Instrument the dashboard with fine-grained error reporting: network errors, auth failures, API timeouts, CORS issues
