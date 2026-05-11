@@ -124,3 +124,40 @@ Labels are applied once and not automatically reconsidered. There are cases wher
 - **Multiple workers scanning simultaneously**: This was a bug that has been fixed. The sent scan now always completes before the inbox scan starts, ensuring the known senders list is complete.
 
 If you suspect labels are wrong, you can remove all `known-sender` and `unknown-sender` labels and let the system rescan. The known senders list (from Sent mail) is preserved — only the inbox labels are reapplied.
+
+## Best practices
+
+### Let auto-archive do the heavy lifting
+
+Auto-archive is on by default. It moves unknown-sender messages out of your inbox as they're labeled, so your inbox only shows mail from people you know. You don't need to manually archive — just check All Mail periodically for anything you missed.
+
+### Process unknown-sender mail in batches
+
+Don't check unknown-sender messages one by one as they arrive. Instead, set aside time (daily or weekly) to go through your unknown-sender messages in All Mail. You'll find:
+- Newsletters and marketing you can unsubscribe from
+- Legitimate contacts you should reply to (which adds them to known senders)
+- Spam that Gmail's filter missed
+
+### Reply to promote senders
+
+The simplest way to make someone a known sender is to reply to them. Once you reply, Claven picks up the new recipient on the next sent scan and relabels their future messages as known-sender. Their existing unknown-sender messages get relabeled too.
+
+### Use Gmail filters alongside Claven
+
+Claven handles the known/unknown split. Gmail filters handle everything else. Good combinations:
+- Gmail filter to auto-label newsletters → Claven won't touch messages that already have your labels
+- Gmail filter to star messages from VIPs → stars are preserved regardless of Claven labels
+- Gmail filter to skip inbox for certain senders → Claven only labels inbox messages (in default scope)
+
+### Reset sent scan after major email changes
+
+If you've migrated email accounts, merged mailboxes, or sent a large batch of emails, use the "Reset" button on the sent scan to rebuild your known senders list from scratch. This ensures no recipients are missed.
+
+### Scope: Inbox vs All Mail
+
+- **Inbox** (default): only labels messages currently in your inbox. Best for most users — fast, focused.
+- **All Mail**: labels every message in your account. Use this for a one-time cleanup of your entire mailbox. Switch back to Inbox afterwards to keep scans fast.
+
+### Check the activity log
+
+The activity log at the bottom of the dashboard shows what Claven has been doing. If something looks wrong (repeated errors, unexpected cancellations), the log will tell you what happened. Error codes are clickable — copy them for support.
