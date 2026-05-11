@@ -159,7 +159,7 @@ function InfoSection({
           <span>{title}</span>
           {errorCode && (
             <span
-              className="font-mono cursor-pointer hover:underline text-destructive normal-case tracking-normal"
+              className={cn("cursor-pointer hover:underline normal-case tracking-normal", iconColor || "text-muted-foreground")}
               title={`${errorCode} — click to copy`}
               onClick={() => navigator.clipboard.writeText(errorCode)}
             >{errorCode}</span>
@@ -544,7 +544,7 @@ export default function DashboardPage() {
                           iconSpin={sent_scan_status === "in_progress"}
                           iconTestId="sent-scan-icon"
                           title="Sent scan"
-                          errorCode={state.data.sent_scan_health?.code ?? null}
+                          errorCode={state.data.sent_scan_health?.code ?? (sent_scan_status === "cancelled" ? "cancelled — will retry" : sent_scan_status == null ? "waiting" : null)}
                           action={resetJob?.status === "in_progress" ? (
                             <button onClick={handleCancelAction} disabled={cancelling} className="text-[10px] text-muted-foreground hover:text-foreground">
                               {cancelling ? "Cancelling…" : `Resetting ${resetJob.progress ?? 0}/${resetJob.total ?? "…"} — cancel`}
