@@ -8,8 +8,8 @@ dev-read-write:
 	lsof -ti :8000 | xargs kill -9 2>/dev/null; true; \
 	alembic upgrade head && \
 	trap 'lsof -ti :8000 | xargs kill 2>/dev/null; sleep 1; lsof -ti :8000 | xargs kill -9 2>/dev/null; kill 0' EXIT; \
-	CLAVEN_LOG_FILE=/tmp/claven-server.log uvicorn claven.server:app --port 8000 --reload --timeout-graceful-shutdown 3 & \
-	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
+	CLAVEN_LOG_FILE=/tmp/claven-server.log uvicorn claven.server:app --port 8000 --reload --timeout-graceful-shutdown 3 --ssl-keyfile certs/localhost+1-key.pem --ssl-certfile certs/localhost+1.pem & \
+	NEXT_PUBLIC_API_URL=https://localhost:8000 npm --prefix web run dev & \
 	wait
 
 # Read-only view of the production database — safe to run alongside prod.
@@ -21,8 +21,8 @@ dev-read-only:
 	[ -n "$$DATABASE_URL_READONLY" ] || (echo "Error: DATABASE_URL_READONLY not set in .env.local."; exit 1); \
 	lsof -ti :8000 | xargs kill -9 2>/dev/null; true; \
 	trap 'lsof -ti :8000 | xargs kill 2>/dev/null; sleep 1; lsof -ti :8000 | xargs kill -9 2>/dev/null; kill 0' EXIT; \
-	DATABASE_URL=$$DATABASE_URL_READONLY uvicorn claven.server:app --port 8000 --reload --timeout-graceful-shutdown 3 & \
-	NEXT_PUBLIC_API_URL=http://localhost:8000 npm --prefix web run dev & \
+	DATABASE_URL=$$DATABASE_URL_READONLY uvicorn claven.server:app --port 8000 --reload --timeout-graceful-shutdown 3 --ssl-keyfile certs/localhost+1-key.pem --ssl-certfile certs/localhost+1.pem & \
+	NEXT_PUBLIC_API_URL=https://localhost:8000 npm --prefix web run dev & \
 	wait
 
 # Frontend-only dev against the prod API — no local backend.
