@@ -666,7 +666,7 @@ export default function DashboardPage() {
                         title="Top known senders — unread inbox"
                         rows={topSenders.length > 0
                           ? topSenders.map((sender) => ({
-                              label: <span className="cursor-pointer hover:underline" title="Click to copy" onClick={() => navigator.clipboard.writeText(sender.email)}>{sender.email}</span>,
+                              label: <a href={`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(email)}#search/from:${encodeURIComponent(sender.email)}+is:unread+in:inbox`} target="_blank" rel="noopener noreferrer" className="hover:underline" title="Open in Gmail">{sender.email}</a>,
                               value: sender.count,
                             }))
                           : [{ label: "No unread known-sender messages", value: "—" }]
