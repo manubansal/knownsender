@@ -1894,19 +1894,6 @@ class TestSpawnScanThread:
             with srv._threads_lock:
                 srv._active_threads.clear()
 
-    def test_refuses_during_shutdown(self):
-        import claven.server as srv
-        srv._shutdown_event.set()
-        try:
-            result = srv._spawn_scan_thread(lambda: None, ())
-            assert result is None
-            with srv._threads_lock:
-                assert len(srv._active_threads) == 0
-        finally:
-            srv._shutdown_event.clear()
-            with srv._threads_lock:
-                srv._active_threads.clear()
-
     def test_starts_when_shutdown_clear(self):
         import claven.server as srv
         srv._shutdown_event.clear()

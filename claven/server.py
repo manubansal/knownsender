@@ -112,9 +112,6 @@ signal.signal(signal.SIGTERM, _shutdown_handler)
 
 def _spawn_scan_thread(target, args):
     """Start a daemon thread and track it for graceful shutdown."""
-    if _shutdown_event.is_set():
-        logger.debug("_spawn_scan_thread: refusing to start %s — shutdown in progress", target.__name__)
-        return None
     t = threading.Thread(target=target, args=args, daemon=True)
     with _threads_lock:
         _active_threads.append(t)

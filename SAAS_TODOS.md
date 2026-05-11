@@ -635,6 +635,12 @@ Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)
 - [ ] Define a versioning policy for the CLI ↔ server API contract (e.g. `/v1/` prefix, or a version header)
 - [ ] Add a version handshake: CLI sends its version on every request; server rejects incompatible versions with a clear error message rather than silent breakage
 
+### Auto-archive unknown-sender setting
+- [ ] Add a per-user setting `auto_archive_unknown` (boolean, default false) to `scan_state`
+- [ ] When enabled, the label scan automatically archives (removes INBOX label from) messages it labels as unknown-sender
+- [ ] Dashboard toggle in the inbox scan section to enable/disable
+- [ ] Context: users who want unknown-sender messages out of their inbox immediately, without manually triggering the archive action each time
+
 ### Demote sender endpoint
 - [ ] `POST /api/actions/demote-sender` — remove a sender from the known senders list (delete from `sent_recipients`)
 - [ ] Relabel their messages from known-sender to unknown-sender (batch_swap_labels)
