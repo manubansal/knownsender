@@ -11,7 +11,7 @@ down_revision = "0011"
 
 
 def upgrade():
-    op.add_column("scan_state", sa.Column("auto_archive_unknown", sa.Boolean(), server_default="false", nullable=False))
+    op.add_column("scan_state", sa.Column("auto_archive_unknown", sa.Boolean(), server_default="true", nullable=False))
 
 
 def downgrade():

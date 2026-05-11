@@ -422,8 +422,8 @@ class TestOAuthCallback:
                     )
         mock_watch.assert_not_called()
 
-    def test_callback_triggers_sent_scan(self):
-        """oauth_callback kicks off sent scan in background after storing credentials."""
+    def test_callback_does_not_trigger_scan(self):
+        """oauth_callback defers scan triggering to /api/me retrigger logic."""
         with patch.dict("os.environ", {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}):
             with TestClient(app) as client:
                 start = client.get("/oauth/start", follow_redirects=False)
@@ -455,9 +455,7 @@ class TestOAuthCallback:
                         f"/oauth/callback?code=abc&state={state}",
                         follow_redirects=False,
                     )
-        mock_threading.Thread.assert_called_once()
-        call_kwargs = mock_threading.Thread.call_args[1]
-        assert call_kwargs["target"].__name__ == "_run_sent_scan"
+        mock_threading.Thread.assert_not_called()
 
 class TestInternalPoll:
     def test_no_auth_returns_401(self):
@@ -1702,8 +1700,8 @@ class TestOAuthCallbackSession:
         response = self._run_full_oauth(has_existing_tokens=True)
         assert "session" in response.cookies
 
-    def test_returning_user_still_triggers_sent_scan(self):
-        """Returning users get a sent scan triggered (incremental update)."""
+    def test_returning_user_does_not_trigger_scan(self):
+        """Returning users don't get a scan from OAuth — /api/me handles retrigger."""
         env = {**_ENV, "PUBSUB_TOPIC": "projects/p/topics/t"}
         mock_creds = MagicMock()
         mock_creds.id_token = "fake-id-token"
@@ -1734,9 +1732,7 @@ class TestOAuthCallbackSession:
                 state = start.cookies.get("oauth_state")
                 client.cookies.set("oauth_state", state)
                 client.get(f"/oauth/callback?code=abc&state={state}", follow_redirects=False)
-        # Sent scan should trigger even for returning users (incremental update)
-        mock_threading.Thread.assert_called_once()
-        assert mock_threading.Thread.call_args[1]["target"].__name__ == "_run_sent_scan"
+        mock_threading.Thread.assert_not_called()
 
 
 class TestCloudJsonFormatter:
