@@ -621,6 +621,12 @@ Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)
 - [ ] Write a `docker-compose.yml` that runs the server and a local Postgres instance — single command to get the full stack running locally
 - [ ] Document the local dev setup in README: how to set required env vars, run the server, point the CLI at it
 
+### CLI scan trigger
+- [ ] Add `POST /api/scan` endpoint that triggers the sent→relabel→label scan chain
+- [ ] Respects cancel state and exclusive job ownership (same logic as /api/me retrigger)
+- [ ] CLI calls this after `claven connect` or `claven scan` — doesn't depend on dashboard load
+- [ ] Context: /api/me retrigger only fires when the dashboard loads; CLI needs an explicit trigger
+
 ### CLI packaging and installation
 - [ ] Package `claven` as a PyPI package so users can install with `pip install claven`
 - [ ] Consider a Homebrew formula or standalone binary (e.g. via PyInstaller) for users who don't want to manage a Python environment
