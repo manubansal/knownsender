@@ -621,6 +621,16 @@ Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)
 - [ ] Write a `docker-compose.yml` that runs the server and a local Postgres instance — single command to get the full stack running locally
 - [ ] Document the local dev setup in README: how to set required env vars, run the server, point the CLI at it
 
+### Senders awaiting response (LLM-based)
+- [ ] For each sender with unread messages, classify whether any of their messages need an action/response from the user vs. purely informational (newsletters, notifications, FYIs, CCs)
+- [ ] Aggregate at the sender level, not per-message: "alice@example.com needs a response (3 messages)" not "message X is actionable"
+- [ ] Fetch message bodies via Gmail API (`format=full`), send to LLM API (Claude/Gemini) with action-detection prompt
+- [ ] Dashboard: ranked list of senders awaiting response, similar to top known senders but filtered to action-required only
+- [ ] User decides who to service first from the list — priority queue of people, not messages
+- [ ] Scope: start with known senders (top senders list), extend to unknown-sender later
+- [ ] Cost control: classify per-sender batch (all unread from one sender in one LLM call), cache results until new messages arrive, token budget per user
+- [ ] Context: the primary question is "who needs something from me?" not "what category is this email?" — helps the user decide who to service first vs. who can wait
+
 ### Chrome extension for Gmail integration
 - [ ] Chrome extension that adds a "Top Senders" panel inside Gmail UI
 - [ ] Calls `/api/top-senders` using the user's session cookie
