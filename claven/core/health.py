@@ -26,7 +26,9 @@ def _make_code(severity_letter: str, label: str) -> str:
 
 _REGISTRY = [
     ("I", "info.ok"),
+    ("I", "info.waiting"),
     ("S", "success.complete"),
+    ("W", "warning.scan.cancelled"),
     ("W", "warning.scan.stalled"),
     ("E", "error.scan.stalled"),
     ("E", "error.db.connection_lost"),
@@ -48,7 +50,9 @@ for _sev, _label in _REGISTRY:
 
 # Convenience constants
 OK = HEALTH_CODES["info.ok"]
+WAITING = HEALTH_CODES["info.waiting"]
 COMPLETE = HEALTH_CODES["success.complete"]
+CANCELLED = HEALTH_CODES["warning.scan.cancelled"]
 STALLED = HEALTH_CODES["warning.scan.stalled"]
 ERROR_STALLED = HEALTH_CODES["error.scan.stalled"]
 ERROR_DB = HEALTH_CODES["error.db.connection_lost"]

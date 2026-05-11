@@ -316,7 +316,11 @@ def api_me(request: Request):
         "sent_scanned_count": sent_scanned_count,
         "sent_total_count": sent_total_live,
         "sent_scan_status": sent_scan_progress["status"],
-        "sent_scan_health": HEALTH_CODES.get(sent_scan_progress["status"]) if sent_scan_progress["status"] and sent_scan_progress["status"].startswith("error") else None,
+        "sent_scan_health": (
+            HEALTH_CODES.get(sent_scan_progress["status"])
+            or (HEALTH_CODES.get("warning.scan.cancelled") if sent_scan_progress["status"] == "cancelled" else None)
+            or (HEALTH_CODES.get("info.waiting") if sent_scan_progress["status"] is None else None)
+        ),
         "inbox_scan_status": inbox_scan_status,
         "scan_health": _log_health(_srv.compute_scan_health(inbox_scan_status, last_fetched_at), session["user_id"]),
         "last_fetched_at": last_fetched_at.isoformat() if last_fetched_at else None,
