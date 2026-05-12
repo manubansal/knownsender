@@ -4,13 +4,18 @@ import { MarkdownContent } from "./markdown-content";
 
 export default function HowItWorksPage() {
   let md = "# How Claven Works\n\nDocumentation not found.";
-  try {
-    md = fs.readFileSync(
-      path.join(process.cwd(), "docs", "how-claven-works.md"),
-      "utf-8",
-    );
-  } catch {
-    // Fallback text above
+  const candidates = [
+    path.join(process.cwd(), "docs", "how-claven-works.md"),
+    path.join(process.cwd(), "..", "docs", "how-claven-works.md"),
+    path.join(process.cwd(), "web", "docs", "how-claven-works.md"),
+  ];
+  for (const p of candidates) {
+    try {
+      md = fs.readFileSync(p, "utf-8");
+      break;
+    } catch {
+      continue;
+    }
   }
 
   return (
