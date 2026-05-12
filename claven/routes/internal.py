@@ -1,4 +1,4 @@
-"""Internal + webhook routes (/internal/poll, /internal/build-known-senders, /webhook/gmail)."""
+"""Internal + webhook routes (/internal/poll, /internal/renew-watches, /internal/build-known-senders, /webhook/gmail)."""
 
 import base64
 import json
@@ -13,6 +13,40 @@ from claven.routes.auth import _require_internal_auth, _verify_pubsub_token
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.post("/internal/renew-watches")
+def internal_renew_watches(request: Request):
+    """Renew Gmail push watches for all connected users.
+
+    Calls start_watch() for each user with an active history_id.
+    Idempotent — extends existing watches or creates new ones.
+    Intended to be triggered daily by Cloud Scheduler.
+    """
+    _require_internal_auth(request)
+    results = []
+
+    with _srv.db.get_connection() as conn:
+        users = _srv.db.get_all_users(conn)
+
+    for user in users:
+        user_id = user["id"]
+        with _srv.db.get_connection() as conn:
+            try:
+                history_id = _srv.db.get_history_id(conn, user_id)
+                if not history_id:
+                    logger.debug("renew-watches: skipping %s (not connected)", user_id)
+                    continue
+                service = _srv.auth.get_service(conn, user_id, os.environ["TOKEN_ENCRYPTION_KEY"])
+                _srv.start_watch(service, os.environ["PUBSUB_TOPIC"])
+                results.append({"user_id": user_id, "status": "ok"})
+                logger.info("Renewed watch for %s", user_id)
+            except Exception as exc:
+                from claven.tasks import _handle_error
+                _handle_error(exc, user_id, "Watch renewal", conn)
+                results.append({"user_id": user_id, "status": "error", "detail": str(exc)})
+
+    return {"renewed": len([r for r in results if r["status"] == "ok"]), "results": results}
 
 
 @router.post("/internal/poll")

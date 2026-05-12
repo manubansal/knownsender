@@ -23,6 +23,7 @@ All three modes run the same processing logic — the trigger mechanism is fully
 3. Pub/Sub **push subscription** POSTs to the Cloud Run webhook endpoint
 4. Cloud Run spins up, fetches Gmail history since stored `historyId`, processes messages, updates Neon, terminates
 5. Pub/Sub retries automatically on non-2xx with exponential backoff for up to 7 days
+6. Gmail watches expire after 7 days — `/internal/renew-watches` (Cloud Scheduler, daily) renews them via `start_watch()` (idempotent: extends existing watch or creates a new one)
 
 ### Pull mode (fallback)
 
@@ -38,7 +39,7 @@ No Pub/Sub involved. Cloud Scheduler triggers Cloud Run on a configurable interv
 |---|---|
 | **Cloud Run service** | Push webhook handler, OAuth endpoints, user dashboard, watch renewal, pull/poll trigger endpoints |
 | **Cloud Run Job** | One-off initial inbox scan + sent recipients scan on signup — uses `list_messages`, not `list_history`; runs to completion with no timeout constraint |
-| **Cloud Scheduler** | Watch renewal every 6 days; pull/poll fallback on configurable interval |
+| **Cloud Scheduler** | Two jobs: (1) `/internal/renew-watches` daily — renews Gmail watches via idempotent `start_watch`; (2) `/internal/poll` hourly — polls for missed messages via `list_history`, reconciles sent scan if needed |
 
 The initial scan (Cloud Run Job) and the notification modes (push/pull/poll) are distinct code paths. The scan walks the full inbox once and establishes the `historyId`. The notification modes only process incremental history since that `historyId` and are never used for bootstrapping.
 
