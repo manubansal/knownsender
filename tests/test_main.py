@@ -173,7 +173,7 @@ class TestPollNewMessages:
                 "messagesAdded": [{"message": {"id": "msg1", "labelIds": ["INBOX"]}}]
             }]
             result = poll_new_messages(service, "history123", [], {})
-            mock_process.assert_called_once_with(service, "msg1", [], {}, None)
+            mock_process.assert_called_once_with(service, "msg1", [], {}, None, auto_archive_unknown=False)
             assert result == 1
 
     def test_ignores_non_inbox_messages(self):
