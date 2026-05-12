@@ -110,6 +110,16 @@ The list updates incrementally:
 - When you send a new email, the recipients are added to your known senders list
 - The sent scan marks processed messages with a `claven/sent-scanned` label so it doesn't reprocess them
 
+## Top known senders and domains
+
+The dashboard shows two ranked lists: **top known senders** and **top known domains**, both based on unread inbox messages from known senders.
+
+**Top known senders** shows which individuals have the most unread messages waiting for you. Each sender links directly to a Gmail search filtered to their unread inbox messages — click to jump straight to their mail.
+
+**Top known domains** aggregates the same data by email domain. This surfaces organizations that generate the most unread mail. For example, if you have 15 unread messages from various people at `acme.com`, the domain view shows `acme.com: 15` even if no single sender has more than a few.
+
+Both lists update on every dashboard load and are capped at the top 10.
+
 ## What "Noise reduced" means
 
 The noise reduced percentage shows how much of your labeled mail came from unknown senders:

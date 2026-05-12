@@ -2045,3 +2045,84 @@ class TestApiScanScope:
     def _make_gmail_service(self):
         """Minimal gmail service mock for /api/me."""
         return TestApiMe._make_gmail_service(TestApiMe())
+
+
+class TestApiTopSenders:
+    def test_no_token_returns_401(self):
+        with patch.dict("os.environ", _ENV):
+            with TestClient(app) as client:
+                response = client.get("/api/top-senders")
+        assert response.status_code == 401
+
+    def test_empty_inbox_returns_empty(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth:
+                _fake_db_ctx(mock_db)
+                svc = MagicMock()
+                svc.users.return_value.messages.return_value.list.return_value.execute.return_value = {"messages": []}
+                mock_auth.get_service.return_value = svc
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/top-senders")
+        body = response.json()
+        assert body["top_senders"] == []
+        assert body["total_unread_known"] == 0
+
+    def test_returns_top_senders_and_domains(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.core.gmail.batch_get_message_metadata") as mock_batch:
+                _fake_db_ctx(mock_db)
+                svc = MagicMock()
+                svc.users.return_value.messages.return_value.list.return_value.execute.return_value = {
+                    "messages": [{"id": f"m{i}"} for i in range(5)]
+                }
+                mock_auth.get_service.return_value = svc
+                # 3 from alice@corp.com, 2 from bob@corp.com
+                mock_batch.return_value = {
+                    "m0": ({"from": "Alice <alice@corp.com>"}, [], None),
+                    "m1": ({"from": "alice@corp.com"}, [], None),
+                    "m2": ({"from": "Alice <alice@corp.com>"}, [], None),
+                    "m3": ({"from": "Bob <bob@corp.com>"}, [], None),
+                    "m4": ({"from": "bob@corp.com"}, [], None),
+                }
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/top-senders")
+        body = response.json()
+        assert body["total_unread_known"] == 5
+        # Top senders: alice=3, bob=2
+        assert body["top_senders"][0] == {"email": "alice@corp.com", "count": 3}
+        assert body["top_senders"][1] == {"email": "bob@corp.com", "count": 2}
+        # Top domains: corp.com=5
+        assert body["top_domains"][0] == {"domain": "corp.com", "count": 5}
+
+    def test_multiple_domains_ranked(self):
+        token = _make_session_token()
+        with patch.dict("os.environ", _ENV):
+            with patch("claven.server.db") as mock_db, \
+                 patch("claven.server.auth") as mock_auth, \
+                 patch("claven.core.gmail.batch_get_message_metadata") as mock_batch:
+                _fake_db_ctx(mock_db)
+                svc = MagicMock()
+                svc.users.return_value.messages.return_value.list.return_value.execute.return_value = {
+                    "messages": [{"id": f"m{i}"} for i in range(4)]
+                }
+                mock_auth.get_service.return_value = svc
+                mock_batch.return_value = {
+                    "m0": ({"from": "a@big.com"}, [], None),
+                    "m1": ({"from": "b@big.com"}, [], None),
+                    "m2": ({"from": "c@big.com"}, [], None),
+                    "m3": ({"from": "d@small.com"}, [], None),
+                }
+                with TestClient(app) as client:
+                    client.cookies.set("session", token)
+                    response = client.get("/api/top-senders")
+        body = response.json()
+        # big.com=3, small.com=1
+        assert body["top_domains"][0] == {"domain": "big.com", "count": 3}
+        assert body["top_domains"][1] == {"domain": "small.com", "count": 1}
