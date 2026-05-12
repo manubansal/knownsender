@@ -54,12 +54,13 @@ def internal_poll(request: Request):
                         _srv.db.set_sent_scan_status(conn, user_id, error_label)
 
                 known_senders = _srv.db.get_known_senders(conn, user_id)
+                auto_archive = _srv.db.get_auto_archive_unknown(conn, user_id)
 
                 profile = _srv.get_profile(service)
                 latest_history_id = int(profile["historyId"])
 
                 label_id_cache = _srv._label_id_cache_for_config(service, label_configs)
-                count = _srv.poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders)
+                count = _srv.poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders, auto_archive_unknown=auto_archive)
                 _srv.db.touch_last_fetched(conn, user_id)
                 _srv.db.set_history_id(conn, user_id, latest_history_id)
                 if count is not None and count > 0:
@@ -166,8 +167,9 @@ async def webhook_gmail(request: Request):
             _handle_error(exc, user["id"], "Webhook sent scan update", conn)
 
         known_senders = _srv.db.get_known_senders(conn, user["id"])
+        auto_archive = _srv.db.get_auto_archive_unknown(conn, user["id"])
         label_id_cache = _srv._label_id_cache_for_config(service, label_configs)
-        count = _srv.poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders)
+        count = _srv.poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders, auto_archive_unknown=auto_archive)
         _srv.db.touch_last_fetched(conn, user["id"])
         _srv.db.set_history_id(conn, user["id"], notification_history_id)
         if count is not None and count > 0:
