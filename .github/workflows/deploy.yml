@@ -150,6 +150,13 @@ jobs:
           TEST_GMAIL_EMAIL: ${{ secrets.TEST_GMAIL_EMAIL }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
 
+      - name: Set up Cloud Scheduler jobs
+        run: |
+          export INTERNAL_API_SECRET=$(gcloud secrets versions access latest --secret=internal-api-secret --project=$GCP_PROJECT_ID)
+          ./scripts/setup-scheduler.sh
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+
   deploy-frontend:
     name: Build and deploy frontend
     runs-on: ubuntu-latest
