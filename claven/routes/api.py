@@ -303,9 +303,15 @@ def api_me(request: Request):
             logger.debug("/api/me: auto-retriggering scan chain (scan_unlabeled=%d, inbox_status=%s, sent_status=%s)",
                          scan_unlabeled_first_page_count, inbox_scan_status, sent_scan_progress["status"])
             _srv._spawn_scan_thread(_srv._run_sent_scan, (session["user_id"],))
+        elif (pending_relabel_count > 0
+                and inbox_scan_status != "in_progress"
+                and not sent_running
+                and history_id is not None):
+            logger.debug("/api/me: auto-triggering relabel scan (pending_relabel=%d)", pending_relabel_count)
+            _srv._spawn_scan_thread(_srv._run_relabel_scan, (session["user_id"],))
         else:
-            logger.debug("/api/me: no retrigger (scan_unlabeled=%s, inbox_status=%s, sent_running=%s, history=%s)",
-                         scan_unlabeled_first_page_count, inbox_scan_status, sent_running, history_id)
+            logger.debug("/api/me: no retrigger (scan_unlabeled=%s, inbox_status=%s, sent_running=%s, pending_relabel=%d, history=%s)",
+                         scan_unlabeled_first_page_count, inbox_scan_status, sent_running, pending_relabel_count, history_id)
 
     return {
         "email": user["email"],
