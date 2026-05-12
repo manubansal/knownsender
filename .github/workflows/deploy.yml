@@ -169,6 +169,7 @@ jobs:
 
       - name: Copy docs for build
         run: cp -r ../docs ./docs
+        working-directory: web
 
       - name: Build
         run: npm run cf:build
