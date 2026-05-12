@@ -9,5 +9,6 @@ __pycache__/
 *.duckdb
 .DS_Store
 certs/
+web/docs/
 web/.open-next/
 .env.local
