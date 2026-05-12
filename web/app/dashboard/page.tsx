@@ -188,6 +188,7 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [topSenders, setTopSenders] = useState<{ email: string; count: number }[]>([]);
+  const [topDomains, setTopDomains] = useState<{ domain: string; count: number }[]>([]);
   const [topSendersLoading, setTopSendersLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -222,6 +223,7 @@ export default function DashboardPage() {
           if (res.ok) {
             const topData = await res.json();
             setTopSenders(topData.top_senders ?? []);
+            setTopDomains(topData.top_domains ?? []);
           }
         })
         .catch(() => {})
@@ -668,6 +670,21 @@ export default function DashboardPage() {
                           ? topSenders.map((sender) => ({
                               label: <a href={`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(email)}#search/from:${encodeURIComponent(sender.email)}+is:unread+in:inbox`} target="_blank" rel="noopener noreferrer" className="hover:underline" title="Open in Gmail">{sender.email}</a>,
                               value: sender.count,
+                            }))
+                          : [{ label: "No unread known-sender messages", value: "—" }]
+                        }
+                      />
+                    )}
+                    {isKnownSender && (
+                      <InfoSection
+                        icon={topSendersLoading ? Loader2 : CheckCircle}
+                        iconColor={topSendersLoading ? "" : "text-green-500"}
+                        iconSpin={topSendersLoading}
+                        title="Top known domains — unread inbox"
+                        rows={topDomains.length > 0
+                          ? topDomains.map((d) => ({
+                              label: <a href={`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(email)}#search/from:${encodeURIComponent(d.domain)}+is:unread+in:inbox`} target="_blank" rel="noopener noreferrer" className="hover:underline" title="Open in Gmail">{d.domain}</a>,
+                              value: d.count,
                             }))
                           : [{ label: "No unread known-sender messages", value: "—" }]
                         }

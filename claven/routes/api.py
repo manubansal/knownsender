@@ -583,8 +583,16 @@ def api_top_senders(request: Request):
                 if addrs:
                     sender_counts[addrs[0].lower()] += 1
 
-    top_10 = sender_counts.most_common(10)
+    # Aggregate by domain
+    domain_counts: Counter = Counter()
+    for email, count in sender_counts.items():
+        domain = email.split("@", 1)[1] if "@" in email else email
+        domain_counts[domain] += count
+
+    top_10_senders = sender_counts.most_common(10)
+    top_10_domains = domain_counts.most_common(10)
     return {
-        "top_senders": [{"email": email, "count": count} for email, count in top_10],
+        "top_senders": [{"email": email, "count": count} for email, count in top_10_senders],
+        "top_domains": [{"domain": domain, "count": count} for domain, count in top_10_domains],
         "total_unread_known": len(messages),
     }
