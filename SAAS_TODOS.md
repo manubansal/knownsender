@@ -671,6 +671,35 @@ Use shadcn templates ([ui.shadcn.com/templates](https://ui.shadcn.com/templates)
 - [ ] Run as an exclusive job through `_run_task` with progress tracking
 - [ ] Context: user discovers a known sender they want to treat as unknown (e.g. marketing emails from a vendor they once emailed)
 
+### Service health monitors
+
+**Availability**
+- [ ] `/healthz` uptime check — Cloud Run is responding and DB is reachable
+- [ ] Frontend uptime — `claven.app` returns 200
+
+**Gmail connectivity**
+- [ ] Watch freshness — alert if any user's watch hasn't been renewed in 8+ days
+- [ ] Webhook delivery — alert if no webhooks received in 1+ hours (when users are connected)
+- [ ] Poll success rate — track `/internal/poll` failures vs successes
+
+**Scan health**
+- [ ] Stale scans — alert if any user's `inbox_scan_status` is `in_progress` for more than 10 minutes (orphaned)
+- [ ] Error rate — track classified error codes over time, alert on spikes
+- [ ] Scan completion — alert if scans keep cancelling without completing
+
+**Data freshness**
+- [ ] `last_fetched_at` staleness — alert if any connected user hasn't had a fetch in 2+ hours
+- [ ] `last_labeled_at` staleness — alert if unlabeled messages exist but no labeling in 2+ hours
+
+**Infrastructure**
+- [ ] Neon DB connection health — pool exhaustion, connection timeouts, quota warnings
+- [ ] Gmail API quota usage — track 429 rate-limit errors, alert before quota exhaustion
+- [ ] Cloud Scheduler job health — alert if scheduled jobs fail to fire
+
+**User-facing**
+- [ ] Dashboard load time — track `/api/me` response time, alert on degradation
+- [ ] OAuth flow success rate — track sign-in failures vs completions
+
 ### Frontend error instrumentation
 - [ ] Build a consistent error code map shared between backend and frontend
 - [ ] Instrument the dashboard with fine-grained error reporting: network errors, auth failures, API timeouts, CORS issues
