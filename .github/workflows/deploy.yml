@@ -167,8 +167,8 @@ jobs:
         run: npm ci
         working-directory: web
 
-      - name: Copy docs for build
-        run: cp -r ../docs ./docs
+      - name: Generate docs content
+        run: node -e "const fs = require('fs'); const md = fs.readFileSync('../docs/how-claven-works.md', 'utf-8'); fs.writeFileSync('app/how-it-works/content.ts', 'export default ' + JSON.stringify(md) + ';\\n');"
         working-directory: web
 
       - name: Build
