@@ -1,12 +1,12 @@
 import logging
 
-from claven.core.gmail import get_message_headers, apply_label, list_history
+from claven.core.gmail import get_message_headers, apply_label, gmail_retry, list_history
 from claven.core.rules import matches_rule
 
 logger = logging.getLogger(__name__)
 
 
-def process_message(service, message_id, label_configs, label_id_cache, known_senders=None):
+def process_message(service, message_id, label_configs, label_id_cache, known_senders=None, auto_archive_unknown=False):
     """Evaluate each label config against a message.
 
     For each label config:
@@ -47,12 +47,18 @@ def process_message(service, message_id, label_configs, label_id_cache, known_se
                     apply_id,
                 )
                 applied = True
+                # Auto-archive: remove from inbox if labeled unknown-sender
+                if not matched and auto_archive_unknown and "INBOX" in existing_labels:
+                    gmail_retry(lambda: service.users().messages().modify(
+                        userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}
+                    ).execute())
+                    logger.info("Auto-archived unknown-sender message %s", message_id)
             else:
                 logger.debug("process_message: %s already has label %s or label not in cache", message_id, apply_id)
     return applied
 
 
-def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None):
+def poll_new_messages(service, history_id, label_configs, label_id_cache, known_senders=None, auto_archive_unknown=False):
     """Check for new messages since the last history ID.
 
     Returns the number of messages processed, or None if the history ID had
@@ -78,6 +84,6 @@ def poll_new_messages(service, history_id, label_configs, label_id_cache, known_
     if message_ids:
         logger.info("Processing %d new message(s)", len(message_ids))
         for message_id in message_ids:
-            process_message(service, message_id, label_configs, label_id_cache, known_senders)
+            process_message(service, message_id, label_configs, label_id_cache, known_senders, auto_archive_unknown=auto_archive_unknown)
 
     return len(message_ids)
