@@ -242,7 +242,7 @@ class TestPollNewMessages:
                 "messagesAdded": [{"message": {"id": "msg1", "labelIds": ["INBOX"]}}]
             }]
             poll_new_messages(service, "history123", [], {}, known_senders=known_senders)
-            mock_process.assert_called_once_with(service, "msg1", [], {}, known_senders)
+            mock_process.assert_called_once_with(service, "msg1", [], {}, known_senders, auto_archive_unknown=False)
 
     def test_reraises_non_404_exceptions(self):
         from claven.core.process import poll_new_messages
