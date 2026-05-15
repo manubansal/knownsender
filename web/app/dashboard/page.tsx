@@ -645,7 +645,7 @@ export default function DashboardPage() {
                             action={state.data.gmail_error?.label === "error.gmail.auth_expired" ? (
                               <a
                                 href={`${API_URL}/oauth/start?force_consent=true&return_to=${encodeURIComponent(window.location.origin)}`}
-                                className="text-[10px] px-2 py-0.5 rounded-full border border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors"
+                                className="text-[10px] px-2 py-0.5 rounded-full border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
                               >
                                 Re-authenticate
                               </a>
