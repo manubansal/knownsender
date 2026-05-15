@@ -183,31 +183,31 @@ async def webhook_gmail(request: Request):
             return {"status": "ok", "detail": "no history_id"}
 
         logger.debug("webhook_gmail: processing for %s (history_id=%d)", email, stored_history_id)
-        service = _srv.auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
-
-        # Incremental known senders update — cheap with cursor (one list_history call).
-        # Also serves as reconciliation: if the initial scan never completed,
-        # build_known_senders falls through to a full scan.
-        scan_progress = _srv.db.get_sent_scan_progress(conn, user["id"])
-        if _srv._needs_sent_scan(scan_progress):
-            logger.debug("webhook_gmail: reconciling sent scan (status=%s)", scan_progress["status"])
-            _srv.db.set_sent_scan_status(conn, user["id"], "in_progress")
         try:
+            service = _srv.auth.get_service(conn, user["id"], os.environ["TOKEN_ENCRYPTION_KEY"])
+
+            # Incremental known senders update — cheap with cursor (one list_history call).
+            # Also serves as reconciliation: if the initial scan never completed,
+            # build_known_senders falls through to a full scan.
+            scan_progress = _srv.db.get_sent_scan_progress(conn, user["id"])
+            if _srv._needs_sent_scan(scan_progress):
+                logger.debug("webhook_gmail: reconciling sent scan (status=%s)", scan_progress["status"])
+                _srv.db.set_sent_scan_status(conn, user["id"], "in_progress")
             _srv.build_known_senders(service, conn, user["id"])
             if scan_progress["status"] != "complete":
                 _srv.db.set_sent_scan_status(conn, user["id"], "complete")
+
+            known_senders = _srv.db.get_known_senders(conn, user["id"])
+            auto_archive = _srv.db.get_auto_archive_unknown(conn, user["id"])
+            label_id_cache = _srv._label_id_cache_for_config(service, label_configs)
+            count = _srv.poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders, auto_archive_unknown=auto_archive)
+            _srv.db.touch_last_fetched(conn, user["id"])
+            _srv.db.set_history_id(conn, user["id"], notification_history_id)
+            if count is not None and count > 0:
+                _srv.db.increment_processed_count(conn, user["id"], count)
+                _srv.db.touch_last_labeled(conn, user["id"])
         except Exception as exc:
             from claven.tasks import _handle_error
-            _handle_error(exc, user["id"], "Webhook sent scan update", conn)
-
-        known_senders = _srv.db.get_known_senders(conn, user["id"])
-        auto_archive = _srv.db.get_auto_archive_unknown(conn, user["id"])
-        label_id_cache = _srv._label_id_cache_for_config(service, label_configs)
-        count = _srv.poll_new_messages(service, stored_history_id, label_configs, label_id_cache, known_senders, auto_archive_unknown=auto_archive)
-        _srv.db.touch_last_fetched(conn, user["id"])
-        _srv.db.set_history_id(conn, user["id"], notification_history_id)
-        if count is not None and count > 0:
-            _srv.db.increment_processed_count(conn, user["id"], count)
-            _srv.db.touch_last_labeled(conn, user["id"])
+            _handle_error(exc, user["id"], "Webhook", conn)
 
     return {"status": "ok"}
