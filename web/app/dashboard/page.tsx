@@ -642,6 +642,14 @@ export default function DashboardPage() {
                             iconElement={<span className={cn("inline-block h-2 w-2 rounded-full", severity === "error" || state.data.gmail_error ? "bg-destructive" : severity === "warning" ? "bg-yellow-500" : "bg-green-500")} />}
                             title="System health"
                             errorCode={state.data.gmail_error?.code}
+                            action={state.data.gmail_error?.label === "error.gmail.auth_expired" ? (
+                              <a
+                                href={`${API_URL}/oauth/start?force_consent=true&return_to=${encodeURIComponent(window.location.origin)}`}
+                                className="text-[10px] px-2 py-0.5 rounded-full border border-destructive text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors"
+                              >
+                                Re-authenticate
+                              </a>
+                            ) : undefined}
                             rows={[
                               { label: "Last fetched", value: state.data.last_fetched_at ? formatRelativeTime(new Date(state.data.last_fetched_at)) : "—" },
                               { label: "Last labeled", value: state.data.last_labeled_at ? formatRelativeTime(new Date(state.data.last_labeled_at)) : "—" },
